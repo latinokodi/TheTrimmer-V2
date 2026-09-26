@@ -1,0 +1,26 @@
+Fix the launcher twice over: a batch comment, and the freshness check
+
+Two faults in start.bat, both found by running it rather than reading it.
+
+The batch file would not run at all. A REM line naming the timestamp substitution
+it was written to avoid contained a single percent sign, and batch expands that even
+inside a comment - so the comment was parsed as the syntax it described and the file
+died with 'the usage of the path operator in batch-parameter substitution is
+invalid' and no window. The percent signs are doubled, and the reason is written down
+next to them so the next person does not un-double them.
+
+The freshness check made the window permanently stale. It compared the window against
+apps/web/dist, and a build rewrites that folder with new content hashes and so a new
+timestamp - while this script is the thing that rebuilds it. The result was a full
+relink on every launch, which is exactly the two-minute start the check existed to
+prevent. The window is now compared against what it is built *from*: the Rust
+sources, the configuration, and the interface sources. The bundle's own timestamp
+means nothing.
+
+Measured afterwards: 1.7 s to a window when nothing changed, and a one-line CSS edit
+still reports both the interface and the window as out of date.
+
+start.bat is now a launcher for tools/start.ps1 rather than 90 lines of batch,
+because every real decision here is a comparison of timestamps and batch has no
+dates. It takes -Check, -Rebuild and -NoLaunch, and it builds all four binaries
+rather than only the window, so the folder is never half-stale.

@@ -55,8 +55,21 @@ cargo build --release            # all four, into target\release
 .\target\release\thetrimmer-desktop.exe
 ```
 
-`start.bat` does the same thing from a double-click: it builds the interface if `dist` is missing,
-builds the window, and starts it.
+`start.bat` does the same thing from a double-click, and it is the better route: `tools/start.ps1`
+rebuilds only what has actually changed, so a launch with nothing to do takes about two seconds
+instead of relinking the window. It closes a window that is already open before linking — Windows will
+not let the linker replace a running executable, and cargo reports that as `Access denied`, which reads
+like a permissions problem. It also builds all four binaries rather than only the window.
+
+```
+start.bat                      build what changed, then launch
+pwsh tools\start.ps1 -Check    say what is out of date and exit
+pwsh tools\start.ps1 -Rebuild  rebuild both, then launch
+```
+
+`tools/smoke-window.ps1` starts the built window and checks it is really the application: that the
+interface rendered *from the build just made*, and that the footer line reports what `doctor` returned —
+a full round trip through `invoke` to Rust and back.
 
 * **Uninstalling is deleting the file.** Your projects live in `%APPDATA%\TheTrimmer\projects.db` and
   are not part of the program, so removing one never touches the other. `project export` writes a

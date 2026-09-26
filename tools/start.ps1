@@ -94,21 +94,24 @@ if (Test-Path $dist) {
     }
 }
 
-# The window is out of date if it is missing, or if any Rust source is newer than it, or if the
-# interface was rebuilt after it — the assets are compiled in, so a new interface means a new window.
+# The window is out of date if it is missing, or if anything it is built *from* is newer than it:
+# the Rust sources, the configuration, or the interface sources.
+#
+# `apps/web/dist` is deliberately not one of those inputs. The assets are embedded at compile time, but
+# a build rewrites that folder with new content hashes and therefore a fresh timestamp — so comparing
+# the window against it makes the window stale every time the interface is rebuilt, and the interface is
+# rebuilt *by* this script. The first version of this check did exactly that and relinked the whole
+# binary on every launch, which is the two-minute start it was written to prevent. A web source file
+# newer than the bundle is what means the assets changed; the bundle's own timestamp means nothing.
 $newestRust = Newest-File -Folder (Join-Path $root 'crates') -Include @('*.rs')
 $newestDesktop = Newest-File -Folder (Join-Path $root 'apps\desktop\src-tauri') -Include @('*.rs', '*.json', '*.toml')
-$newestSource = @($newestRust, $newestDesktop) | Where-Object { $null -ne $_ } |
+$newestInput = @($newestRust, $newestDesktop, $newestWeb) | Where-Object { $null -ne $_ } |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 
 $needsWindow = $true
 $whyWindow = 'the window has not been built yet'
 if (Test-Path $exe) {
     $built = (Get-Item $exe).LastWriteTime
-    $candidates = @()
-    if ($null -ne $newestSource) { $candidates += $newestSource }
-    if (Test-Path $dist) { $candidates += (Get-Item $dist) }
-    $newestInput = $candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if ($null -eq $newestInput -or $newestInput.LastWriteTime -le $built) {
         $needsWindow = $false
         $whyWindow = "up to date (built $($built.ToString('HH:mm:ss')))"
