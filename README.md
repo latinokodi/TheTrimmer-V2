@@ -87,26 +87,30 @@ has a minimum size.
 ## Tests
 
 ```powershell
-venv\Scripts\python.exe -m pytest backend\tests -q      # 34 tests, about a second
-npm --prefix frontend test                              # 12 tests, about a second
+venv\Scripts\python.exe -m pytest backend\tests -q      # 69 tests: units + every scenario, ~1s
+npm --prefix frontend test                              # 19 tests: units + the interface's scenarios
 ```
 
-The Python suite covers the places where being wrong is silent and expensive: drop-frame timecode
-arithmetic at every rate, the plan's choice between copy / head-patch / re-encode and its refusals,
-and the HTTP contract's refusals. The interface suite covers the formatting and the two figures the
-progress bar is allowed to show.
+The engine's scenarios are Gherkin in `specs/features/` and run under `pytest-bdd`; the
+interface's are the same, under a small vitest runner. Each covers a place where being wrong is
+silent and expensive — drop-frame timecode at every rate, which of the three cutting methods a
+range gets and why, counting frames on the grid a file is *actually* on, the verdict rules the
+proof panel draws, and the HTTP contract's refusals.
 
-**Neither suite runs a cut.** The engine's behaviour on real material is verified by using the
+**No test runs a cut.** The engine's behaviour on real footage is verified by using the
 application, which is what the proof panel is for.
 
 ---
 
 ## Documentation
 
+* [`docs/SPEC.md`](docs/SPEC.md) — what the product is required to do, as numbered requirements,
+  each with the scenario that decides whether it holds, and a traceability table.
 * [`docs/TRUTH.md`](docs/TRUTH.md) — every claim, and the mechanism that checks it.
 * [`docs/DESIGN.md`](docs/DESIGN.md) — the decisions that were not obvious, and the failures behind
   them.
 * [`docs/SKILLS-APPLIED.md`](docs/SKILLS-APPLIED.md) — the practices this build was held to.
+* [`specs/features/`](specs/features/) — the executable behaviour specification.
 
 ## Licence
 
