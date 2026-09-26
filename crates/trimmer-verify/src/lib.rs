@@ -8,8 +8,9 @@
 //! omission. It defines the vocabulary a measurement is reported in ([`CutFacts`],
 //! [`FrameHashes`], [`Similarity`]), the trait a measuring implementation satisfies
 //! ([`MediaMeasurer`]), and every rule that turns those facts into a verdict ([`verify_cut`],
-//! [`verify_cut_with`]). Running ffprobe and ffmpeg is `trimmer-media`'s job, and that crate
-//! does not exist yet.
+//! [`verify_cut_with`]). Running ffprobe and ffmpeg is `trimmer-media`'s job: that crate is the
+//! single adapter in the workspace that starts a process, and `trimmer-app`'s `MediaAdapter` is
+//! what joins the two together.
 //!
 //! The split is not tidiness. Of the two halves, only one has to be *provably* right, and
 //! only one can be. A verdict is a pure function of numbers: given the same facts it decides

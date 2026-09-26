@@ -177,10 +177,11 @@ impl FrameRate {
 
     /// Read a rate as ffprobe writes it: `30000/1001`, `29.97`, or `30`.
     ///
-    /// Decimal forms are converted through a bounded continued-fraction expansion, which
-    /// maps `29.97` to exactly `2997/100` — the same reading Python's
-    /// `Fraction.limit_denominator` produces, and the reason the differential oracle can
-    /// compare plans bit for bit.
+    /// A decimal form is resolved from [`CANONICAL_RATES`] first, so `29.97` becomes exactly
+    /// `30000/1001` — the same reading the V1 engine produces through Python's
+    /// `Fraction.limit_denominator`, which is what lets the differential oracle compare the two
+    /// implementations. Only an unrecognised decimal falls through to the continued-fraction
+    /// search, because that search cannot distinguish `29.97` from `30` under a sane bound.
     ///
     /// # Errors
     ///
@@ -615,6 +616,102 @@ pub fn parse_timecode(text: &str, rate: FrameRate) -> CoreResult<i64> {
     Ok(label)
 }
 
+/// Read a timecode that may be followed by more text, and return what follows.
+///
+/// Returns the first timecode's frame number and the remainder.
+///
+/// # The comma is deliberately not a separator here
+///
+/// A comma is ambiguous. It separates two marks in `00:12:00:00,00:14:00:00`, and it is also a
+/// legal field separator inside a drop-frame timecode like `00:12:00,02`. An earlier version of
+/// this function split on the first comma, read `00:12:00:00` as its prefix — and then, because
+/// the *whole string* contained a comma, read that prefix in drop-frame mode and returned frame
+/// 1000 instead of 60000. A silent ten-minute error, from a function that looked correct.
+///
+/// The fix is to make the ambiguity somebody else's decision: this function only accepts
+/// whitespace and a semicolon as separators, and [`split_timecodes`] exists for the comma case,
+/// where the split can be made at a comma that is *known* to be between two timecodes because
+/// what follows it is a field-for-field timecode.
+///
+/// # Errors
+///
+/// Returns [`CoreError::Timecode`] when no prefix reads as a timecode.
+pub fn parse_timecode_with_remainder(text: &str, rate: FrameRate) -> CoreResult<(i64, String)> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err(timecode_error(trimmed, rate, "it is empty"));
+    }
+
+    // Fast path: the whole string is one timecode, which is the ordinary case.
+    if let Ok(frame) = parse_timecode(trimmed, rate) {
+        return Ok((frame, String::new()));
+    }
+
+    for (index, ch) in trimmed.char_indices() {
+        if !ch.is_whitespace() && ch != ';' {
+            continue;
+        }
+        let prefix = &trimmed[..index];
+        if prefix.is_empty() {
+            continue;
+        }
+        if let Ok(frame) = parse_timecode(prefix, rate) {
+            let rest = trimmed[index..].trim_start_matches([';', ' ', '\t']);
+            return Ok((frame, rest.to_owned()));
+        }
+    }
+
+    Err(timecode_error(
+        trimmed,
+        rate,
+        "it does not begin with a timecode this rate can read",
+    ))
+}
+
+/// Split a string into the timecodes it contains, in order.
+///
+/// This is the comma-aware companion to [`parse_timecode_with_remainder`], and it resolves the
+/// ambiguity that function refuses: a comma is a separator between two timecodes **only when**
+/// what follows it is a field-for-field timecode, which means at least two more colon-separated
+/// values before the comma. `00:12:00:00,00:14:00:00` splits; `00:12:00,02` — where the comma sits
+/// two digits before the end — does not, and keeps its drop-frame reading.
+///
+/// Text that is not part of a timecode is skipped, so a marker line's prose simply disappears.
+#[must_use]
+pub fn split_timecodes(text: &str, rate: FrameRate) -> Vec<i64> {
+    let mut frames = Vec::new();
+    let mut start = 0usize;
+    let bytes = text.as_bytes();
+
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] != b',' {
+            index += 1;
+            continue;
+        }
+        let after = &text[index + 1..];
+        let is_boundary = {
+            let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+            let rest = &after[digits.len()..];
+            // `NN:` and then at least one more group: a real timecode follows the comma.
+            !digits.is_empty()
+                && rest.starts_with(':')
+                && rest[1..].contains(':')
+        };
+        if is_boundary {
+            if let Ok(frame) = parse_timecode(&text[start..index], rate) {
+                frames.push(frame);
+            }
+            start = index + 1;
+        }
+        index += 1;
+    }
+    if let Ok(frame) = parse_timecode(&text[start..], rate) {
+        frames.push(frame);
+    }
+    frames
+}
+
 /// Render a frame number as a timecode.
 ///
 /// `drop = None` picks the form Premiere would use: drop-frame for 29.97 and 59.94,
@@ -764,6 +861,67 @@ mod tests {
         assert_eq!(drop, 107_892);
         assert_eq!(non_drop, 108_000);
         assert_eq!(non_drop - drop, 108);
+    }
+
+    #[test]
+    fn a_trailing_timecode_is_separated_from_the_one_before_it() {
+        let rate = FrameRate::FPS_25;
+        // Whitespace separates two marks.
+        let (first, rest) =
+            parse_timecode_with_remainder("00:00:10:00 00:00:20:00", rate).expect("reads");
+        assert_eq!(first, 250);
+        assert_eq!(rest, "00:00:20:00");
+
+        // A single timecode leaves no remainder.
+        let (first, rest) = parse_timecode_with_remainder("00:00:10:00", rate).expect("reads");
+        assert_eq!(first, 250);
+        assert!(rest.is_empty());
+
+        // And the drop-frame reading survives: a comma inside one timecode is still a field
+        // separator, because the comma is not a separator *between* timecodes as far as this
+        // function is concerned.
+        let drop = FrameRate::FPS_29_97;
+        let (first, rest) = parse_timecode_with_remainder("00:01:00,02", drop).expect("reads");
+        assert_eq!(first, 1_800, "a comma must not set drop-frame mode by itself");
+        assert!(rest.is_empty(), "the comma belonged to the timecode, got {rest:?}");
+    }
+
+    #[test]
+    fn a_pair_joined_by_a_comma_is_split_into_two_timecodes() {
+        let rate = FrameRate::FPS_25;
+        // `H:MM:SS:FF`, so 1 h 02 m 03 s 04 f is frame 93 079 and 2 h 03 m 04 s 05 f is 184 605.
+        assert_eq!(
+            split_timecodes("1:02:03:04,2:03:04:05", rate),
+            vec![93_079, 184_605]
+        );
+        assert_eq!(split_timecodes("00:00:10:00", rate), vec![250]);
+        assert_eq!(split_timecodes("no timecodes here", rate), Vec::<i64>::new());
+
+        // The critical disambiguation: a comma two digits from the end belongs to a drop-frame
+        // timecode, and splitting there would read the same string as two marks.
+        let drop = FrameRate::FPS_29_97;
+        assert_eq!(
+            split_timecodes("00:12:00,02", drop),
+            vec![parse_timecode("00:12:00,02", drop).expect("reads")]
+        );
+        // Whereas two full timecodes do split, and each keeps its own reading.
+        assert_eq!(
+            split_timecodes("01:12:00:00,01:14:00:00", drop),
+            vec![
+                parse_timecode("01:12:00:00", drop).expect("reads"),
+                parse_timecode("01:14:00:00", drop).expect("reads"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_timecode_that_does_not_begin_the_text_is_refused() {
+        let rate = FrameRate::FPS_25;
+        assert!(parse_timecode_with_remainder("second take", rate).is_err());
+        assert!(parse_timecode_with_remainder("", rate).is_err());
+        // A bare number *is* a timecode in seconds, so this reads rather than failing; the
+        // watch-folder reader is what decides a leading number is likely a row index.
+        assert_eq!(parse_timecode_with_remainder("3", rate).expect("reads").0, 75);
     }
 
     #[test]

@@ -105,5 +105,8 @@ pub use error::{CoreError, CoreResult};
 pub use plan::{
     apply_calibration, plan_cut, preset_forces_full_encode, resolve_range, CutPlan, PlanInvariant,
 };
-pub use timecode::{format_seconds, format_timecode, FrameRate, Position, Timecode};
+pub use timecode::{
+    format_seconds, format_timecode, parse_timecode, parse_timecode_with_remainder,
+    split_timecodes, FrameRate, Position, Timecode,
+};
 pub use transcript::{Grouping, Hit, Sentence, TranscriptIndex};
