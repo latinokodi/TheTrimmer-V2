@@ -32,3 +32,9 @@ Feature: The run's progress in the window
     Given a pass of 100 seconds that is 25 seconds in without a rate
     When the estimate is drawn
     Then there is no estimate to draw
+
+  Scenario: the log shows the newest line first
+    Given a run that has said "source", "head", "body"
+    When the log is drawn
+    Then the first line is "body"
+    And the last line is "source"

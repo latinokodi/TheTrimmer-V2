@@ -209,14 +209,40 @@ The same measurement found two more faults in the same area:
   is why the picture ran ahead of the sound. `body_seek` aims inside the GOP instead and takes the
   preroll — now a known quantity — off the copied length.
 
-## 18. A log keeps its end in view
+## 18. The log is read at its top, so the newest line is at its top
 
-The log is the record of a cut, and the newest line is the one being read. It used to follow the
-tail only when it was already at the bottom, on the theory that scrolling up to read something
-should not be undone by the next line. In practice a cut produces more lines than fit, so the thing
-the operator wants is always the thing below the fold. It now scrolls to the end on every line.
+The log is the record of a cut, and the line being read is the one that just happened. It used to
+append downwards and scroll itself to the end, which meant the newest line sat at the bottom of a
+box taller than the window, and the top — where a reader looks first — held the oldest line in the
+run. Scrolling it into view is not the same as putting it where it is looked for.
 
-## 19. Nothing is claimed that is not checkable
+**Decision.** The lines are rendered newest first, the scroll position is pinned to the top, and the
+ordering is a pure function (`newestFirst`) with a scenario behind it rather than a `.reverse()` in a
+component. The clock column therefore counts down the list, which is the right way round for a record
+of what just happened.
+
+## 19. A grid track sized to its content will collapse the one beside it
+
+The proof panel's facts rows are a two-column grid. It was written as
+`grid-template-columns: minmax(0, 1fr) auto` — label, then value — and that is the wrong way round
+for the values this panel holds.
+
+An `auto` track will not go below its content's **min-content** width, and a file path is one long
+unbreakable word. So the value track grew to the path's full width, the label's `minmax(0, 1fr)`
+track was squeezed to nothing, and `MEASURED AGAINST` was painted across the top of the path beside
+it. Nothing reports that: both elements are exactly where the layout put them.
+
+**Decision.** The label column is `max-content` and the value column takes the remainder, so a label
+always has room for its own words and `text-overflow` ellipsises the path as intended. Paths get
+their own modifier that lifts the 340 px cap the numeric rows use, because a number and its label
+should not be a screen apart but a path is read left to right and is not a number.
+
+**The lesson, and it is the same one as §11:** a stylesheet a browser can parse is not a stylesheet
+it can apply, and a layout that overlaps is not an error to anything. Both faults were found by
+measuring the running window — `0px none` where a border should have been, and a label's right edge
+past a value's left edge — and by nothing else.
+
+## 20. Nothing is claimed that is not checkable
 
 Every module in this tree carries a docstring explaining *why* it exists in the terms of the failures
 it prevents, and `docs/TRUTH.md` pairs each claim with its check. A claim nobody can test is removed

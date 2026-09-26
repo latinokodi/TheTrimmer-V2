@@ -26,7 +26,7 @@
 
 import { useEffect, useRef } from "react";
 
-import { type LogLine, type RunProgress, remainingSeconds, stepFraction } from "../state/useRunLog";
+import { type LogLine, type RunProgress, newestFirst, remainingSeconds, stepFraction } from "../state/useRunLog";
 import { formatBytes, formatClock } from "../lib/format";
 
 export function ProgressLog({
@@ -44,15 +44,15 @@ export function ProgressLog({
 }): JSX.Element {
   const log = useRef<HTMLDivElement>(null);
 
-  // Follow the tail, always. A cut says a great deal and the newest line is the one being
-  // read, so the log keeps its end in view: a log that has to be scrolled by hand to see what
-  // just happened is a log that hides the thing it exists to show.
+  // The newest line is at the top, and the top is where a reader looks, so the log stays there. A
+  // log that had to be scrolled to see what just happened would be hiding the thing it exists to
+  // show — which is what it did when it appended downwards.
   useEffect(() => {
     const element = log.current;
     if (element === null) {
       return;
     }
-    element.scrollTop = element.scrollHeight;
+    element.scrollTop = 0;
   }, [lines]);
 
   const fraction = stepFraction(progress);
@@ -137,11 +137,12 @@ export function ProgressLog({
       <div className="log" ref={log} role="log" aria-label="Cut log">
         {lines.length === 0 ? (
           <p className="log__empty">
-            Nothing has run yet. Every pass, its timing, and the exact ffmpeg command line behind it
-            appear here — including the frames that were copied rather than re-encoded.
+            Nothing has run yet. Every pass, its timing, and the exact ffmpeg command line behind
+            it appear here, newest first — including the frames that were copied rather than
+            re-encoded.
           </p>
         ) : (
-          lines.map((line) => (
+          newestFirst(lines).map((line) => (
             <p key={line.at} className={`log__line log__line--${line.tone}`}>
               <span className="log__at figures">{formatClock(line.offset)}</span>
               <span className="log__text">{line.text}</span>

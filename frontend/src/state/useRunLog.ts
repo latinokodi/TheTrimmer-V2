@@ -205,6 +205,21 @@ export function useRunLog(): RunLog {
   );
 }
 
+/**
+ * The lines with the newest first.
+ *
+ * The log is read at its top. A cut says more than fits, so a log that appends downwards puts the
+ * line you want below the fold, and the one you have already read in the place you look first. The
+ * clock column therefore counts *down* the list, which is the right way round for a record of what
+ * just happened.
+ *
+ * A pure function rather than a `.reverse()` in the component, so the ordering is a rule with a test
+ * rather than a detail of a render.
+ */
+export function newestFirst(lines: readonly LogLine[]): readonly LogLine[] {
+  return [...lines].reverse();
+}
+
 /** The fraction of the current pass that is done, or `null` when its length is not known. */
 export function stepFraction(progress: RunProgress): number | null {
   const { doneSeconds, totalSeconds } = progress;

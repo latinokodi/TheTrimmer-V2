@@ -131,7 +131,11 @@ export function ProofPanel({ outcome }: { readonly outcome: OutcomeView | null }
         </tbody>
       </table>
 
-      <dl className="facts">
+      {/*
+        The paths, on their own grid: a file path is read left to right and is not a figure, so it
+        takes the panel's width rather than the 340 px cap the totals use.
+      */}
+      <dl className="facts facts--paths">
         <dt>Output</dt>
         <dd title={outcome.output}>{outcome.output}</dd>
         <dt>Measured against</dt>

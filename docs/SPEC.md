@@ -77,9 +77,10 @@ A cut nobody measured is a cut nobody can vouch for.
 | **R5.2** | When a pass does not know its own length the bar does not invent a fraction. | `window.feature:a pass of unknown length does not invent a fraction` |
 | **R5.3** | The clock keeps moving while the run is quiet, so a silent pass does not look frozen. | `window.feature:the clock keeps moving while the run is quiet` |
 | **R5.4** | Cancelling is reported as a decision, not as a failure. | `window.feature:cancelling is a decision, not a failure` |
-| **R5.5** | The log keeps its end in view, so the newest line is the one being read. | Inspected in the running window — see `docs/TRUTH.md §What is not checked`, which says why this one is looked at rather than run |
-| **R5.6** | Every control is on screen without scrolling, and the frame never scrolls. | `docs/TRUTH.md §The interface claims` |
-| **R5.7** | The window is restorable, minimizable and closable, and opens maximized rather than fullscreen. | `docs/TRUTH.md §The interface claims` |
+| **R5.5** | The log shows the newest line first, so what just happened is where a reader looks. | `window.feature:the log shows the newest line first` |
+| **R5.6** | No label is ever drawn over the value beside it, and a file path is not truncated to nothing. | Measured in the running window: the label's right edge against the value's left edge, for the real markup with a path as long as the panel shows. See `docs/TRUTH.md §The interface claims` |
+| **R5.7** | Every control is on screen without scrolling, and the frame never scrolls. | `docs/TRUTH.md §The interface claims` |
+| **R5.8** | The window is restorable, minimizable and closable, and opens maximized rather than fullscreen. | `docs/TRUTH.md §The interface claims` |
 
 ---
 

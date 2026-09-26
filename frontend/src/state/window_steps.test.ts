@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { type RunProgress, remainingSeconds, stepFraction } from "./useRunLog";
+import { type LogLine, type RunProgress, newestFirst, remainingSeconds, stepFraction } from "./useRunLog";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FEATURE = resolve(HERE, "../../../specs/features/window.feature");
@@ -41,6 +41,8 @@ interface World {
   progress: RunProgress;
   bar: number | null;
   estimate: number | null;
+  lines: readonly LogLine[];
+  ordered: readonly LogLine[];
 }
 
 function blank(): World {
@@ -55,6 +57,8 @@ function blank(): World {
     },
     bar: null,
     estimate: null,
+    lines: [],
+    ordered: [],
   };
 }
 
@@ -152,6 +156,26 @@ const STEPS: readonly (readonly [RegExp, StepFunction])[] = [
   [
     /^there is no estimate to draw$/,
     (world) => { expect(world.estimate).toBeNull(); },
+  ],
+  [
+    /^a run that has said "(.+)"$/,
+    (world, quoted) => {
+      world.lines = quoted.split('", "').map((text, index) => ({
+        at: index + 1,
+        offset: index,
+        text: text.replace(/^"|"$/g, ""),
+        tone: "stage" as const,
+      }));
+    },
+  ],
+  [/^the log is drawn$/, (world) => { world.ordered = newestFirst(world.lines); }],
+  [
+    /^the first line is "(.+)"$/,
+    (world, wanted) => { expect(world.ordered[0]?.text).toBe(wanted); },
+  ],
+  [
+    /^the last line is "(.+)"$/,
+    (world, wanted) => { expect(world.ordered[world.ordered.length - 1]?.text).toBe(wanted); },
   ],
 ];
 

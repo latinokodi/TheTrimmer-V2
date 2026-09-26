@@ -1157,14 +1157,33 @@ input.timecode-field {
  * The run's totals: one label, one figure, the figures sharing a right edge so they can be compared
  * down the column. Capped at 340 px — a label on the far left of a 1900 px panel and its number on the
  * far right is a row the eye has to travel across to read.
+ *
+ * The label column is `max-content` and the value column takes what is left, which is the opposite
+ * of how this was first written and the difference is not cosmetic. With the value column `auto`,
+ * an `auto` track refuses to go below its content's min-content width — and a file path is one long
+ * unbreakable word, so the track grew to the path's full width, the label's `minmax(0, 1fr)` track
+ * was squeezed to nothing, and `MEASURED AGAINST` was painted across the top of the path beside it.
+ * Nothing reports an overlap: both elements are where the layout put them.
+ *
+ * With the label on `max-content` it always has room for its own words, the value track takes the
+ * remainder, and `text-overflow` ellipsises the path as intended.
  */
 .facts {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: max-content minmax(0, 1fr);
   align-items: baseline;
   gap: var(--space-3) var(--space-6);
   max-width: 340px;
   font-size: var(--text-sm);
+}
+
+/*
+ * A path is not a figure. The 340 px cap exists so a number and its label are not a screen apart,
+ * but a file path is read left to right and truncated to nothing at that width, so these rows take
+ * the panel's width instead.
+ */
+.facts--paths {
+  max-width: none;
 }
 
 .facts dt {
