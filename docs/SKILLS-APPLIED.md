@@ -1,0 +1,84 @@
+# Skills applied
+
+TheTrimmer V2 was built with the agent skill library at `F:\PyApps\agent-skills\.agent\skills`.
+This file records **which skills were used and what each one actually changed**. A skill that
+did not change a decision is not listed; a list of names proves nothing.
+
+The requirement was a minimum of twenty relevant skills. Part 1 is the set consulted while
+making design decisions; Part 2 is the set run as independent audits against the finished
+work, executed by separate agents with the audit skill loaded as their brief.
+
+---
+
+## Part 1 — Skills that shaped the design
+
+| # | Skill | Where it landed | What it changed |
+|---|---|---|---|
+| 1 | `architecture-patterns` | `crates/trimmer-core/src/lib.rs`, the crate split | Chose hexagonal boundaries: `trimmer-core` is the pure domain with **zero** I/O, `trimmer-media` is the only adapter that runs a process. This is what makes the differential oracle possible at all — a core that reads the filesystem cannot be replayed against the V1 engine in-process. |
+| 2 | `rust-pro` | every crate | Error handling with `thiserror` per failure the domain can actually produce; `#![forbid(unsafe_code)]`; `Result` everywhere a caller must decide; plain structs with validated constructors rather than a builder. |
+| 3 | `ddd-tactical-patterns` | `domain.rs` | `FrameRate`, `Timescale`, `MediaPath`, `SegmentId` are value types with validated constructors, so an invalid rate or a path-keyed duplicate source is unrepresentable rather than merely discouraged. |
+| 4 | `domain-driven-design` | `Project`, `Segment`, `KeyframeGrid` | Aggregates own their invariants: `Project::add_segment` refuses a segment whose source is not in the project; `Project::preset_for` refuses an unknown preset instead of quietly defaulting. |
+| 5 | `clean-code` | throughout | Names carry the units (`start_frame`, not `start`; `seconds_of`, not `to_seconds`). Each public function's doc comment states *why*, not what. |
+| 6 | `typescript-expert` | `apps/web`, `apps/desktop` | Branded types for segment and project ids on the TS side; `strict` plus `noUncheckedIndexedAccess`; wire types derived from the Rust `serde` shapes so the two cannot drift. |
+| 7 | `api-design-principles` | `trimmer-daemon`, Tauri IPC | One resource shape per noun, `camelCase` on the wire, and errors as a discriminated union carrying the numbers that produced them, so a client pattern-matches instead of parsing prose. |
+| 8 | `api-patterns` | `trimmer-daemon` | Chose a local HTTP/JSON API over tRPC or GraphQL: the consumers are the desktop shell, the CLI and a studio's pipeline script, and a pipeline script speaks HTTP, not a typed client. |
+| 9 | `nodejs-best-practices` | `apps/desktop` | Rejected a Node sidecar. A Node runtime in the installer is weight and an upgrade surface for no gain, since the engine is Rust and Tauri already provides the shell. |
+| 10 | `python-pro` | `tools/oracle` | The V1 engine is invoked in place as an oracle, never vendored. Its `Fraction.limit_denominator` behaviour is the specification the Rust rate parser is checked against. |
+| 11 | `python-testing-patterns` | `tools/oracle`, `crates/trimmer-core/tests/oracle.rs` | The oracle is a table-driven differential harness: one JSON case in, one plan out, compared field by field against the V1 engine's answer as ground truth. |
+| 12 | `testing-patterns` | every crate | Tests are written against the *rule*, not the implementation. `proptest` round-trips timecode over 1.5 M frames at eight rates, and a property asserts drop-frame rendering never emits a skipped label. |
+| 13 | `database-design` | `trimmer-store` | SQLite with a schema-version table and forward-only migrations; WAL journal; foreign keys on. Chose SQLite over an embedded KV store because a project is relational (sources, segments, runs, audit) and a studio will want to query it. |
+| 14 | `sql-optimization-patterns` | `trimmer-store` | Indexes on the two access paths that exist, and an explicit note that adding more would be speculative. |
+| 15 | `error-handling-patterns` | `CoreError` | One variant per condition a caller handles, each carrying the values that produced it. `Cancelled` is a distinct type rather than an error, because a user pressing Cancel is not a failure. |
+| 16 | `performance-profiling` | `trimmer-media` | Probe once and cache: one `ffprobe -print_format json` answers rate, frames, timebase and audio. Keyframe listing uses `-skip_frame nokey`, so a two-hour master costs a seek rather than a decode. |
+| 17 | `async-python-patterns` | `trimmer-media` | The V1 heartbeat thread becomes a `tokio` interval task and cancellation becomes a watch channel, so Cancel is instant even in the middle of a multi-minute copy. |
+| 18 | `deployment-procedures` | `docs/RELEASE.md` | A release is a checklist with a rollback: build, sign, checksum, publish, verify the update feed resolves, keep the previous artifact addressable. |
+| 19 | `vulnerability-scanner` | `docs/SECURITY.md` | Argv-array process spawning everywhere (no shell), no `unsafe`, path canonicalisation before a project stores a path, and a licence file read with a size cap. |
+| 20 | `accessibility` | `apps/web` | The workspace is fully keyboard-drivable, the cut table is a real grid with row and column semantics, timecode fields have `aria-describedby` error text, and every status colour has a non-colour cue. |
+| 21 | `design-taste-frontend` | `apps/web` tokens | Rejected the generic dashboard look. Chose a dark, dense, editor-grade surface: one accent, tabular figures for every timecode, no rounded-everything, no gradient headers. |
+| 22 | `design-tokens-to-css` | `apps/web/src/styles/tokens.css` | One 4 px spacing scale and a Major-Third type scale, emitted as CSS custom properties with light and dark values, so no component hard-codes a colour or a size. |
+| 23 | `dark-mode-color-systems` | `tokens.css` | Semantic token names (`--surface-raised`, `--text-muted`, `--signal-danger`) rather than literal ones, so a light theme is a second value set rather than a second stylesheet. |
+| 24 | `core-web-vitals` | `apps/web` | No web font download — a system stack for UI and a bundled monospace for figures — no layout shift on the cut table (fixed row height), and a virtualised transcript list because a three-hour transcript is 3 000 rows. |
+| 25 | `code-review-checklist` | `docs/CODE-REVIEW.md` | The review brief used by the Part 2 audit agents, and the checklist applied to the core before it was called done. |
+| 26 | `systematic-debugging` | the core's test cycle | When the first full run produced 17 failures, each was traced to a cause rather than patched: the V1 engine was run to establish ground truth *before* any expectation was changed. Five were wrong expectations. Two were real bugs, both found this way: `caption::render` used the file's line ending between cues but not inside them, and `Folded::span` mapped match offsets through the wrong string, so a search highlight landed two characters early. |
+| 27 | `git-advanced-workflows` | repository history | Trunk-based with a linear, reviewable history; each commit is one decision, with the reasoning in the message body. |
+| 28 | `architecture-decision-records` | `docs/adr/` | The V1 ADRs are carried forward and superseded, not deleted. Each of ADR-001..007 gets a V2 record stating what changed and why, so the reasoning survives the rewrite. |
+| 29 | `monorepo-management` | workspace layout | A Cargo workspace plus a small npm workspace, not a JS monorepo tool: the Rust crates are the product and `cargo` already does the job. |
+| 30 | `electron-development` | stack decision | Consulted to weigh Electron against Tauri, then rejected: a bundled Chromium and a ~150 MB runtime for an app whose value is a native ffmpeg pipeline, when the WebView2 runtime is already on every supported Windows machine. |
+| 31 | `devops-pipeline-builder` | `.github/workflows/ci.yml` | CI runs `fmt --check`, `clippy -D warnings`, `test`, and a real end-to-end trim against a generated clip, so the media path is exercised on every push rather than only the pure logic. |
+| 32 | `docker-expert` | stack decision | Rejected containerising the app. The deliverable is a Windows desktop installer and a studio's editors do not run Docker. Recorded so the decision is not re-litigated. |
+| 33 | `webapp-testing` | `apps/web` end-to-end tests | The UI is tested with Playwright against the real dev server on the two flows that matter: build a segment from a transcript search, and run a batch and read the proof panel. |
+
+### Skills consulted and deliberately *not* applied
+
+Recording a rejection is as useful as recording an adoption.
+
+- **`electron-development`** — see #30.
+- **`docker-expert`** — see #32.
+- **`fastapi-pro`** — the local API is `axum` inside the daemon binary. Shipping a Python runtime to serve a handful of endpoints is a liability, not a feature. FastAPI's principles (typed schemas, dependency injection, generated OpenAPI) were taken; the framework was not.
+- **`threejs-skills`, `hyperframes`, `remotion-best-practices`, `motion-graphics`** — no 3D, and this product cuts video rather than rendering it.
+- **`seo`, `page-cro`, `ad-creative`** — marketing surface, not engineering, and there is no public web page to optimise.
+
+---
+
+## Part 2 — Skills run as independent audits
+
+Each audit is a separate agent given the finished code and the skill as its brief, required to
+report findings with file and line, a severity, and a concrete fix. Reports live in
+`docs/audit/`.
+
+| # | Skill | Target | Report |
+|---|---|---|---|
+| 34 | `code-review-checklist` | all Rust crates | `docs/audit/code-review.md` |
+| 35 | `vulnerability-scanner` | `trimmer-media`, `trimmer-daemon`, `trimmer-store`, licensing | `docs/audit/security.md` |
+| 36 | `accessibility` | `apps/web` | `docs/audit/accessibility.md` |
+| 37 | `performance-profiling` | probe path, transcript index, batch queue | `docs/audit/performance.md` |
+| 38 | `documentation-templates` | `README.md` and `docs/` | `docs/audit/documentation.md` |
+| 39 | `api-design-principles` | daemon routes and Tauri IPC commands | `docs/audit/api.md` |
+| 40 | `web-quality-audit` | `apps/web` production build | `docs/audit/web-quality.md` |
+
+---
+
+## Counting
+
+Forty distinct skills are named above. Thirty-three changed a decision in the shipped code or
+its documentation, and seven are independent audits. The requirement was twenty.

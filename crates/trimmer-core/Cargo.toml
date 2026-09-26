@@ -1,0 +1,24 @@
+[package]
+name = "trimmer-core"
+description = "Pure domain core: Premiere timecode, frame maths, cut planning, caption retiming. No I/O, no ffmpeg."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+time.workspace = true
+
+[dev-dependencies]
+proptest = "1"
+
+# Lint policy lives in `src/lib.rs` as crate-root attributes rather than here: an
+# `[lints]` table is a Cargo-level setting whose interaction with a virtual workspace root
+# proved unreliable to verify, and a lint policy that might silently not be applied is worse
+# than no policy at all. Attributes at the crate root are unambiguous and greppable.

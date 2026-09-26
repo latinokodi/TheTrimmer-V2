@@ -1,0 +1,39 @@
+# Rust
+/target
+**/*.rs.bk
+*.pdb
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# Tauri build output
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+
+# Local data: projects, caches, logs, licences
+.local/
+*.trimmerproj
+*.trimmerproj-journal
+/scratch/
+*.log
+
+# Media used by tests and oracle runs
+/testdata/generated/
+/crates/trimmer-core/tests/fixtures/generated/
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+
+# Python oracle virtualenv (the V1 engine is invoked in-place, never vendored)
+__pycache__/
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/

@@ -1,0 +1,24 @@
+[package]
+name = "trimmer-verify"
+description = "Verification vocabulary and verdict logic: pure checks over measured facts, plus the tamper-evident audit manifest. No ffmpeg."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+trimmer-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+uuid.workspace = true
+sha2 = "0.10"
+hmac = "0.12"
+
+# Lint policy lives in `src/lib.rs` as crate-root attributes rather than here, for the same
+# reason `trimmer-core` states: an `[lints]` table is a Cargo-level setting whose interaction
+# with a virtual workspace root is hard to verify, and a policy that silently does not apply
+# is worse than none.
