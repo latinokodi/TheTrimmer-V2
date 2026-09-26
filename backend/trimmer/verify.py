@@ -122,8 +122,20 @@ def measure_offset(source: Path, output: Path, in_frame: int, rate, at_frame: in
     run ahead of the source's, negative that it lags.
     """
     rate_value = float(rate)
-    segment_start = output_start + at_frame / rate_value
-    source_start_time = source_start + (in_frame + at_frame - search) / rate_value
+    # Half a frame into each window's first frame, deliberately.
+    #
+    # Both windows are positioned by *time* and then hashed from whatever frame ffmpeg starts
+    # on, and a seek aimed exactly at a frame's own timestamp is ambiguous: it lands on that
+    # frame or the one before it, and which one it picks is not something the caller can see.
+    # That ambiguity was the whole of the remaining failure on real material -- content that a
+    # wider search showed sitting exactly on the mark was reported a frame early, because the
+    # source window had begun one frame late and every delta in the list shifted with it.
+    #
+    # Aiming into the middle of the frame removes the choice. It is the same correction the
+    # body copy needs, for the same reason.
+    half = 0.5
+    segment_start = output_start + (at_frame + half) / rate_value
+    source_start_time = source_start + (in_frame + at_frame - search + half) / rate_value
     segment = ff.frame_md5s(output, segment_start, window)
     if len(segment) < window:
         return OffsetCheck(at_frame, None, rate_value)
