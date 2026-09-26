@@ -1,5 +1,10 @@
 # TheTrimmer V2 — Security Audit
 
+> **This is a record of a review, not a list of open work.** It was written against the tree as it
+> stood when it was run, and the findings that mattered have since been fixed — the fix for each is a
+> commit, and the current state of the product is [docs/TRUTH.md](../TRUTH.md) and the test suite.
+> Line numbers below refer to the revision that was read and will have moved.
+>
 ## Scope
 
 This audit covers the Rust workspace at `H:\THEROLLUPFILES\TheTrimmer-V2` against the threat model

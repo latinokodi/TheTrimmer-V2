@@ -56,14 +56,21 @@ with no media at all — but those tests only prove the core is *self-consistent
 what proves it is *right*, and the reason the engine could be rewritten rather than wrapped is
 that the oracle makes "right" checkable.
 
-**What is verified today, and what is not.** The pinned expectations are in place: `timecode.rs`
-asserts against triples produced by running V1 and states in the test source that the suite
-doubles as the oracle's Rust half, and the rate parser resolves `29.97` the way V1's
+**The harness landed, and it is what closed this decision out.** `crates/trimmer-core/tests/oracle.rs`
+holds the case table and drives `tools/oracle/run_oracle.py`, which shells out to the V1 engine in
+`H:\THEROLLUPFILES\TheTrimmer` and compares the two implementations field for field. It runs in the
+workspace suite — five tests, against a V1 checkout — and **skips loudly with a printed reason** when
+V1 or Python is absent, because a test that cannot tell "not applicable here" from "the engine is
+wrong" is a test that will be deleted by the first person it inconveniences.
+
+So the oracle is now a rule the code can be *caught* breaking rather than only a rule it was written
+against. The earlier revision of this record said the opposite — that there was no `tools/oracle`
+directory and no `oracle.rs` — and that sentence is kept here rather than deleted, because the reason
+it was written is the reason the harness matters: a differential oracle that exists only in the
+design document verifies nothing.
+
+**The pinned expectations stay, and they are the half that always runs.** `timecode.rs` asserts
+against triples produced by running V1, and the rate parser resolves `29.97` the way V1's
 `Fraction.limit_denominator` resolves it — `30000/1001` — because the two implementations have to
-agree field for field (ADR-011). The structural prerequisite is in place: `trimmer-core` has no
-I/O dependency and the workspace keeps panic-unwind enabled in dev because the oracle needs to
-catch a panic per case rather than abort the run. The harness itself — a case table plus a runner
-that shells out to the V1 engine — is **not yet in the repository**: there is no `tools/oracle`
-directory and no `crates/trimmer-core/tests/oracle.rs` today, even though the module documentation
-refers to the latter. Until it lands, the oracle is a rule the code was written against rather
-than a test that can fail, and that gap should be closed before the engine is called finished.
+agree field for field (ADR-011). Those assertions need no Python and no V1 checkout, so the parts of
+the oracle that can always run always do; the harness adds the comparison that needs V1 present.
