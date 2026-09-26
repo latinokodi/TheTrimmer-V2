@@ -46,7 +46,11 @@ work, executed by separate agents with the audit skill loaded as their brief.
 | 30 | `electron-development` | stack decision | Consulted to weigh Electron against Tauri, then rejected: a bundled Chromium and a ~150 MB runtime for an app whose value is a native ffmpeg pipeline, when the WebView2 runtime is already on every supported Windows machine. |
 | 31 | `devops-pipeline-builder` | `.github/workflows/ci.yml` | CI runs `fmt --check`, `clippy -D warnings`, `test`, and a real end-to-end trim against a generated clip, so the media path is exercised on every push rather than only the pure logic. |
 | 32 | `docker-expert` | stack decision | Rejected containerising the app. The deliverable is a Windows desktop installer and a studio's editors do not run Docker. Recorded so the decision is not re-litigated. |
-| 33 | `webapp-testing` | `apps/web` end-to-end tests | The UI is tested with Playwright against the real dev server on the two flows that matter: build a segment from a transcript search, and run a batch and read the proof panel. |
+| 33 | `webapp-testing` | `apps/web/tests/` | Playwright drives the real interface in Chromium against the stub bridge: a first run, the marks and their live frame numbers, a keyframe copy versus a head patch, a refused range, queueing and trimming to a verified file, and marking a range from a transcript sentence. Ten tests, ~5 s, no build. |
+| 34 | `high-end-visual-design` | `apps/web/src/styles/app.css` | Used as a **negative** reference as much as a positive one. Taken: one desaturated accent, tonal separation by surface rather than a grey border on everything, motion only as feedback and only through `transform`/`opacity`, a shadow earned only by the one element that genuinely floats. Rejected: the Awwwards vocabulary — no `py-24` macro-whitespace, no oversized display type, no scroll-entry animation, no nested "double-bezel" cards. This is a tool an editor keeps open for six hours, not a landing page. |
+| 35 | `redesign-existing-projects` | the shell | The three-column dashboard was audited against the question "does this make a simple tool look complicated", and then deleted. What replaced it is one column: the video, the two marks, the length, the button, with the queue and the transcript folded below. The audit's own standard — that a redesign must not break what worked — is why the CLI, the daemon and the Rust core were not touched at all. |
+| 36 | `webapp-testing` → `ui-ux-pro-max` | empty states, disabled controls | Every control that cannot act is disabled **and says why**, in its tooltip, and the reason is the next thing to do rather than the state of the program. The first screen with nothing loaded offers the one action that unsticks it, in the place the content will appear. |
+| 37 | `systematic-debugging` | the dev-loop migration | The rule that a test failure is a hypothesis about the *code*, not about the test, is what stopped four browser-test failures from being papered over with waits. Three were real defects: the proof panel's checks were collapsed behind a row nobody opened, the transcript panel called `add_segment` directly instead of through the model so nothing refreshed, and the marks were planned only behind a button. |
 
 ### Skills consulted and deliberately *not* applied
 
@@ -91,5 +95,5 @@ no trace of it cannot tell whether it was considered and rejected or never consi
 
 ## Counting
 
-Forty distinct skills are named above. Thirty-three changed a decision in the shipped code or
-its documentation, and seven are independent audits. The requirement was twenty.
+Forty-four distinct skills are named above. Thirty-seven changed a decision in the shipped code or its
+documentation, and seven are independent audits. The requirement was twenty.

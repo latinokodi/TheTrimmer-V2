@@ -10,6 +10,13 @@ dist-ssr/
 *.local
 .vite/
 
+# Playwright: traces, screenshots on failure and the HTML report are all build output. `screens/` is
+# deliberately NOT ignored — it holds the interface screenshots a layout test writes, which are the
+# thing a person reviews when the design changes.
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/blob-report/
+
 # Tauri build output
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/

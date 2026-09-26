@@ -27,13 +27,14 @@ interface TauriWithDialog {
   readonly dialog?: DialogBridge;
 }
 
-/** True when a picker is available. */
-export function canPick(): boolean {
-  const bridge = (window as unknown as { readonly __TAURI__?: TauriWithDialog }).__TAURI__;
-  return bridge?.dialog !== undefined;
-}
-
-/** Ask for one existing file. Returns `null` when the user cancels. */
+/**
+ * Ask for one existing file. Returns `null` when the user cancels.
+ *
+ * There is no `canPick` companion: a caller that needs to know whether a picker exists asks
+ * {@link pickFile} and gets `null`, and a caller that wants to offer a typed path instead offers one
+ * unconditionally. A predicate that says "the picker is unavailable" earns nothing that the return
+ * value of this function does not already say.
+ */
 export async function pickFile(options: {
   readonly title: string;
   readonly filters?: readonly { readonly name: string; readonly extensions: readonly string[] }[];
@@ -48,16 +49,6 @@ export async function pickFile(options: {
     directory: false,
     ...(options.filters === undefined ? {} : { filters: options.filters }),
   });
-  return typeof chosen === "string" ? chosen : null;
-}
-
-/** Ask for a folder. Returns `null` when the user cancels. */
-export async function pickFolder(title: string): Promise<string | null> {
-  const bridge = (window as unknown as { readonly __TAURI__?: TauriWithDialog }).__TAURI__;
-  if (bridge?.dialog === undefined) {
-    return null;
-  }
-  const chosen = await bridge.dialog.open({ title, multiple: false, directory: true });
   return typeof chosen === "string" ? chosen : null;
 }
 

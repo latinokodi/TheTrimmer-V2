@@ -57,14 +57,6 @@ export function formatPercent(fraction: number): string {
   return `${Math.round(percent)}%`;
 }
 
-/** A count with a thousands separator, because a frame count is often six digits. */
-export function formatCount(value: number): string {
-  if (!Number.isFinite(value)) {
-    return "—";
-  }
-  return value.toLocaleString("en-US");
-}
-
 /** A frame rate as a person says it: `29.97`, `25`, `23.976`. */
 export function formatRate(num: number, den: number): string {
   if (den === 0) {
@@ -76,34 +68,6 @@ export function formatRate(num: number, den: number): string {
   }
   // Three decimals distinguishes 23.976 from 24 and 29.97 from 30, which is the whole point.
   return value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
-}
-
-/** The mode of a plan as a word, with what it means for the file. */
-export function describeMode(mode: "copy" | "headPatch" | "reencode"): {
-  readonly label: string;
-  readonly detail: string;
-  readonly tone: "ok" | "head" | "warn";
-} {
-  switch (mode) {
-    case "copy":
-      return {
-        label: "Lossless copy",
-        detail: "the in point is a keyframe, so every frame is the original",
-        tone: "ok",
-      };
-    case "headPatch":
-      return {
-        label: "Head patch",
-        detail: "only the frames before the next keyframe are re-encoded",
-        tone: "head",
-      };
-    case "reencode":
-      return {
-        label: "Full re-encode",
-        detail: "no keyframe falls inside the segment, so all of it is re-encoded",
-        tone: "warn",
-      };
-  }
 }
 
 /** A unix timestamp as a local date and time, for a project listing. */
@@ -119,16 +83,4 @@ export function formatTimestamp(unixSeconds: number): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-/** The last path component, for a display where the full path is too long. */
-export function fileName(path: string): string {
-  const parts = path.split(/[\\/]/);
-  return parts[parts.length - 1] ?? path;
-}
-
-/** The directory a path lives in. */
-export function directoryName(path: string): string {
-  const index = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
-  return index < 0 ? "" : path.slice(0, index);
 }

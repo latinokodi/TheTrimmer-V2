@@ -90,11 +90,19 @@
   --focus-offset: 2px;
 
   /* ---- Layout ------------------------------------------------------------------------ */
-  --rail-width: 260px;
-  --panel-width: 340px;
-  --row-height: 34px;
-  --toolbar-height: 48px;
-  --statusbar-height: 28px;
+  /*
+   * Widths are the three columns of the shell; heights are the four strips. `--row-height` is a
+   * *fixed* row height, and that is a functional decision rather than a stylistic one: a plan arrives
+   * asynchronously and fills in a column, and a row that grew when its plan landed would move the
+   * table under the pointer mid-click.
+   */
+  --rail-width: 248px;
+  --panel-width: 332px;
+  --row-height: 32px;
+  --head-height: 30px;
+  --titlebar-height: 52px;
+  --actionbar-height: 48px;
+  --statusbar-height: 26px;
 }
 
 /* ==========================================================================================
@@ -149,7 +157,14 @@
   --signal-head-subtle: rgb(185 138 224 / 16%);
 
   --shadow-raised: 0 1px 2px rgb(0 0 0 / 40%);
-  --shadow-overlay: 0 8px 28px rgb(0 0 0 / 55%), 0 1px 0 rgb(255 255 255 / 4%) inset;
+  --shadow-overlay: 0 12px 32px -8px rgb(0 0 0 / 70%), 0 0 0 1px rgb(255 255 255 / 5%) inset;
+
+  /*
+   * The scrim behind a dialog. A tint of the background hue rather than neutral black, and no
+   * `backdrop-filter`: a blur over a repainting WebView2 surface costs a full-surface composite every
+   * frame, for a decorative effect, in an application that is already decoding video next to it.
+   */
+  --scrim: rgb(6 8 11 / 72%);
 }
 
 /* ==========================================================================================
@@ -194,7 +209,8 @@
   --signal-head-subtle: rgb(107 63 160 / 12%);
 
   --shadow-raised: 0 1px 2px rgb(16 20 26 / 8%);
-  --shadow-overlay: 0 8px 24px rgb(16 20 26 / 14%);
+  --shadow-overlay: 0 12px 28px -10px rgb(16 20 26 / 22%);
+  --scrim: rgb(24 28 34 / 32%);
 }
 
 /* ==========================================================================================

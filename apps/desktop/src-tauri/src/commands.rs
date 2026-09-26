@@ -21,15 +21,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Runtime, State};
 
-use trimmer_app::ports::{Clock, MediaEngine, SegmentCutRequest, SystemClock, TranscriptSource};
+use trimmer_app::ports::{Clock, SegmentCutRequest, SystemClock, TranscriptSource};
 use trimmer_app::watch::ObservedFile;
 use trimmer_app::{
     CollectingQueueSink, MediaAdapter, QueueOptions, SegmentView, SourceView, Workspace,
 };
-use trimmer_core::{Grouping, MediaPath, Segment, VerifyPolicy};
-use trimmer_media::{CutConfig, CutExecutor, PollPolicy, RunOptions, ToolPaths};
+use trimmer_core::{MediaPath, Segment, VerifyPolicy};
+use trimmer_media::{CutConfig, CutExecutor, PollPolicy, Prepared, RunOptions, ToolPaths};
 
 use crate::state::{AppState, RunningBatch};
 use crate::VERSION;
@@ -92,7 +92,7 @@ pub async fn doctor(state: State<'_, AppState>) -> Reply<serde_json::Value> {
 /// The projects in the store.
 #[tauri::command]
 pub async fn list_projects(state: State<'_, AppState>) -> Reply<serde_json::Value> {
-    let rows = trimmer_app::ProjectStore::list(state.store.as_ref()).map_err(|error| error)?;
+    let rows = trimmer_app::ProjectStore::list(state.store.as_ref())?;
     let listed: Vec<serde_json::Value> = rows
         .into_iter()
         .map(|(id, name, updated_at)| {
@@ -148,7 +148,7 @@ pub async fn delete_project(state: State<'_, AppState>, id: String) -> Reply<()>
         .parse::<uuid::Uuid>()
         .map(trimmer_core::ProjectId)
         .map_err(|error| format!("{id} is not a project id: {error}"))?;
-    trimmer_app::ProjectStore::delete(state.store.as_ref(), project_id).map_err(|error| error)?;
+    trimmer_app::ProjectStore::delete(state.store.as_ref(), project_id)?;
     if state
         .workspace
         .lock()
@@ -202,7 +202,6 @@ pub async fn add_source(state: State<'_, AppState>, path: String) -> Reply<serde
 
     state.with_workspace(|workspace| {
         let canonical = media_path.canonicalised();
-        let transcript = trimmer_core::caption::find_for(canonical.as_path());
         workspace
             .project_mut()
             .upsert_source(trimmer_core::SegmentSource {
@@ -211,21 +210,17 @@ pub async fn add_source(state: State<'_, AppState>, path: String) -> Reply<serde
                 available: media_path.exists(),
                 label: None,
             });
-        let summary = probed.as_ref().map_or_else(
-            || "the file is not on disk; it was added anyway so the marks can be fixed".to_owned(),
-            trimmer_core::MediaInfo::summary,
-        );
-        Ok(serde_json::json!({
-            "path": canonical.to_string(),
-            "name": canonical.file_name(),
-            "present": media_path.exists(),
-            "media": probed,
-            "summary": summary,
-            "transcript": transcript.map(|found| found.display().to_string()),
-            "transcriptCues": serde_json::Value::Null,
-            "label": serde_json::Value::Null,
-            "variableRate": probed.as_ref().is_some_and(trimmer_core::MediaInfo::is_variable_rate),
-        }))
+        // The view is built by `Workspace::sources`, the same code the `sources` command uses, and
+        // the one matching row is returned. An earlier version wrote the JSON by hand here and it
+        // drifted: it sent `transcript` and `media` but not the `transcriptCues` the rail reads, and
+        // it sent no probed facts at all, so the rail rendered a row of blanks for a source the very
+        // next `sources` call would describe in full. One builder cannot drift from itself.
+        workspace
+            .sources()
+            .into_iter()
+            .find(|view| view.path.same_file_as(&canonical))
+            .ok_or_else(|| format!("{canonical} was not recorded as a source"))
+            .and_then(|view| serde_json::to_value(view).map_err(explain))
     })
 }
 
@@ -334,6 +329,19 @@ pub async fn presets(state: State<'_, AppState>) -> Reply<serde_json::Value> {
 }
 
 /// Add a segment.
+///
+/// # The out point, and the one convention that matters
+///
+/// `end_frame` is the domain's **exclusive** end — one past the last frame kept. The interface
+/// converts before it sends: the segment dialog parses the out timecode, which is the last frame
+/// kept, and hands over `parsed + 1`. This command stores what it is given, exactly like the command
+/// line's `--out` with `--out-exclusive`.
+///
+/// The conversion lives in the dialog rather than here because the dialog is the only thing that
+/// knows what the user typed, and because the same command serves the transcript panel, which works
+/// in frames and already has the exclusive end. Converting here as well would convert twice, and a
+/// cut marked as 26 frames in the window would deliver 27 — which is precisely what a run of this
+/// test caught.
 #[tauri::command]
 pub async fn add_segment(
     state: State<'_, AppState>,
@@ -361,6 +369,9 @@ pub async fn add_segment(
 }
 
 /// Update a segment in place.
+///
+/// `end_frame` is the domain's exclusive end, as in [`add_segment`]. `Some(None)` means "to the end
+/// of the source".
 #[tauri::command]
 pub async fn update_segment(
     state: State<'_, AppState>,
@@ -510,26 +521,12 @@ pub async fn preview(state: State<'_, AppState>, id: String) -> Reply<serde_json
     })?;
 
     let plan = engine.plan(&media, &segment).await.map_err(explain)?;
-    let forces = !preset.preserves_picture(media.width, media.height);
+    // The exact argument vectors that would run, from the real builders rather than a description of
+    // them, so the dry run cannot drift from the run.
     let commands = engine
         .preview(&media, &segment, &preset, &plan)
         .unwrap_or_default();
-    let commands_json: Vec<serde_json::Value> = commands
-        .iter()
-        .map(|step| serde_json::json!({ "label": step.label, "args": step.args }))
-        .collect();
-
-    Ok(serde_json::json!({
-        "segment": id,
-        "plan": plan,
-        "preset": preset.name,
-        "forcesFullEncode": forces,
-        "reencodeFraction": plan.reencode_fraction(),
-        "estimatedBytes": estimate_bytes(&plan, &media, &preset),
-        "commands": commands_json,
-        "problems": [],
-        "notes": plan.notes,
-    }))
+    Ok(preview_reply(&id, &plan, &media, &preset, Some(&commands)))
 }
 
 /// A rough output size. Rough on purpose: it answers "will this fit on the drive", and pretending
@@ -554,9 +551,21 @@ fn estimate_bytes(
     Some((video_bytes + audio_bytes).max(0.0) as u64)
 }
 
-/// What the whole batch will do and cost.
+/// What the whole batch will do and cost, and — when the interface asks — a range that has been
+/// marked but not yet queued.
+///
+/// The extra range is planned from a synthetic segment and is **not** added to the project: the
+/// interface plans continuously while the In and Out fields are being filled, and the whole point of
+/// that is to answer "will this re-encode" before the user has decided to keep the range. Persisting
+/// it would fill the project with segments nobody asked for.
+///
+/// It is one command rather than two because the answer has to be consistent: the queue and the range
+/// under the fields are planned by the same code, against the same keyframe grid, in one reply.
 #[tauri::command]
-pub async fn preview_all(state: State<'_, AppState>) -> Reply<serde_json::Value> {
+pub async fn preview_all(
+    state: State<'_, AppState>,
+    marked: Option<MarkedRange>,
+) -> Reply<serde_json::Value> {
     let ids: Vec<String> = state.with_workspace(|workspace| {
         Ok(workspace
             .project()
@@ -575,13 +584,118 @@ pub async fn preview_all(state: State<'_, AppState>) -> Reply<serde_json::Value>
             Err(reason) => planned.push(serde_json::json!({ "problems": [reason] })),
         }
     }
+
+    if let Some(range) = marked {
+        if range.end_frame > range.start_frame {
+            match plan_marked(&state, &range).await {
+                Ok(value) => planned.push(value),
+                // A marked range that cannot be planned is left out of the reply rather than reported
+                // as an error. The interface has already decided the range is legal — it is only
+                // asking what it would cost — so a refusal here would put a sentence on screen for a
+                // state the interface does not consider a failure. The trim itself does its own
+                // planning and reports its own refusal, which is where a real problem belongs.
+                Err(reason) => tracing::debug!("the marked range could not be planned: {reason}"),
+            }
+        }
+    }
+
     Ok(serde_json::Value::Array(planned))
 }
 
+/// A range the interface has marked but not queued.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkedRange {
+    /// The first frame kept.
+    pub start_frame: i64,
+    /// One past the last frame kept.
+    pub end_frame: i64,
+    /// The preset to plan against, or the project's own when absent.
+    pub preset: Option<String>,
+    /// Handles applied either side, in frames.
+    pub handle_frames: i64,
+}
+
+/// Plan a range that is not in the project.
+///
+/// # Why it borrows the source and the preset from the project
+///
+/// The interface plans under the marks continuously, and a range that has been marked but not queued
+/// is not in the project — so there is nothing to look up by id. What *is* in the project is the
+/// source (probed, with its frame rate and its keyframe grid) and the delivery preset that applies,
+/// and those are the only two things planning needs. The range supplies the rest.
+///
+/// The reply is built by [`preview_reply`], the same function the `preview` command uses, so the
+/// marked range and a queued segment cannot describe themselves differently — which, in a panel that
+/// exists to compare them, would be the whole bug.
+async fn plan_marked(state: &AppState, range: &MarkedRange) -> Reply<serde_json::Value> {
+    let engine = Arc::clone(&state.engine);
+    let (media, segment, preset) = state.with_workspace(|workspace| {
+        let media = workspace
+            .project()
+            .sources
+            .values()
+            .find_map(|source| source.media.clone())
+            .ok_or_else(|| "no source has been probed yet".to_owned())?;
+        let mut segment = Segment::new(
+            media.path.clone(),
+            "the marked range",
+            range.start_frame,
+            range.end_frame,
+        );
+        segment.end_frame = Some(range.end_frame);
+        segment.preset.clone_from(&range.preset);
+        segment.handle_frames = range.handle_frames;
+        let preset = workspace
+            .project()
+            .preset_for(&segment)
+            .map_err(explain)?
+            .clone();
+        Ok((media, segment, preset))
+    })?;
+
+    let plan = engine.plan(&media, &segment).await.map_err(explain)?;
+    Ok(preview_reply("marked", &plan, &media, &preset, None))
+}
+
+/// The JSON a preview is: one shape, built in one place.
+///
+/// Extracted so the two commands that answer "what would this cost" cannot drift. The `preview`
+/// command passes the segment's id and the marked-range path passes the literal `marked`, which is
+/// the only thing that differs.
+fn preview_reply(
+    id: &str,
+    plan: &trimmer_core::CutPlan,
+    media: &trimmer_core::MediaInfo,
+    preset: &trimmer_core::DeliveryPreset,
+    commands: Option<&[Prepared]>,
+) -> serde_json::Value {
+    let commands_json: Vec<serde_json::Value> = commands
+        .unwrap_or_default()
+        .iter()
+        .map(|step| serde_json::json!({ "label": step.label, "args": step.args }))
+        .collect();
+    serde_json::json!({
+        "segment": id,
+        "plan": plan,
+        "preset": preset.name,
+        "forcesFullEncode": !preset.preserves_picture(media.width, media.height),
+        "reencodeFraction": plan.reencode_fraction(),
+        "estimatedBytes": estimate_bytes(plan, media, preset),
+        "commands": commands_json,
+        "problems": [],
+        "notes": plan.notes,
+    })
+}
+
 /// Cut one segment, emitting `cut-progress` events as it goes.
+///
+/// Generic over the runtime so `tests/ipc_contract.rs` can invoke it through Tauri's mock runtime.
+/// A command is the same command whatever draws the window, and a test that could not reach this one
+/// would be a test of the parts of the interface nobody doubts.
 #[tauri::command]
-pub async fn cut_segment(
-    app: AppHandle,
+pub async fn cut_segment<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, AppState>,
     id: String,
 ) -> Reply<serde_json::Value> {
@@ -602,8 +716,8 @@ pub async fn cut_segment(
 }
 
 /// Cut one segment through the queue machinery, so a single cut and a batch behave identically.
-async fn run_one(
-    app: &AppHandle,
+async fn run_one<R: Runtime>(
+    app: &AppHandle<R>,
     state: &AppState,
     segment_id: trimmer_core::SegmentId,
     cancel: trimmer_media::CancelFlag,
@@ -680,8 +794,8 @@ async fn run_one(
 
 /// Run the whole batch through the queue.
 #[tauri::command]
-pub async fn run_batch(
-    app: AppHandle,
+pub async fn run_batch<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, AppState>,
     stop_on_error: bool,
     skip_verification: bool,
@@ -833,11 +947,14 @@ pub async fn cancel_batch(state: State<'_, AppState>) -> Reply<()> {
 /// It implements both vocabularies: `trimmer-media` speaks `Progress` about one process, and the
 /// queue speaks `QueueEvent` about a batch. The interface listens for one event name and
 /// discriminates on the shape, which is why both go out under `cut-progress`.
-struct EmitterSink {
-    app: AppHandle,
+///
+/// Generic over the runtime, like the commands that build one, so a test can drive the same code
+/// against Tauri's mock runtime rather than a second, unwatched copy.
+struct EmitterSink<R: Runtime> {
+    app: AppHandle<R>,
 }
 
-impl trimmer_media::ProgressSink for EmitterSink {
+impl<R: Runtime> trimmer_media::ProgressSink for EmitterSink<R> {
     fn report(&self, progress: trimmer_media::Progress) {
         // A failed emit means the window has gone; there is nothing useful to do about it and
         // panicking would take the cut down with the window.
@@ -845,7 +962,7 @@ impl trimmer_media::ProgressSink for EmitterSink {
     }
 }
 
-impl trimmer_app::QueueSink for EmitterSink {
+impl<R: Runtime> trimmer_app::QueueSink for EmitterSink<R> {
     fn event(&self, event: trimmer_app::QueueEvent) {
         let _ = self.app.emit("cut-progress", &event);
     }
@@ -995,9 +1112,8 @@ pub async fn plan_watch_folder(folder: String, settle_seconds: u64) -> Reply<ser
         if !path.is_file() {
             continue;
         }
-        let metadata = match entry.metadata() {
-            Ok(metadata) => metadata,
-            Err(_) => continue,
+        let Ok(metadata) = entry.metadata() else {
+            continue;
         };
         let quiet = metadata
             .modified()
@@ -1042,10 +1158,6 @@ pub async fn reveal(path: String) -> Reply<()> {
     if !target.exists() {
         return Err(format!("{path} is not there"));
     }
-    let parent = target
-        .parent()
-        .ok_or_else(|| format!("{path} has no folder"))?
-        .to_path_buf();
     // `explorer /select,` is the only way to select a file rather than open its folder, and it is
     // the behaviour an editor expects from "show me where that went".
     #[cfg(windows)]
@@ -1057,7 +1169,6 @@ pub async fn reveal(path: String) -> Reply<()> {
     }
     #[cfg(not(windows))]
     {
-        let _ = parent;
         return Err("revealing a file is only implemented on Windows".to_owned());
     }
     #[allow(unreachable_code)]
@@ -1065,9 +1176,17 @@ pub async fn reveal(path: String) -> Reply<()> {
 }
 
 /// The verification policy, so the interface can show it and change it.
+///
+/// Answers with the default when no project is open rather than refusing. The interface reads this
+/// on mount, before a project exists, and a refusal there would be a status-bar error on a window
+/// that is behaving perfectly — which teaches the user to ignore the status bar.
 #[tauri::command]
 pub async fn get_verify_policy(state: State<'_, AppState>) -> Reply<serde_json::Value> {
-    state.with_workspace(|workspace| Ok(serde_json::json!(workspace.verify_policy())))
+    let guard = state.workspace.lock();
+    let policy = guard.as_ref().map_or(VerifyPolicy::default(), |workspace| {
+        workspace.verify_policy()
+    });
+    Ok(serde_json::json!(policy))
 }
 
 /// Set the verification policy.

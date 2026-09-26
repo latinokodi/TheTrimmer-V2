@@ -111,6 +111,25 @@ jobs:
           cargo test -p trimmer-media --test end_to_end -- --nocapture
         shell: pwsh
 
+      # The window's own contract: the same command names, argument keys and reply fields that
+      # `apps/web` sends and reads, driven through Tauri's real invoke handler. Everything else in
+      # this file tests the *engine*, and every one of those tests would pass if a command were
+      # registered under the wrong name or answered a JSON key the interface does not read — which is
+      # a window that renders perfectly and does nothing when clicked. Three such mismatches were
+      # found the first time this ran: `add_source` answered a different shape from the `sources`
+      # command, the verification policy refused to answer before a project was open, and an Out point
+      # marked in the window produced a segment one frame longer than the dialog promised.
+      #
+      # The browser suite in the `web` job cannot catch any of those: its stub agrees with the
+      # interface by construction. The two jobs test two different things on purpose.
+      #
+      # It is `--ignored` because it generates and cuts real media; it is named explicitly so it
+      # cannot be skipped by a filter change.
+      - name: The interface's own contract
+        run: |
+          cargo test -p thetrimmer-desktop --test ipc_contract -- --ignored --nocapture --test-threads=1
+        shell: pwsh
+
   web:
     name: web
     runs-on: windows-latest
@@ -127,9 +146,27 @@ jobs:
         working-directory: apps/web
         run: npm ci --no-audit --no-fund
 
+      # Chromium is the engine WebView2 uses, so this is the rendering path the window takes.
+      - name: Install the browser
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+
       - name: Types
         working-directory: apps/web
         run: npx tsc --noEmit
+
+      # The part of the interface that makes a claim: every number a cutter reads comes out of
+      # `lib/format`, and a formatter that is wrong is a number a person trusts and should not.
+      - name: Unit tests
+        working-directory: apps/web
+        run: npm test
+
+      # The interface driven as a person drives it, with no Rust, no WebView2 and no build — the loop
+      # that makes interface work cost seconds instead of minutes. It proves behaviour; the IPC
+      # contract job above proves the shape of what Rust sends, which this cannot see.
+      - name: Browser tests
+        working-directory: apps/web
+        run: npm run e2e
 
       - name: Build
         working-directory: apps/web

@@ -164,7 +164,18 @@ impl AppState {
 /// share a machine, and a store inside `Program Files` would need administrator rights to write to —
 /// which is exactly the kind of thing that makes an application unusable on a locked-down
 /// workstation.
+///
+/// `THE_TRIMMER_STORE` overrides it. There are two reasons that has to exist rather than being a
+/// test-only hook: an editor who keeps projects on a network share needs to say so, and the
+/// integration test that drives the real IPC commands has to run against a database it can throw
+/// away. An application whose store location cannot be named is an application that cannot be
+/// tested without touching the user's own projects.
 fn default_store_path() -> PathBuf {
+    if let Some(named) = std::env::var_os("THE_TRIMMER_STORE") {
+        if !named.is_empty() {
+            return PathBuf::from(named);
+        }
+    }
     directories::ProjectDirs::from("com", "thetrimmer", "TheTrimmer").map_or_else(
         || PathBuf::from("thetrimmer.db"),
         |dirs| dirs.data_dir().join("projects.db"),
@@ -215,7 +226,7 @@ impl trimmer_verify::MediaMeasurer for EngineMeasurer {
         &self,
         path: &trimmer_core::MediaPath,
     ) -> trimmer_core::CoreResult<trimmer_verify::CutFacts> {
-        let media = block_on(self.prober.probe(path.as_path())).map_err(|error| {
+        let media = block_on(probe_owned(self.prober.clone(), path.clone())).map_err(|error| {
             trimmer_core::CoreError::Caption {
                 path: path.to_string(),
                 reason: error.to_string(),
@@ -256,21 +267,17 @@ impl trimmer_verify::MediaMeasurer for EngineMeasurer {
         if count <= 0 {
             return Ok(trimmer_verify::FrameHashes::new(Vec::new(), start_frame));
         }
-        let executor = trimmer_media::CutExecutor::new(self.tools.clone());
         let options = trimmer_media::RunOptions {
             policy: trimmer_media::PollPolicy::long(),
             ..trimmer_media::RunOptions::default()
         };
-        let digests = block_on(executor.frame_hashes(
-            path.as_path(),
+        let digests = block_on(measure(
+            self.tools.clone(),
+            path.clone(),
             rate.seconds_of(start_frame),
             usize::try_from(count).unwrap_or(usize::MAX),
-            &options,
-        ))
-        .map_err(|error| trimmer_core::CoreError::Caption {
-            path: path.to_string(),
-            reason: error.to_string(),
-        })?;
+            options,
+        ))?;
         Ok(trimmer_verify::FrameHashes::new(digests, start_frame))
     }
 
@@ -288,11 +295,68 @@ impl trimmer_verify::MediaMeasurer for EngineMeasurer {
     }
 }
 
-/// Run a future to completion on a small runtime, for a synchronous trait method.
-fn block_on<F: std::future::Future>(future: F) -> F::Output {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("a current-thread runtime")
-        .block_on(future)
+/// Run a future to completion, from code that may itself be running on a runtime.
+///
+/// # Why a thread rather than `block_on`
+///
+/// [`trimmer_verify::MediaMeasurer`] is synchronous and its implementations block on `ffprobe` and
+/// `ffmpeg`. The obvious way to bridge that is `Runtime::block_on`, and it works exactly until the
+/// caller is *already* inside a runtime — then driving a nested one panics with "Cannot start a
+/// runtime from within a runtime", which is what a batch run through Tauri's own async command
+/// handler does.
+///
+/// The alternatives both have a catch. `Handle::block_on` needs the runtime to be multi-threaded
+/// (it panics on a current-thread one), and `block_in_place` is unavailable on one too — which rules
+/// out both Tauri's test runtime and any single-threaded host. A dedicated thread with its own
+/// current-thread runtime has no such condition: it is correct on every host, and one thread for a
+/// measurement that is about to spawn `ffmpeg` anyway is not a cost worth optimising away.
+///
+/// The future is moved to that thread rather than borrowed, so everything it touches has to be owned
+/// by the time it gets there. That is why [`measure`] exists: it takes the values rather than
+/// references to them.
+fn block_on<F>(future: F) -> F::Output
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("a current-thread runtime")
+                    .block_on(future)
+            })
+            .join()
+            .expect("the measurement thread does not panic")
+    })
+}
+
+/// Hash a window of a file's frames, with everything the future needs owned by the future.
+///
+/// The arguments are taken by value so this can be moved to the runtime thread; see [`block_on`].
+async fn measure(
+    tools: ToolPaths,
+    path: trimmer_core::MediaPath,
+    start_seconds: f64,
+    count: usize,
+    options: trimmer_media::RunOptions,
+) -> trimmer_core::CoreResult<Vec<String>> {
+    let executor = trimmer_media::CutExecutor::new(tools);
+    executor
+        .frame_hashes(path.as_path(), start_seconds, count, &options)
+        .await
+        .map_err(|error| trimmer_core::CoreError::Caption {
+            path: path.to_string(),
+            reason: error.to_string(),
+        })
+}
+
+/// Probe a file, with the prober and the path owned by the future. See [`block_on`].
+async fn probe_owned(
+    prober: trimmer_media::Prober,
+    path: trimmer_core::MediaPath,
+) -> trimmer_media::MediaResult<trimmer_core::MediaInfo> {
+    prober.probe(path.as_path()).await
 }

@@ -5,7 +5,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "types": ["vite/client"],
+    "types": ["vite/client", "node"],
 
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -22,6 +22,11 @@
     "allowImportingTsExtensions": false,
     "resolveJsonModule": true
   },
-  "include": ["src"],
+  /*
+   * `tests` as well as `src`, so `npm run typecheck` covers the browser tests too. A test that only
+   * fails when it runs is a test that costs a minute to find out about; one that fails the type check
+   * costs a second. `playwright.config.ts` is included for the same reason.
+   */
+  "include": ["src", "tests", "playwright.config.ts", "vite.config.ts"],
   "exclude": ["node_modules", "dist"]
 }

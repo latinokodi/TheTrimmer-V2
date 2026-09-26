@@ -20,6 +20,7 @@ export function ProjectsDialog({
   readonly onClose: () => void;
 }): JSX.Element {
   const [newName, setNewName] = useState("");
+  const [sourcePath, setSourcePath] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   async function addSource(): Promise<void> {
@@ -39,14 +40,41 @@ export function ProjectsDialog({
     await model.addSource(picked);
   }
 
+  /** Add a source from a typed or pasted path. */
+  async function addByPath(): Promise<void> {
+    const trimmed = sourcePath.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    setError(null);
+    try {
+      await model.addSource(trimmed);
+      setSourcePath("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
   return (
-    <div className="dialog-layer" role="presentation" onClick={onClose}>
+    <div
+      className="dialog-layer"
+      role="presentation"
+      /*
+       * Only a click on the backdrop itself closes the dialog. Clicks from the fields and buttons
+       * inside it bubble up to here, and treating those as a dismissal would throw away a typed
+       * project name the moment the user clicked beside it. See the same rule in `SegmentDialog`.
+       */
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
       <div
         className="dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="projects-title"
-        onClick={(event) => event.stopPropagation()}
       >
         <h2 className="dialog__title" id="projects-title">
           Projects
@@ -121,14 +149,52 @@ export function ProjectsDialog({
               (<code>&lt;master&gt;.srt</code>) is picked up automatically and retimed with every
               segment.
             </p>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => void addSource()}
-              disabled={model.busy !== null}
-            >
-              Add a master…
-            </button>
+            <div className="row">
+              <button
+                type="button"
+                className="btn"
+                onClick={() => void addSource()}
+                disabled={model.busy !== null}
+              >
+                Add a master…
+              </button>
+            </div>
+
+            {/*
+              A path can also be typed or pasted, and this is not a fallback for the picker — it is
+              the faster route for the work this product is for. An editor adding a master that is on
+              a mapped share or a second machine reads the path out of the Finder, the shot log or a
+              message, and pasting it beats navigating a tree to it. It is also the route that works
+              on a locked-down workstation where the shell's own file dialog is disabled by policy.
+            */}
+            <div className="field">
+              <label className="field__label" htmlFor="source-path">
+                Or paste a path
+              </label>
+              <div className="row">
+                <input
+                  id="source-path"
+                  type="text"
+                  value={sourcePath}
+                  placeholder="H:\masters\reel 2\take 07.mov"
+                  spellCheck={false}
+                  onChange={(event) => setSourcePath(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && sourcePath.trim().length > 0) {
+                      void addByPath();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={sourcePath.trim().length === 0 || model.busy !== null}
+                  onClick={() => void addByPath()}
+                >
+                  Add
+                </button>
+              </div>
+            </div>
           </section>
         ) : null}
 

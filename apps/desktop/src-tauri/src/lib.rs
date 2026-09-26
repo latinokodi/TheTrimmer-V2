@@ -48,7 +48,13 @@
     clippy::ref_option,
     clippy::items_after_statements,
     clippy::redundant_closure,
-    clippy::large_futures
+    clippy::large_futures,
+    // An `async fn` that does not await is a lint worth having in ordinary code and wrong here: a
+    // Tauri command marked `async` runs on the runtime rather than on the thread that draws the
+    // window, so the keyword is a statement about *where the work happens* rather than about whether
+    // it awaits. Some commands only take the workspace lock and answer — and they still must not do
+    // it on the UI thread, because the lock is held by whatever command is currently cutting.
+    clippy::unused_async
 )]
 
 pub mod commands;

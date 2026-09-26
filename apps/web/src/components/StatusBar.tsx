@@ -40,21 +40,17 @@ export function StatusBar({
         ) : null}
       </span>
 
-      <span className="statusbar__sep" aria-hidden="true">
-        ·
-      </span>
+      <span className="statusbar__sep" aria-hidden="true" />
 
       <span className="statusbar__item figures">
         {summary === null
           ? "no project open"
-          : `${summary.runnable} of ${summary.segments} segment(s) runnable`}
+          : `${summary.runnable} of ${summary.segments} runnable`}
       </span>
 
       {missing > 0 ? (
         <>
-          <span className="statusbar__sep" aria-hidden="true">
-            ·
-          </span>
+          <span className="statusbar__sep" aria-hidden="true" />
           <span className="statusbar__item">
             <span className="status status--danger">
               {missing} source{missing === 1 ? "" : "s"} not on disk
@@ -73,8 +69,9 @@ export function StatusBar({
 
       {model.busy !== null ? (
         <span className="statusbar__item" role="status" aria-live="polite">
+          <span className="statusbar__spinner" aria-hidden="true" />
           <span className="status status--info">{model.busy}</span>
-          <span className="spinner" aria-hidden="true" />
+          <span className="progress" aria-hidden="true" />
           {model.openProjectId !== null ? (
             <button
               type="button"
@@ -100,9 +97,7 @@ export function StatusBar({
         </span>
       ) : null}
 
-      <span className="statusbar__sep" aria-hidden="true">
-        ·
-      </span>
+      <span className="statusbar__sep" aria-hidden="true" />
       <span className="statusbar__item faint" title="the theme is remembered between runs">
         {theme}
       </span>

@@ -10,7 +10,7 @@ it is right. It is a Windows desktop application.
 > `trimmer-verify` (verdicts over measured facts), `trimmer-export` (timeline documents),
 > `trimmer-app` (the application layer), `trimmer-store` (SQLite persistence), `trimmer-cli` (the
 > command line), `trimmer-daemon` (the local API) and `apps/desktop` (the Tauri shell and the
-> interface it drives). Ten crates, 402 tests, and a release build that produces
+> interface it drives). Ten crates, 404 tests, and a release build that produces
 > `thetrimmer.exe`, `ttrim.exe` and `trimmer-daemon.exe`.
 >
 > The end-to-end test generates a clip with ffmpeg, cuts it through the head-patch method and
@@ -68,6 +68,35 @@ into using. The application layer beneath it is `trimmer-app`, whose seams (`Med
 `TranscriptSource`, `ProjectStore`, `Clock`) are what let the workspace model, transcript service,
 watch-folder rules and batch queue be tested without media and without a disk.
 
+### Working on the interface needs no build
+
+The interface runs in a plain browser. `apps/web/src/ipc/stub.ts` installs a `window.__TAURI__` of the
+same shape the window provides and answers the commands with a realistic fixture project, so
+`npm run dev` gives the whole application — every empty state, the marks, the live frame numbers, the
+queue, the proof panel — with no Rust, no WebView2, and no compilation. A CSS change is hot-reloaded
+in under 100 ms.
+
+```powershell
+cd apps/web
+npm ci
+npm run dev            # the interface, in a browser, with a fixture project
+npm test               # the formatting arithmetic, ~0.3 s
+npm run e2e            # 10 browser tests over the real interface, ~6 s
+```
+
+The stub refuses to replace a bridge that is already present, so `installStub()` is called
+unconditionally and is a no-op inside the real window. A command added to `COMMAND_NAMES` and not
+stubbed is a compile error rather than a control that works in the window and does nothing in a test.
+
+**The contract has two tests, of two different things.** The browser tests drive the real interface
+and prove its behaviour; `cargo test -p thetrimmer-desktop --test ipc_contract -- --ignored` drives
+the real commands through Tauri's real invoke handler and proves the *shape* of what Rust sends. The
+stub agrees with the interface by construction, so it can never catch a renamed field — that is what
+the second test is for, and it is the one that found `add_source` answering a different object from
+the `sources` command, `get_verify_policy` refusing to answer before a project was open, and an out
+point producing a segment one frame longer than the dialog promised. See
+[ADR-016](docs/adr/016-dev-loop.md).
+
 **Sources.** A project holds sources — masters, not copies. Each is probed and its facts
 remembered: rate, frame count, container timescale, audio layout, size. A source that has gone
 missing since the project was written is reported as unavailable rather than failing the project;
@@ -94,10 +123,9 @@ or `Failed`), and the measurement behind it, plus the exact ffmpeg command lines
 long each took, the plan's invariants, and the frames of overshoot. A `Warning` is something true
 and worth saying that does not make the file wrong; only a `Failed` does.
 
-The workspace also shows a **timeline strip and a filmstrip** of thumbnails — one per segment,
-extracted lazily and cached on disk, so a list of twenty cuts is readable at a glance. There is no
-scrubbing preview and no decode while a cut is running: see [ADR-006](docs/adr/006-no-preview.md)
-for what was refused and why.
+The proof panel is the whole of the verification surface: no scrubbing preview, no decode while a cut
+is running, and no thumbnail strip — see [ADR-006](docs/adr/006-no-preview.md) for what was refused
+and why.
 
 ## Features
 
@@ -284,7 +312,7 @@ Notes on the real knobs behind those flags:
 
 ## The headless API
 
-`cargo build --release` also produces `trimmerd.exe`. The API is a local HTTP/JSON surface on a
+`cargo build --release` also produces `trimmer-daemon.exe`. The API is a local HTTP/JSON surface on a
 **loopback port only** — `DaemonConfig::validate` refuses any other bind, because this surface can
 cut files and delete projects and is therefore a control surface for one machine rather than a
 service — requiring a **bearer token** of at least 16 characters, compared in constant time. One
@@ -363,7 +391,7 @@ asserted.
   report was wrong twice — it claimed a good build had no `mp4` muxer and no `loudnorm` — and a
   fixture that does not match reality is exactly what hid it.
 
-The suites that run are `cargo test --workspace` over ten crates: 402 tests.
+The suites that run are `cargo test --workspace` over ten crates: 404 tests.
 
 ## Requirements
 
@@ -380,24 +408,21 @@ The suites that run are `cargo test --workspace` over ten crates: 402 tests.
   delivered file plus a head and body of working files during the run. Working files are cleaned up
   on success and on cancellation.
 * **To build from source**: Rust 1.85 or later (`rust-version` in the workspace manifest), and a
-  Cargo workspace with four members. `cargo test` in the repository root runs the suites that
-  exist.
+  Node 20 or later toolchain for the interface — the interface build is independent of the Rust one,
+  and the interface runs in a browser without Rust at all (see *Working on the interface needs no
+  build* above).
 
 ## Documentation map
 
-| Document | Status | What is in it |
-|---|---|---|
-| [docs/DESIGN.md](docs/DESIGN.md) | written | The index of architecture decisions, V1 carried forward and V2 new. |
-| [docs/adr/](docs/adr/) | written | The fifteen decision records themselves. |
-| [docs/SKILLS-APPLIED.md](docs/SKILLS-APPLIED.md) | written | Which engineering practice informed which decision, and which were deliberately rejected. |
-| [`docs/TRUTH.md`](docs/TRUTH.md) | written | Every claim this product makes and the mechanism that checks it, plus what is deliberately not checked. |
-| [`docs/audit/security.md`](docs/audit/security.md) | written | The threat model and the security audit: argv-array spawning at all four spawn sites, no shell, no `unsafe`, path canonicalisation, parameterised queries, and the daemon's loopback-only bind. |
-| [`docs/audit/`](docs/audit/) | written | Five independent skill audits, each with findings by severity and a "checked and clean" section. |
-| `docs/PRICING.md` | not applicable | This build has no licensing feature, so there are no in-product editions to describe. See [ADR-015](docs/adr/015-licensing.md). |
-| [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | written | Formatting, lints at `-D warnings`, the full suite, and a real cut on every push. |
-
-The last five are named rather than linked because they do not exist yet; linking a document that
-is not there is the kind of small lie this README is trying not to tell.
+| Document | What is in it |
+|---|---|
+| [docs/DESIGN.md](docs/DESIGN.md) | The index of architecture decisions, V1 carried forward and V2 new. |
+| [docs/adr/](docs/adr/) | The sixteen decision records themselves. |
+| [docs/SKILLS-APPLIED.md](docs/SKILLS-APPLIED.md) | Which engineering practice informed which decision, and which were deliberately rejected. |
+| [docs/TRUTH.md](docs/TRUTH.md) | Every claim this product makes and the mechanism that checks it, plus what is deliberately not checked. |
+| [docs/audit/security.md](docs/audit/security.md) | The threat model and the security audit: argv-array spawning at all four spawn sites, no shell, no `unsafe`, path canonicalisation, parameterised queries, and the daemon's loopback-only bind. |
+| [docs/audit/](docs/audit/) | Five independent audits, each with findings by severity and a "checked and clean" section. |
+| [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | Formatting, lints at `-D warnings`, the full Rust suite, the IPC contract, the browser suite, and a real cut on every push. |
 
 The V1 engine lives at `H:\THEROLLUPFILES\TheTrimmer` — a Python package, its own test suite, and
 its own `docs/DESIGN.md`. It is the oracle (above) and the source of most of the reasoning in

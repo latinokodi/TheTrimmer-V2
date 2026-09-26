@@ -31,9 +31,18 @@ const VIEWPORT_HEIGHT = 320;
 export function TranscriptPanel({
   sources,
   focusToken,
+  onMark,
 }: {
   readonly sources: readonly SourceView[];
   readonly focusToken: number;
+  readonly onMark: (input: {
+    readonly source: string;
+    readonly name: string;
+    readonly startFrame: number;
+    readonly endFrame: number;
+    readonly preset: string | null;
+    readonly handleFrames: number;
+  }) => Promise<void>;
 }): JSX.Element {
   const withTranscripts = useMemo(
     () => sources.filter((source) => source.transcript !== null && source.present),
@@ -179,7 +188,7 @@ export function TranscriptPanel({
                   className={`hit${selected === index ? " hit--selected" : ""}`}
                   style={{ top: `${index * ROW_HEIGHT}px`, height: `${ROW_HEIGHT}px` }}
                   onClick={() => setSelected(index)}
-                  onDoubleClick={() => void makeSegment(hit)}
+                  onDoubleClick={() => void markSentence(hit)}
                   title="Double-click to mark this sentence as a segment"
                 >
                   <span className="hit__time figures">{formatFrames(hit.startFrame)}</span>
@@ -199,7 +208,7 @@ export function TranscriptPanel({
           <button
             type="button"
             className="btn btn--primary"
-            onClick={() => void makeSegment(hits[selected] as TranscriptHit)}
+            onClick={() => void markSentence(hits[selected] as TranscriptHit)}
           >
             Mark this sentence
           </button>
@@ -209,24 +218,30 @@ export function TranscriptPanel({
   );
 
   /**
-   * Turn a hit into a segment on the current project.
+   * Turn a hit into a queued segment.
    *
-   * The range comes from the *index*, not from the highlight: a hit is a phrase inside a cue, and
-   * the cut belongs on the sentence boundary the index knows about. Deriving the range from the
-   * match would put the cut in the middle of a word.
+   * The range comes from the *index*, not from the highlight: a hit is a phrase inside a cue, and the
+   * cut belongs on the sentence boundary the index knows about. Deriving the range from the match
+   * would put the cut in the middle of a word.
+   *
+   * It goes through `onMark` — which is the model's `addSegment` — rather than calling the command
+   * directly. That matters for more than tidiness: the model refreshes the queue afterwards, so the
+   * new segment appears in the list. A direct command call writes it to the project and leaves the
+   * screen showing the state from before, which reads as a button that did nothing.
    */
-  async function makeSegment(hit: TranscriptHit): Promise<void> {
+  async function markSentence(hit: TranscriptHit): Promise<void> {
     if (videoPath === null) {
       return;
     }
+    const start = hit.startFrame;
+    // The panel has the hit rather than the sentence's own end, so the range runs to the next hit
+    // when there is one and to five seconds otherwise. Either way it is editable, and the point is
+    // to get the marks roughly right from a word rather than to guess the edit.
+    const next = hits.find((candidate) => candidate.startFrame > start + 1);
+    const end = next?.startFrame ?? start + 25 * 5;
+    setError(null);
     try {
-      const start = hit.startFrame;
-      // The index groups cues into sentences; the panel only has the hit, so the end is taken from
-      // the next hit's start when there is one and left open otherwise. The user can adjust it in
-      // the segment dialog, which is where a range is properly edited.
-      const next = hits.find((candidate) => candidate.startFrame > start + 1);
-      const end = next?.startFrame ?? start + 25 * 5;
-      await commands.addSegment({
+      await onMark({
         source: videoPath,
         name: plain(hit.highlighted).slice(0, 60),
         startFrame: start,
@@ -234,9 +249,8 @@ export function TranscriptPanel({
         preset: null,
         handleFrames: 0,
       });
-      setError(null);
     } catch (caught) {
-      setError(caught instanceof IpcFailure ? caught.message : String(caught));
+      setError(caught instanceof Error ? caught.message : String(caught));
     }
   }
 }

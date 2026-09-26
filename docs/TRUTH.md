@@ -7,7 +7,7 @@ rather than softened.
 Run everything with:
 
 ```powershell
-cargo test --workspace          # 402 tests over ten crates
+cargo test --workspace          # 404 tests over ten crates
 cargo clippy --workspace --all-targets -- -D warnings
 cd apps/web; npx tsc --noEmit; npm run build
 ```

@@ -1,102 +1,72 @@
 /**
- * The toolbar: what you can do, in the order you do it.
+ * The title bar.
  *
- * Six controls, left to right in the order a session runs: open a project, change the output folder,
- * add a source, mark a segment, plan, run. The one primary button is **Run**, and it is disabled
- * with a reason rather than silently inert — a disabled control with no explanation is a dead end.
+ * Four things, and none of them is an action: what the product is, what it claims, which project is
+ * open, and the theme. The actions live under the trim panel, next to the thing they act on — a
+ * toolbar at the top of a single-purpose window is a second place to look for the same button.
+ *
+ * The project control is deliberately a button rather than a menu: clicking it opens the one dialog
+ * that holds every project decision (open, create, delete, add a master), which is the only place in
+ * the product where a list of things is the right answer.
  */
 
-import type { AppModel } from "../state/useAppModel";
 import type { Theme } from "../state/useTheme";
 
 export function Toolbar({
-  model,
+  projectName,
+  projectOpen,
   theme,
+  busy,
   onToggleTheme,
   onOpenProjects,
-  onAddSegment,
-  onRunBatch,
-  runnable,
 }: {
-  readonly model: AppModel;
+  readonly projectName: string;
+  readonly projectOpen: boolean;
   readonly theme: Theme;
+  readonly busy: boolean;
   readonly onToggleTheme: () => void;
   readonly onOpenProjects: () => void;
-  readonly onAddSegment: () => void;
-  readonly onRunBatch: () => void;
-  readonly runnable: number;
 }): JSX.Element {
-  const projectName = model.projects.find((project) => project.id === model.openProjectId)?.name;
-  const busy = model.busy !== null;
-
   return (
-    <header className="toolbar">
-      <div className="toolbar__identity">
-        <span className="toolbar__mark" aria-hidden="true">
-          ▸
-        </span>
-        <div className="toolbar__words">
-          <span className="toolbar__product">TheTrimmer</span>
-          <span className="toolbar__project truncate" title={projectName ?? "no project open"}>
-            {projectName ?? "no project open"}
-          </span>
-        </div>
-      </div>
-
-      <div className="toolbar__group">
-        <button type="button" className="btn" onClick={onOpenProjects} disabled={busy}>
-          Project…
-        </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={onAddSegment}
-          disabled={busy || model.sources.length === 0}
-          title={
-            model.sources.length === 0
-              ? "Add a source first: a segment has to cut something"
-              : "Mark a segment (Ctrl+N)"
-          }
-        >
-          Add segment
-        </button>
+    <header className="titlebar">
+      <span className="titlebar__mark" aria-hidden="true">
+        ▸
+      </span>
+      <div className="titlebar__identity">
+        <h1 className="titlebar__product">TheTrimmer</h1>
+        <p className="titlebar__tagline">
+          Frame-exact, lossless segment cutting · only the keyframe head is re-encoded
+        </p>
       </div>
 
       <div className="spacer" />
 
-      <div className="toolbar__group">
-        <button
-          type="button"
-          className="btn"
-          onClick={() => void model.previewAll()}
-          disabled={busy || runnable === 0}
-          title="Work out what every segment will do and cost, without cutting anything (Ctrl+P)"
-        >
-          Plan
-        </button>
-        <button
-          type="button"
-          className="btn btn--primary"
-          onClick={onRunBatch}
-          disabled={busy || runnable === 0}
-          title={
-            runnable === 0
-              ? "Nothing to run: no segment is enabled and free of problems"
-              : `Cut ${runnable} segment(s) (Ctrl+Enter)`
-          }
-        >
-          {busy ? "Working…" : `Run ${runnable > 0 ? runnable : ""}`.trim()}
-        </button>
-        <button
-          type="button"
-          className="btn btn--ghost btn--icon"
-          onClick={onToggleTheme}
-          aria-label={`Switch to the ${theme === "dark" ? "light" : "dark"} theme`}
-          title={`Switch to the ${theme === "dark" ? "light" : "dark"} theme`}
-        >
-          {theme === "dark" ? "☾" : "☀"}
-        </button>
-      </div>
+      <button
+        type="button"
+        className="btn btn--ghost titlebar__project"
+        onClick={onOpenProjects}
+        disabled={busy}
+        title={
+          projectOpen
+            ? "Open another project, add a master, or delete this one"
+            : "Open or create a project, then add the videos to cut"
+        }
+      >
+        <span className={`status ${projectOpen ? "status--ok" : "status--idle"}`}>
+          {projectOpen ? projectName : "no project"}
+        </span>
+      </button>
+
+      <button
+        type="button"
+        className="btn btn--ghost btn--icon"
+        onClick={onToggleTheme}
+        disabled={busy}
+        aria-label={`Switch to the ${theme === "dark" ? "light" : "dark"} theme`}
+        title={`Switch to the ${theme === "dark" ? "light" : "dark"} theme`}
+      >
+        {theme === "dark" ? "☾" : "☀"}
+      </button>
     </header>
   );
 }

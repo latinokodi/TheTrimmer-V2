@@ -31,7 +31,8 @@ export function CutTable({
   onToggleEnabled,
   onRemove,
   previews,
-  onAdd,
+  projectOpen,
+  hasSource,
   busy,
 }: {
   readonly segments: readonly SegmentView[];
@@ -40,26 +41,26 @@ export function CutTable({
   readonly onToggleEnabled: (id: string, enabled: boolean) => void;
   readonly onRemove: (id: string) => void;
   readonly previews: readonly QueuePreview[];
-  readonly onAdd: () => void;
+  readonly projectOpen: boolean;
+  readonly hasSource: boolean;
   readonly busy: boolean;
 }): JSX.Element {
   const planned = new Map(previews.map((preview) => [preview.segment, preview]));
 
   if (segments.length === 0) {
+    /*
+     * The queue is empty, and this is inside a section that says so in its own heading — so the
+     * message is one sentence about how to fill it, not a second tutorial. The teaching happens
+     * under the trim panel, where the fields are.
+     */
     return (
-      <div className="cut-table cut-table--empty">
-        <div className="empty">
-          <p className="empty__title">No segments yet</p>
-          <p>
-            A segment is a range in a source: two Premiere timecodes, and a name. The in point is the
-            first frame kept; the out point is the last frame kept, the way Premiere&rsquo;s Out
-            point works.
-          </p>
-          <button type="button" className="btn btn--primary" onClick={onAdd} disabled={busy}>
-            Mark the first segment
-          </button>
-        </div>
-      </div>
+      <p className="details__note">
+        {!projectOpen
+          ? "No project is open. Open one to keep the videos, the segments and the record of what was cut."
+          : !hasSource
+            ? "No video yet. Choose one above, and its frame rate is read before anything is marked."
+            : "Mark a range above and press Queue it. Every segment you queue is trimmed in one run, and each finished file is checked."}
+      </p>
     );
   }
 
@@ -98,7 +99,7 @@ export function CutTable({
         </span>
       </div>
 
-      <div className="cut-table__body scroll">
+      <div className="cut-table__body">
         {segments.map((segment, index) => {
           const isSelected = segment.id === selected;
           const preview = planned.get(segment.id);

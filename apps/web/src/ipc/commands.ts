@@ -67,11 +67,6 @@ export class IpcFailure extends Error {
   }
 }
 
-/** True when the page is running inside the shell rather than in a plain browser. */
-export function inShell(): boolean {
-  return typeof window !== "undefined" && window.__TAURI__ !== undefined;
-}
-
 /**
  * Turn whatever Tauri rejected with into an {@link IpcFailure}.
  *
@@ -103,12 +98,63 @@ function normaliseError(error: unknown): IpcFailure {
 }
 
 /**
+ * Every command the interface may call, by name.
+ *
+ * This list is the interface's declaration of what it needs from Rust, and it exists as data rather
+ * than only as the methods below because two other things are checked against it:
+ *
+ * * `stub.ts` — the browser harness the interface is developed and tested in — is typed as
+ *   `Record<CommandName, …>`, so adding a command here and forgetting to stub it is a compile error
+ *   rather than a button that does nothing in every browser test.
+ * * `apps/desktop/src-tauri/tests/ipc_contract.rs` drives the same names through Tauri's real invoke
+ *   handler, so a rename that only lands on one side fails a test.
+ *
+ * It is `as const` so the element type is the union of the literals rather than `string`.
+ */
+export const COMMAND_NAMES = [
+  "doctor",
+  "list_projects",
+  "create_project",
+  "open_project",
+  "delete_project",
+  "current_project",
+  "save_project",
+  "add_source",
+  "refresh_sources",
+  "remove_source",
+  "sources",
+  "segments",
+  "summary",
+  "presets",
+  "add_segment",
+  "update_segment",
+  "remove_segment",
+  "reorder_segment",
+  "parse_timecode",
+  "preview",
+  "preview_all",
+  "cut_segment",
+  "run_batch",
+  "cancel_batch",
+  "search_transcript",
+  "transcript_lines",
+  "export_timeline",
+  "plan_watch_folder",
+  "get_verify_policy",
+  "set_verify_policy",
+  "reveal",
+] as const;
+
+/** One of the command names. */
+export type CommandName = (typeof COMMAND_NAMES)[number];
+
+/**
  * Invoke a command.
  *
  * Throws {@link IpcFailure} on failure, so a caller that ignores the result gets a rejected promise
  * rather than an `undefined` it will dereference three lines later.
  */
-export async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+export async function call<T>(command: CommandName, args?: Record<string, unknown>): Promise<T> {
   const bridge = window.__TAURI__;
   if (bridge === undefined) {
     throw new IpcFailure(
@@ -199,8 +245,13 @@ export const commands = {
   /** What one segment will do and cost. */
   preview: (id: string) => call<QueuePreview>("preview", { id }),
 
-  /** What the whole batch will do and cost. */
-  previewAll: () => call<readonly QueuePreview[]>("preview_all"),
+  /** What the whole batch will do and cost, and the marked range when there is one. */
+  previewAll: (marked?: {
+    readonly startFrame: number;
+    readonly endFrame: number;
+    readonly preset: string | null;
+    readonly handleFrames: number;
+  }) => call<readonly QueuePreview[]>("preview_all", marked ?? {}),
 
   /** Parse a timecode into a frame number, so a field can show its frame live. */
   parseTimecode: (text: string, source: string) =>

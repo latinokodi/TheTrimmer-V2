@@ -1,0 +1,1312 @@
+/*
+ * The application layout.
+ *
+ * `global.css` holds the reset and the primitives; this file holds the composition — the shell grid,
+ * the title bar, the action bar, the cut table grid, the inspector, the dialogs and the status bar.
+ * Every value comes from a token.
+ *
+ * ============================================================================================
+ * The design decisions, and what they are arguing against
+ * ============================================================================================
+ *
+ * ## 1. This is a cockpit, not a landing page
+ *
+ * The audience is an editor who has this window open for six hours next to Premiere, with the client
+ * on a call. Three consequences run through everything below:
+ *
+ * * **Density is a feature.** Rows are 32 px, the body size is 13 px, and the cut table fits eleven
+ *   segments in the space a "comfortable" layout would spend on four. Whitespace costs a scroll, and
+ *   a scroll loses the row you were comparing against.
+ * * **Nothing moves on its own.** There is no entry animation, no parallax, no perpetual shimmer, no
+ *   animated gradient. The only motion is feedback for something the user just did, it is 90–140 ms,
+ *   and it is `transform` and `opacity` only so it cannot cause a reflow mid-drag. Movement in a
+ *   tool is not delight; it is something to wait for.
+ * * **The picture is the only colourful thing.** The palette is a neutral ramp with one desaturated
+ *   accent. Status colours are semantic and always carry a word, so a red badge is a reinforcement
+ *   rather than the message — which is also what makes the interface usable for the roughly one in
+ *   twelve men who cannot separate red from green.
+ *
+ * ## 2. Deliberately not the house style
+ *
+ * The default output of a model asked to design a dark dashboard is now so recognisable that it has
+ * become a defect. Specifically, and on purpose, this file has none of:
+ *
+ * * a purple or indigo accent, or any accent used as a *glow* (`box-shadow` spread in the accent);
+ * * gradient text, gradient fills on controls, or gradient buttons;
+ * * pure black, or a pure-white text colour;
+ * * `border: 1px solid` a mid grey around every element — separation here is a hairline almost the
+ *   same value as the surface it sits on, or a change of surface tone, or a 4 px inset marker;
+ * * emoji as iconography, or an icon font;
+ * * evenly-boxed cards for everything: the action bar is a *bar*, the status bar is a bar, the rail
+ *   is a column, and the inspector is a panel. Only the dialogs are boxes, because only they float;
+ * * a centred hero of any kind.
+ *
+ * Control hierarchy comes from weight, tone and position — not from scale. The largest type in the
+ * application is 17 px, in a dialog title.
+ *
+ * ## 3. Alignment is the craft
+ *
+ * In a tool whose whole job is timecodes, a column of figures that does not line up is a bug. So:
+ * every figure is in the monospace stack at `tabular-nums`; the cut table is a CSS grid with a fixed
+ * template, so column *n* is the same width in the header as in every row; numbers are right-aligned
+ * and text is left-aligned; and rows are a fixed height, so a plan arriving cannot resize the row
+ * under the pointer mid-click.
+ *
+ * ## 4. The shell
+ *
+ * ```
+ * ┌────────────────────────────── title bar ───────────────────────────────┐
+ * ├──────────────┬──────────────────────────────┬──────────────────────────┤
+ * │ masters      │ the cut table                │ inspector                │
+ * ├──────────────┴──────────────────────────────┴──────────────────────────┤
+ * │ action bar                          n ready                  [ Trim ]  │
+ * ├────────────────────────────────────────────────────────────────────────┤
+ * │ status bar: ffmpeg · counts · what just happened · theme               │
+ * └────────────────────────────────────────────────────────────────────────┘
+ * ```
+ *
+ * The action bar is *below* the workspace. That is the opposite of the first version of this shell
+ * and it is the change that matters most: the actions are the end of a reading order that starts in
+ * the masters rail and passes through the table, so the button that cuts what you just marked is
+ * underneath what you just marked. Above the fold, it was competing with the title for the first
+ * thing you look at.
+ *
+ * `.app__body` and `.chrome` are `display: contents`, so their children land on the shell's grid
+ * areas directly. They exist because a component with more than one thing to return needs a wrapper,
+ * and a wrapper that became a box would have to be sized and positioned for no reason.
+ */
+
+/*
+ * ============================================================================================
+ * The shell
+ * ============================================================================================
+ *
+ * ```
+ * ┌────────────────────────────── title bar ───────────────────────────────┐
+ * │ ▸ TheTrimmer   tagline                          project        theme   │
+ * ├────────────────────────────────────────────────────────────────────────┤
+ * │  the trim panel: video, in, out, the length, the button                │  ← always visible
+ * ├────────────────────────────────────────────────────────────────────────┤
+ * │  ▸ Queued   ▸ What it does   ▸ Transcript                              │  ← collapsed
+ * ├────────────────────────────────────────────────────────────────────────┤
+ * │ ● ffmpeg ready · 2 of 2 ready · what just happened            dark     │
+ * └────────────────────────────────────────────────────────────────────────┘
+ * ```
+ *
+ * One column, because the product is one thing: cut a range out of a video. The trim panel is the
+ * first thing on the screen and it never moves; the queue, the explanation and the transcript are
+ * collapsed sections underneath it, because they are answers to questions a person asks *after* the
+ * first cut rather than before it.
+ *
+ * The whole window is a four-row grid, and only the middle row scrolls.
+ */
+
+.app {
+  display: grid;
+  grid-template-rows:
+    var(--titlebar-height)
+    minmax(0, 1fr)
+    var(--statusbar-height);
+  height: 100%;
+  background: var(--surface-base);
+}
+
+/* ==========================================================================================
+   Title bar
+   ========================================================================================== */
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-5);
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--line-subtle);
+}
+
+/*
+ * The mark is one glyph in the figure face, in the accent, on a faint wash of it. No logo file, no
+ * icon font, and it is the only place the accent appears in the chrome.
+ */
+.titlebar__mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-family: var(--font-figure);
+  font-size: var(--text-base);
+  line-height: 1;
+}
+
+.titlebar__identity {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.titlebar__product {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.005em;
+}
+
+/*
+ * The tagline is the product's claim. It is set small and quiet rather than as a headline: a person
+ * reads it once, and after that it is the thing that must not get in the way.
+ */
+.titlebar__tagline {
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.titlebar__project {
+  max-width: 34ch;
+  height: 24px;
+}
+
+/* ==========================================================================================
+   The trim panel: the whole product on one screen
+   ========================================================================================== */
+
+.app__main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.trim {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-6) var(--space-5) var(--space-5);
+  border-bottom: 1px solid var(--line-subtle);
+  background: var(--surface-base);
+}
+
+/*
+ * A single column, capped at 720 px and centred. This is the one place a centred measure is right:
+ * the marks are a two-field form, and a form that spans a 1900 px window puts the in point and the
+ * out point far enough apart that comparing them costs a head movement. 720 px holds both timecodes
+ * and the sentence under each without crowding.
+ */
+.trim > * {
+  width: 100%;
+  max-width: 720px;
+}
+
+.trim__master {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--space-5);
+}
+
+.trim__master-name {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.trim__master-facts {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/*
+ * The two marks sit side by side and are the same width, so the eye can compare an in point with an
+ * out point without moving. On a narrow window they stack.
+ */
+.trim__marks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-5);
+}
+
+.trim__mark {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/*
+ * The timecode field is the field the whole product turns on: eleven characters of `HH:MM:SS:FF`,
+ * legible at a glance, in the figure face, at 16 px with wide tracking. It is larger than any other
+ * input in the application and larger than the product's own name, which is the correct hierarchy
+ * for a tool whose job is that number.
+ */
+.trim__mark input.timecode-field {
+  height: 46px;
+  padding: 0 var(--space-3);
+  font-size: 1.0625rem;
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+
+.trim__summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+/*
+ * The length line: figures at the body size, in the figure face, with 1 px dot separators rather than
+ * a run-on sentence. It is the answer to "what have I marked", so it is set as a line of data.
+ */
+.trim__length {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+}
+
+.trim__length .ok {
+  color: var(--signal-ok);
+}
+
+.trim__length .warn {
+  color: var(--signal-warn);
+}
+
+.trim__dot {
+  width: 3px;
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--line-strong);
+}
+
+.trim__hint {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/*
+ * The buttons are at the right-hand end of the summary line, where a form's submit has been for forty
+ * years. `Trim` is the only primary button in the window.
+ */
+.trim__buttons {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.trim__queue-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-right: auto;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.empty--trim {
+  padding: var(--space-6) 0;
+  max-width: 58ch;
+}
+
+/*
+ * Delivery: folded away, because these two settings do not change *what* is cut. The summary shows
+ * the current answer, so a closed section still says which preset is in force — a disclosure whose
+ * heading does not carry its value makes you open it to find out whether you needed to.
+ */
+.trim__delivery {
+  margin-top: var(--space-5);
+}
+
+.trim__delivery-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.trim__delivery-head::-webkit-details-marker {
+  display: none;
+}
+
+.trim__delivery-head:hover .trim__delivery-value {
+  color: var(--text-secondary);
+}
+
+.trim__delivery-value {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.trim__delivery[open] > .trim__delivery-head {
+  margin-bottom: var(--space-3);
+}
+
+.trim__delivery > .field-grid {
+  max-width: 560px;
+}
+
+/* ==========================================================================================
+   Collapsed sections
+   ========================================================================================== */
+
+.details {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.section {
+  border-bottom: 1px solid var(--line-subtle);
+}
+
+.section__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 38px;
+  padding: 0 var(--space-5);
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  transition: background var(--motion-fast) var(--easing);
+}
+
+.section__head::-webkit-details-marker {
+  display: none;
+}
+
+.section__head:hover {
+  background: var(--surface-raised);
+}
+
+.section__chevron {
+  width: 10px;
+  color: var(--text-faint);
+  font-size: var(--text-2xs);
+}
+
+.section__title {
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.01em;
+  color: var(--text-primary);
+}
+
+.section__count {
+  min-width: 17px;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-active);
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  text-align: center;
+}
+
+.section__hint {
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+}
+
+.section__body {
+  padding: 0 var(--space-5) var(--space-4);
+}
+
+.section[open] > .section__body {
+  animation: settle var(--motion-base) var(--easing);
+}
+
+/* A 4 px rise, once, on open. Motion that says "this appeared" rather than motion to watch. */
+@keyframes settle {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.details__note {
+  max-width: 78ch;
+  padding: var(--space-2) 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+.method {
+  max-width: 78ch;
+  padding-left: var(--space-5);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  line-height: 1.75;
+}
+
+.method li {
+  margin-bottom: var(--space-2);
+}
+
+/* ==========================================================================================
+   The cut table
+   ========================================================================================== */
+
+.cut-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface-inset);
+}
+
+/*
+ * One grid template, used by the header row and by every body row. This is what makes column *n* the
+ * same width in both — the alternative, a flex row per row, aligns only by luck and stops aligning
+ * the moment one cell's content is wider than the rest.
+ */
+.cut-table__head,
+.cut-table__row {
+  display: grid;
+  grid-template-columns:
+    26px
+    26px
+    minmax(110px, 1.4fr)
+    minmax(90px, 1fr)
+    104px
+    104px
+    68px
+    78px
+    96px
+    28px;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+  min-width: 0;
+}
+
+.cut-table__head {
+  height: var(--head-height);
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.cut-table__row {
+  height: var(--row-height);
+  border-bottom: 1px solid var(--line-subtle);
+  cursor: default;
+  transition: background var(--motion-fast) var(--easing);
+}
+
+.cut-table__row:last-child {
+  border-bottom: none;
+}
+
+.cut-table__row:hover {
+  background: var(--surface-hover);
+}
+
+/*
+ * The selection is a 3 px inset bar in the accent plus a faint wash of it — not a filled row. A
+ * filled row in a table of timecodes makes the figures harder to read exactly when you are looking at
+ * them, and it competes with the status colours in the Plan column.
+ */
+.cut-table__row--selected {
+  background: var(--accent-subtle);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* A segment that will be skipped is dimmed rather than hidden: it is still part of the project. */
+.cut-table__row--disabled {
+  opacity: 0.45;
+}
+
+/* A segment that cannot be cut keeps a red edge whether or not it is selected. */
+.cut-table__row--blocked {
+  box-shadow: inset 3px 0 0 var(--signal-danger);
+}
+
+.cut-table__cell {
+  min-width: 0;
+  font-size: var(--text-sm);
+}
+
+.cut-table__cell--check,
+.cut-table__cell--index,
+.cut-table__cell--num {
+  text-align: right;
+}
+
+.cut-table__cell--index,
+.cut-table__cell--tc,
+.cut-table__cell--num {
+  font-family: var(--font-figure);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.cut-table__cell--index {
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+.cut-table__cell--tc {
+  color: var(--text-primary);
+}
+
+.cut-table__cell--num {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.cut-table__cell--name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.cut-table__name {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.cut-table__problem {
+  flex: none;
+}
+
+/* ==========================================================================================
+   Facts: a definition list as a two-column table
+   ========================================================================================== */
+
+.facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-1) var(--space-4);
+  font-size: var(--text-xs);
+}
+
+.facts dt {
+  color: var(--text-muted);
+}
+
+.facts dd {
+  min-width: 0;
+  color: var(--text-secondary);
+}
+
+.facts--inline {
+  grid-template-columns: auto auto;
+  justify-content: start;
+}
+
+.facts .ok {
+  color: var(--signal-ok);
+}
+
+.facts .warn {
+  color: var(--signal-warn);
+}
+
+.facts .danger {
+  color: var(--signal-danger);
+}
+
+/* ==========================================================================================
+   Fields
+   ========================================================================================== */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/*
+ * The label sits above the field, always, at 11 px uppercase. Next to a 46 px timecode field a
+ * sentence-case 13 px label competes with the value; uppercase at 11 px reads as a column head.
+ */
+.field__label {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.field__help {
+  margin-top: 2px;
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+  line-height: 1.6;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+
+/* ==========================================================================================
+   Notes
+   ========================================================================================== */
+
+/*
+ * A note is a paragraph with a coloured left edge, not a filled alert box. The tint is 10–14 % of the
+ * signal colour, which is enough to group the lines and not enough to shout over the text.
+ */
+.note {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  border-left: 2px solid var(--line-strong);
+  background: var(--surface-inset);
+  color: var(--text-secondary);
+}
+
+.note--ok {
+  border-left-color: var(--signal-ok);
+  background: var(--signal-ok-subtle);
+}
+
+.note--warn {
+  border-left-color: var(--signal-warn);
+  background: var(--signal-warn-subtle);
+}
+
+.note--danger {
+  border-left-color: var(--signal-danger);
+  background: var(--signal-danger-subtle);
+}
+
+.note__list {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+}
+
+/*
+ * An empty state is left-aligned against the same margin as the content it replaces, capped at 58
+ * characters. A centred empty state makes the eye travel to a different place from where the content
+ * appears, which is the opposite of teaching.
+ */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  max-width: 58ch;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.empty__title {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--text-secondary);
+}
+
+.empty .btn {
+  margin-top: var(--space-1);
+}
+
+.empty--tight {
+  padding: var(--space-2) 0;
+}
+
+/* ==========================================================================================
+   Transcript
+   ========================================================================================== */
+
+.transcript {
+  display: grid;
+  grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .transcript {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.hits {
+  position: relative;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+}
+
+.hit {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  text-align: left;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.hit:hover {
+  background: var(--surface-hover);
+}
+
+.hit--selected {
+  background: var(--accent-subtle);
+  box-shadow: inset 2px 0 0 var(--accent);
+  color: var(--text-primary);
+}
+
+.hit__time {
+  flex: none;
+  width: 7ch;
+  color: var(--text-faint);
+  font-size: var(--text-2xs);
+}
+
+.hit__text {
+  min-width: 0;
+}
+
+.hits__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  margin-top: var(--space-3);
+  border-top: 1px solid var(--line-subtle);
+}
+
+.hits__preview {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.panel-body__count {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* ==========================================================================================
+   Proof
+   ========================================================================================== */
+
+.proof {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.proof__item {
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  overflow: hidden;
+}
+
+.proof__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  font-size: var(--text-xs);
+}
+
+.proof__head:hover {
+  background: var(--surface-hover);
+}
+
+.proof__name {
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+.proof__summary {
+  grid-column: 1 / -1;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+}
+
+.proof__detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-top: 1px solid var(--line-subtle);
+}
+
+/*
+ * The checks table. No vertical rules and no box: a horizontal hairline between rows is enough, and it
+ * keeps the measured column next to the expected one so the eye can compare them.
+ */
+.checks {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-2xs);
+}
+
+.checks th,
+.checks td {
+  text-align: left;
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--line-subtle);
+}
+
+.checks tbody tr:last-child th,
+.checks tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.checks thead th {
+  color: var(--text-faint);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.checks td:not(:first-child) {
+  padding-left: var(--space-3);
+}
+
+.checks__name {
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.checks__detail {
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+.digest {
+  font-size: var(--text-2xs);
+}
+
+.digest__summary {
+  padding: var(--space-1) 0;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.digest__help {
+  margin-bottom: var(--space-1);
+  color: var(--text-faint);
+  line-height: 1.6;
+}
+
+.digest__value {
+  display: block;
+  padding: var(--space-2);
+  word-break: break-all;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}
+
+/* ==========================================================================================
+   Status bar
+   ========================================================================================== */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-5);
+  background: var(--surface-raised);
+  border-top: 1px solid var(--line-subtle);
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  overflow: hidden;
+}
+
+.statusbar__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.statusbar__detail {
+  max-width: 46ch;
+  color: var(--text-faint);
+}
+
+.statusbar__sep {
+  width: 1px;
+  height: 12px;
+  background: var(--line);
+}
+
+.statusbar__notice {
+  max-width: 54ch;
+  color: var(--text-secondary);
+}
+
+.statusbar__spinner {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
+ * Only present while a batch is running, so it appears rather than sitting permanently empty: a
+ * progress bar at zero is a promise the interface is not keeping.
+ */
+.progress {
+  position: relative;
+  flex: none;
+  width: 120px;
+  height: 2px;
+  overflow: hidden;
+  background: var(--line);
+  border-radius: var(--radius-pill);
+}
+
+.progress::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 34%;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  animation: sweep 1.4s var(--easing) infinite;
+}
+
+@keyframes sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(340%);
+  }
+}
+
+/* ==========================================================================================
+   Dialogs
+   ========================================================================================== */
+
+.dialog-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--scrim);
+}
+
+/*
+ * The one place a shadow is earned: a dialog genuinely floats above the application, and the shadow
+ * is what says so. It is tinted to the background hue rather than black, which is what stops it
+ * reading as a grey smudge on a dark surface.
+ */
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: min(540px, calc(100vw - var(--space-7)));
+  max-height: calc(100vh - var(--space-7));
+  padding: var(--space-5) var(--space-5) var(--space-4);
+  overflow-y: auto;
+  background: var(--surface-overlay);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+}
+
+.dialog__title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+.dialog__subtitle {
+  margin-bottom: var(--space-2);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.dialog__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--line-subtle);
+}
+
+.dialog__section:last-of-type {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.dialog__help {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.dialog__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line-subtle);
+}
+
+.dialog__section .row,
+.field .row {
+  gap: var(--space-2);
+}
+
+.dialog__section .row > input,
+.field .row > input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dialog__section .row > .btn,
+.field .row > .btn {
+  flex: none;
+}
+
+/* ==========================================================================================
+   The export format choice
+   ========================================================================================== */
+
+/*
+ * Radio options as rows rather than as a column of little circles with labels beside them: the whole
+ * row is the target, the label and the note are one line each, and the chosen row is marked by the
+ * accent edge. This is a list you read to decide, so it is laid out like a list.
+ */
+.choice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.choice legend {
+  padding: 0 0 var(--space-2);
+}
+
+.choice__option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 2px var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--easing);
+}
+
+.choice__option:hover {
+  background: var(--surface-hover);
+}
+
+.choice__option:has(input:checked) {
+  background: var(--accent-subtle);
+  border-left-color: var(--accent);
+}
+
+.choice__option input {
+  grid-row: span 2;
+  align-self: start;
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+.choice__label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+.choice__note {
+  grid-column: 2;
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* ==========================================================================================
+   Project list
+   ========================================================================================== */
+
+.project-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  max-height: 200px;
+}
+
+.project-list__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid transparent;
+  text-align: left;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  transition: background var(--motion-fast) var(--easing);
+}
+
+.project-list__item:hover {
+  background: var(--surface-hover);
+}
+
+.project-list__item--open {
+  background: var(--accent-subtle);
+  border-left-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.project-list__name {
+  font-weight: var(--weight-medium);
+}
+
+.project-list__when {
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+}
+
+/* ==========================================================================================
+   Crash screen
+   ========================================================================================== */
+
+.crash {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 78ch;
+  margin: auto;
+  padding: var(--space-6);
+}
+
+.crash__title {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  color: var(--signal-danger);
+}
+
+.crash__lead {
+  color: var(--text-secondary);
+  line-height: var(--leading-loose);
+}
+
+.crash__detail {
+  padding: var(--space-3);
+  overflow-x: auto;
+  background: var(--surface-inset);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-figure);
+  font-size: var(--text-2xs);
+  color: var(--text-secondary);
+}
+
+.crash__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* ==========================================================================================
+   Narrow windows
+   ========================================================================================== */
+
+/*
+ * The window's own minimum is 1100 px, so these are a safety net rather than layouts anybody should
+ * meet. The marks stack rather than shrink, because a 46 px timecode field below about 300 px stops
+ * holding eleven characters comfortably.
+ */
+@media (max-width: 900px) {
+  .trim__marks {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+
+  .titlebar__tagline {
+    display: none;
+  }
+
+  .section__hint {
+    display: none;
+  }
+}
+
+/* ==========================================================================================
+   Forced colours
+   ========================================================================================== */
+
+/*
+ * In forced-colours mode the operating system replaces the palette, so a selected row needs a cue that
+ * survives the replacement: an outline rather than a tint, in a system colour rather than ours.
+ */
+@media (forced-colors: active) {
+  .cut-table__row--selected,
+  .hit--selected,
+  .choice__option:has(input:checked),
+  .project-list__item--open {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .progress::after,
+  .statusbar__spinner {
+    border-color: CanvasText;
+    background: Highlight;
+  }
+}
+

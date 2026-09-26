@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  The manifest the integration-test binaries carry.
+
+  It requests Common Controls version 6, which is the only version of `comctl32.dll` that exports
+  `TaskDialogIndirect` — a symbol `muda`, deep in the Tauri dependency tree, imports. Without this
+  a test binary dies in the loader with `STATUS_ENTRYPOINT_NOT_FOUND` before any test runs. See
+  `build.rs` for the full account.
+
+  It is deliberately the minimum that solves that, and nothing else: the binary's own manifest comes
+  from `tauri-build`, and duplicating any of it here would be a second copy to keep in step.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity
+    type="win32"
+    name="com.thetrimmer.desktop.tests"
+    version="2.0.0.0"
+    processorArchitecture="*" />
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*" />
+    </dependentAssembly>
+  </dependency>
+</assembly>

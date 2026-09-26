@@ -75,7 +75,18 @@ export interface AppModel {
   }) => Promise<void>;
   readonly removeSegment: (id: string) => Promise<void>;
   readonly preview: (id: string) => Promise<QueuePreview | null>;
-  readonly previewAll: () => Promise<void>;
+  readonly previewAll: (marked?: {
+    readonly startFrame: number;
+    readonly endFrame: number;
+    readonly preset: string | null;
+    readonly handleFrames: number;
+  }) => Promise<void>;
+  readonly planQuietly: (marked: {
+    readonly startFrame: number;
+    readonly endFrame: number;
+    readonly preset: string | null;
+    readonly handleFrames: number;
+  }) => Promise<void>;
   readonly runBatch: (options: {
     readonly stopOnError: boolean;
     readonly skipVerification: boolean;
@@ -304,18 +315,61 @@ export function useAppModel(): AppModel {
     [withBusy],
   );
 
-  const previewAll = useCallback(async () => {
-    const result = await withBusy("planning the batch", () => commands.previewAll());
-    if (result !== null) {
-      setPreviews(result);
-      const full = result.filter((item) => item.forcesFullEncode).length;
-      setNotice(
-        full === 0
-          ? `${result.length} segment(s) planned, none needing a full re-encode`
-          : `${result.length} segment(s) planned; ${full} will be fully re-encoded by their preset`,
-      );
-    }
-  }, [withBusy]);
+  /**
+   * Plan the batch, with the marked range included when there is one.
+   *
+   * The marked range is passed as well as the queue because the interface plans continuously while
+   * the fields are being filled: a range that has been marked but not queued still needs an answer to
+   * "will this re-encode", and it has no id yet to ask about on its own.
+   */
+  const previewAll = useCallback(
+    async (marked?: {
+      readonly startFrame: number;
+      readonly endFrame: number;
+      readonly preset: string | null;
+      readonly handleFrames: number;
+    }) => {
+      const result = await withBusy("planning the batch", () => commands.previewAll(marked));
+      if (result !== null) {
+        setPreviews(result);
+        const full = result.filter((item) => item.forcesFullEncode).length;
+        setNotice(
+          full === 0
+            ? `${result.length} segment(s) planned, none needing a full re-encode`
+            : `${result.length} segment(s) planned; ${full} will be fully re-encoded by their preset`,
+        );
+      }
+    },
+    [withBusy],
+  );
+
+  /**
+   * Plan quietly, for the continuous planning under the marks.
+   *
+   * Deliberately not `previewAll`: that one raises the busy flag and writes a notice to the status
+   * bar, which is right for a button press and wrong for something that runs on every pause in
+   * typing — the status bar would spend the whole session saying "planning the batch".
+   *
+   * A failure is swallowed rather than reported. The only reason this call exists is to fill in a
+   * sentence in the length line; if it cannot, the line says nothing about the mode, the marks are
+   * still perfectly valid, and the trim itself does its own planning and reports its own refusal. A
+   * red error appearing because a plan could not be *previewed* would be alarming and wrong.
+   */
+  const planQuietly = useCallback(
+    async (marked: {
+      readonly startFrame: number;
+      readonly endFrame: number;
+      readonly preset: string | null;
+      readonly handleFrames: number;
+    }) => {
+      try {
+        setPreviews(await commands.previewAll(marked));
+      } catch {
+        // See above: a preview that cannot be made is not an error the user needs to see.
+      }
+    },
+    [],
+  );
 
   const runBatch = useCallback<AppModel["runBatch"]>(
     async (options) => {
@@ -402,6 +456,7 @@ export function useAppModel(): AppModel {
       removeSegment,
       preview,
       previewAll,
+      planQuietly,
       runBatch,
       cancelBatch,
       exportTimeline,
@@ -435,6 +490,7 @@ export function useAppModel(): AppModel {
       removeSegment,
       preview,
       previewAll,
+      planQuietly,
       runBatch,
       cancelBatch,
       exportTimeline,
