@@ -344,11 +344,14 @@ pub fn check_applies(check: Check, plan: &CutPlan) -> bool {
         // A head exists only when the plan re-encodes one, and both of these are about the head:
         // there is no timescale of its own to preserve, and nothing to compare against the source.
         Check::TimescalePreserved | Check::HeadFidelity => plan.mode == CutMode::HeadPatch,
+        // There is nothing to align when the source carries no sound. The check says so either way;
+        // this is what stops that skip being counted as a hole in an otherwise complete run, which is
+        // what made a video-only cut come back uncertified for a check that could never have run.
+        Check::AudioAlignment => plan.has_audio,
         // Everything else is about the delivered file as a whole, or about the source, and applies
         // whatever the plan decided.
         Check::Frames
         | Check::Duration
-        | Check::AudioAlignment
         | Check::FrameAlignment
         | Check::Captions
         | Check::CodecMatch

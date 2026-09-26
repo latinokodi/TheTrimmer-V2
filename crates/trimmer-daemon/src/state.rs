@@ -372,9 +372,13 @@ impl MediaMeasurer for ProbeMeasurer {
         if count <= 0 {
             return Ok(FrameHashes::new(Vec::new(), start_frame));
         }
-        let handle = tokio::runtime::Handle::try_current().map_err(|_| {
-            CoreError::Invariant("there is no runtime to hash frames on".to_owned())
-        })?;
+        let handle = match tokio::runtime::Handle::try_current() {
+            Ok(handle) => handle,
+            Err(error) => {
+                tracing::warn!("frame hashing has no runtime: {error}");
+                return Err(CoreError::Invariant(error.to_string()));
+            }
+        };
         let executor = trimmer_media::CutExecutor::new(self.tools.clone());
         let options = trimmer_media::RunOptions {
             policy: trimmer_media::PollPolicy::long(),
