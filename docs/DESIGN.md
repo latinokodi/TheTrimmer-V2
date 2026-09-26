@@ -26,3 +26,4 @@ decision no longer applies, it is *superseded* and the reason is stated — neve
 - [ADR-016 — The interface is developed in a browser, not in the window](adr/016-dev-loop.md) *(new in V2)*
 - [ADR-017 — The product is four executables, and the window is checked by starting it](adr/017-shipping.md) *(new in V2)*
 - [ADR-018 — Colour is state, the faces are bundled, and no string is clipped](adr/018-visual-language.md) *(new in V2)*
+- [ADR-019 — The browser stub never ships, and a check a fixture can satisfy is not a check](adr/019-the-stub-never-ships.md) *(new in V2)*

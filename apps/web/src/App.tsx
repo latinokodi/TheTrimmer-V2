@@ -65,6 +65,7 @@ import { ProgressLog } from "./components/ProgressLog";
 import { ProofPanel } from "./components/ProofPanel";
 import { SourceDialog } from "./components/SourceDialog";
 import { TranscriptPanel } from "./components/TranscriptPanel";
+import { VIDEO_FILTERS, pickFile } from "./ipc/dialog";
 import { useAppModel } from "./state/useAppModel";
 import { useCutLog } from "./state/useCutLog";
 import { useSegmentDraft } from "./state/useSegmentDraft";
@@ -80,6 +81,7 @@ export function App(): JSX.Element {
   const [sourceOpen, setSourceOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [searchFocusToken, setSearchFocusToken] = useState(0);
+  const [pickerNotice, setPickerNotice] = useState<string | null>(null);
 
   const queued = model.segments.length;
   const runnable = model.summary?.runnable ?? 0;
@@ -132,6 +134,30 @@ export function App(): JSX.Element {
     draft.reset();
   }, [draft, model]);
 
+  /**
+   * Browse: the operating system's own file dialog, on the first click.
+   *
+   * It used to open the in-app dialog and leave the operator to find a second button inside it, which is
+   * a step that exists only because the picker might not be there. Now the picker is the first
+   * thing that happens, and the in-app dialog is what opens *instead* when there is no picker to show —
+   * a path can be typed there, and it also lists the masters already in the session.
+   *
+   * A cancel is not a failure and says nothing. An unavailable picker is a fact the operator needs, so
+   * it is said out loud rather than left as a button that did nothing.
+   */
+  const browse = useCallback(async () => {
+    const picked = await pickFile({ title: "Choose a video", filters: VIDEO_FILTERS });
+    if (picked.kind === "picked") {
+      setPickerNotice(null);
+      await model.addSource(picked.path);
+      return;
+    }
+    if (picked.kind === "unavailable") {
+      setPickerNotice(picked.reason);
+      setSourceOpen(true);
+    }
+  }, [model]);
+
   const trimNow = useCallback(async () => {
     // A marked range that is not queued is what the plain "Trim" means. With something already queued
     // the button says `Trim n` and the marks are left alone — they are for the next range, and a person
@@ -161,7 +187,9 @@ export function App(): JSX.Element {
         case "o":
         case "m":
           event.preventDefault();
-          setSourceOpen(true);
+          // The same thing the Browse button does. `Ctrl+M` is kept because it was the shortcut before
+          // `Ctrl+O` existed and an operator's hands do not re-learn a key that still works.
+          void browse();
           break;
         case "e":
           event.preventDefault();
@@ -178,7 +206,7 @@ export function App(): JSX.Element {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [queue, trimNow]);
+  }, [browse, queue, trimNow]);
 
   return (
     <ErrorBoundary>
@@ -246,8 +274,9 @@ export function App(): JSX.Element {
                   <button
                     type="button"
                     className="btn"
-                    onClick={() => setSourceOpen(true)}
+                    onClick={() => void browse()}
                     disabled={running}
+                    title="Open the Windows file dialog and add the master (Ctrl+O)"
                   >
                     Browse
                   </button>
@@ -657,7 +686,11 @@ export function App(): JSX.Element {
         {sourceOpen ? (
           <SourceDialog
             sources={model.sources}
-            onClose={() => setSourceOpen(false)}
+            {...(pickerNotice === null ? {} : { notice: pickerNotice })}
+            onClose={() => {
+              setSourceOpen(false);
+              setPickerNotice(null);
+            }}
             onAdd={(path) => model.addSource(path)}
           />
         ) : null}

@@ -28,12 +28,30 @@ test.use({ viewport: { width: 1920, height: 1080 }, colorScheme: "dark" });
 /** The size the window is allowed to be smallest, mirrored from `tauri.conf.json`. */
 const MINIMUM = { width: 1440, height: 960 };
 
-/** Choose the fixture master. The stub answers the picker with a real path. */
+/**
+ * Choose the fixture master.
+ *
+ * `Browse` opens the file picker, and in a browser the picker is the stub — it answers with a real path
+ * immediately, so this is one click. That is also the behaviour in the window: one click, the operating
+ * system's own dialog, done.
+ */
 async function chooseMaster(page: import("@playwright/test").Page): Promise<void> {
   await page.getByRole("button", { name: "Browse" }).click();
-  await expect(page.getByRole("dialog", { name: "Choose a video" })).toBeVisible();
-  await page.getByRole("button", { name: "Choose a file…" }).click();
   await expect(page.getByLabel("Video file")).toHaveValue(/\.mov$/);
+}
+
+/**
+ * Take the picker away, so `Browse` has nothing to open.
+ *
+ * The stub installs `window.__TAURI__.dialog` itself, which means the fallback path — the case that
+ * matters when a build has no dialog plugin — is unreachable in a browser test unless it is removed on
+ * purpose. `__TAURI_INTERNALS__` is absent in a browser too, so `pickFile` reports `unavailable` and the
+ * in-app dialog is what should appear.
+ */
+async function removeThePicker(page: import("@playwright/test").Page): Promise<void> {
+  await page.evaluate(() => {
+    delete (window as unknown as { __TAURI__?: { dialog?: unknown } }).__TAURI__?.dialog;
+  });
 }
 
 /** Type a range, and wait for the plan line to agree that both marks parse. */
@@ -295,6 +313,8 @@ test("no text is clipped inside the dialogs", async ({ page }) => {
   // path have nowhere to go. Both are checked.
   await page.goto("/");
 
+  // The source dialog is the picker's fallback, so it only appears when there is no picker.
+  await removeThePicker(page);
   await page.getByRole("button", { name: "Browse" }).click();
   const source = page.getByRole("dialog", { name: "Choose a video" });
   await expect(source).toBeVisible();
@@ -304,6 +324,9 @@ test("no text is clipped inside the dialogs", async ({ page }) => {
   // ambiguous the moment it does.
   await source.getByRole("button", { name: "Cancel" }).click();
 
+  // Reload to put the picker back: `removeThePicker` took it out for the whole page, and the export
+  // dialog below needs a master in the project.
+  await page.reload();
   await chooseMaster(page);
   await page.getByLabel("In point").fill("00:00:01:00");
   await page.getByLabel("Out point").fill("00:00:02:00");

@@ -65,3 +65,70 @@ pub use state::AppState;
 
 /// The application version, from the crate that was built.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Every command the interface may call, in **one** list.
+///
+/// ## Why this is a macro and not two lists
+///
+/// It was two. `main.rs` registered the real handler and `tests/ipc_contract.rs` registered a copy,
+/// with a comment arguing that the duplication was deliberate: a test that reused a shared list, it
+/// said, "would still pass if the binary forgot to register one of them". That reasoning is backwards.
+/// Two hand-maintained lists drift, and the direction they drift in is the dangerous one — a command
+/// added to the test's list and not to the binary's passes every test in this crate while being a dead
+/// button in the shipped window. The failure the comment was worried about is exactly the failure the
+/// duplication makes possible.
+///
+/// Both now build from this, so "registered in the test" and "registered in the window" are the same
+/// statement, and a missing registration is a compile error at the call site rather than a runtime
+/// discovery.
+///
+/// The command names are checked against the interface's own `COMMAND_NAMES` by
+/// `tests/ipc_contract.rs::every_command_the_interface_names_is_registered`.
+#[macro_export]
+macro_rules! trimmer_commands {
+    () => {
+        tauri::generate_handler![
+            // environment
+            $crate::commands::doctor,
+            // projects
+            $crate::commands::list_projects,
+            $crate::commands::create_project,
+            $crate::commands::open_project,
+            $crate::commands::delete_project,
+            $crate::commands::current_project,
+            $crate::commands::save_project,
+            // sources
+            $crate::commands::add_source,
+            $crate::commands::refresh_sources,
+            $crate::commands::remove_source,
+            $crate::commands::sources,
+            // segments
+            $crate::commands::segments,
+            $crate::commands::summary,
+            $crate::commands::presets,
+            $crate::commands::add_segment,
+            $crate::commands::update_segment,
+            $crate::commands::remove_segment,
+            $crate::commands::reorder_segment,
+            $crate::commands::parse_timecode,
+            // planning and cutting
+            $crate::commands::preview,
+            $crate::commands::preview_all,
+            $crate::commands::cut_segment,
+            $crate::commands::run_batch,
+            $crate::commands::cancel_batch,
+            // transcripts
+            $crate::commands::search_transcript,
+            $crate::commands::transcript_lines,
+            // export
+            $crate::commands::export_timeline,
+            // automation
+            $crate::commands::plan_watch_folder,
+            // verification policy
+            $crate::commands::get_verify_policy,
+            $crate::commands::set_verify_policy,
+            // shell integration
+            $crate::commands::reveal,
+        ]
+    };
+}

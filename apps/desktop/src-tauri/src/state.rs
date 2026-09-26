@@ -95,8 +95,26 @@ impl AppState {
     /// the first cut has taught the user nothing, whereas one that refuses to open and says
     /// `winget install Gyan.FFmpeg` has.
     pub fn bootstrap() -> Result<Self, String> {
+        Self::bootstrap_at(default_store_path())
+    }
+
+    /// Build the state against **a named store**, for a caller that must not touch the environment.
+    ///
+    /// `bootstrap` resolves the store from `THE_TRIMMER_STORE` or the user's data directory, and an
+    /// environment variable is process-global state. That is fine for a binary and wrong for a test
+    /// suite: three tests that each want their own database, run on Rust's default parallel threads,
+    /// race on the same variable — and the failure is not a crash but *the wrong scratch path*, which
+    /// reads as a broken `storePath` assertion rather than as a shared global. One test writes the
+    /// variable, another overwrites it, and whichever `bootstrap` runs second gets the other's store.
+    ///
+    /// Taking the path as an argument removes the shared state altogether, which is better than
+    /// serialising the tests to protect it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a sentence when ffmpeg or ffprobe cannot be found, or the store cannot be opened.
+    pub fn bootstrap_at(store_path: PathBuf) -> Result<Self, String> {
         let tools = ToolPaths::resolve().map_err(|error| error.to_string())?;
-        let store_path = default_store_path();
         let store = SqliteStore::open(&store_path).map_err(|error| error.to_string())?;
 
         let config = CutConfig::default();

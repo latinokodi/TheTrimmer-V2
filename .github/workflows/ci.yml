@@ -124,10 +124,18 @@ jobs:
       # interface by construction. The two jobs test two different things on purpose.
       #
       # It is `--ignored` because it generates and cuts real media; it is named explicitly so it
-      # cannot be skipped by a filter change.
+      # cannot be skipped by a filter change. It used to be `--test-threads=1`, because each test set
+      # `THE_TRIMMER_STORE` before constructing its state and the variable is process-global, so the
+      # tests raced and one could open another's database. They no longer share it — `bootstrap_at`
+      # takes the path — so serialising them is gone. Leaving it in would have hidden the next race
+      # instead of preventing it.
+      #
+      # `every_command_the_interface_names_is_registered` is the one test in that file that is *not*
+      # ignored, so it also runs in the step above; that is deliberate, because it reads the
+      # interface's own `COMMAND_NAMES` and needs no media.
       - name: The interface's own contract
         run: |
-          cargo test -p thetrimmer-desktop --test ipc_contract -- --ignored --nocapture --test-threads=1
+          cargo test -p thetrimmer-desktop --test ipc_contract -- --ignored --nocapture
         shell: pwsh
 
   web:
@@ -168,6 +176,11 @@ jobs:
         working-directory: apps/web
         run: npm run e2e
 
+      # The browser stub lives in this bundle or it does not, and the answer decides whether the
+      # shipped window does anything at all: for several revisions it did not, because the stub was in
+      # the production build and answered every command from a fixture. `npm run build` therefore ends
+      # by running `tools/check-bundle.mjs`, which opens the built files and fails if any trace of the
+      # stub is in them. This step is where that guarantee is enforced on every push.
       - name: Build
         working-directory: apps/web
         run: npm run build
@@ -181,10 +194,16 @@ jobs:
   # a browser suite and a real media cut, because every one of those tests the *interface* or the
   # *engine* and none of them starts the application.
   #
-  # `tools/smoke-window.ps1` starts it, waits for the interface to render, and asserts that the status
-  # bar reports what the `doctor` command returned. That last assertion is a full round trip through
-  # `invoke` to Rust and back, so it cannot pass with the assets missing, the bridge absent, or a
-  # command unregistered.
+  # `tools/smoke-window.ps1` starts the built window and asks it four questions: did the interface
+  # render from the assets just built; is the bridge Rust rather than the browser fixture; did the
+  # commands the window calls on mount answer; and does the file picker actually open.
+  #
+  # The third and fourth exist because the second was missing for several revisions. The check that
+  # *was* here — "the footer reports what `doctor` returned" — passed on a hard-coded ffmpeg build
+  # string, because the browser stub was in the production bundle and answered `doctor` itself. Every
+  # test in this file was green while the shipped application did nothing at all. A check that a
+  # fixture can satisfy is not a check, so the smoke test now asserts the absence of the fixture and
+  # the presence of the picker, neither of which a stub can fake.
   desktop:
     name: desktop
     runs-on: windows-latest

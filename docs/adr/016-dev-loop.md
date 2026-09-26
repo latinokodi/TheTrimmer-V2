@@ -62,6 +62,19 @@ project. Nothing else changes:
 * The stub **refuses to replace a bridge that is already there**, so `installStub()` is called
   unconditionally from the entry point and is a no-op inside the real window.
 
+  > **Corrected by [ADR-019](019-the-stub-never-ships.md).** This bullet was wrong, and the way it was
+  > wrong is the most expensive fault in the project so far. The guard tested `window.__TAURI__`, which
+  > `withGlobalTauri` injects *after* the page's module scripts run, so the stub did not find a bridge,
+  > did not decline, and clobbered Tauri's global when it arrived. The shipped window ran entirely on
+  > fixtures for several revisions: `doctor` was a hard-coded string, the plan and the cut were
+  > TypeScript, and the file picker returned a fixed path without opening anything. "A no-op inside the
+  > real window" was an intention, not an observation.
+  >
+  > The decision itself — develop and test the interface in a browser — stands, and is the reason this
+  > project is workable at all. What did not stand is shipping the mechanism. The stub is now behind
+  > `import.meta.env.DEV` and `npm run build` fails if it survives into `dist`. The text above is left
+  > as it was written, because a record that quietly rewrites its own mistakes teaches nothing.
+
 The loop becomes:
 
 | Change | Before | Now |

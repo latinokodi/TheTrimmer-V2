@@ -17,7 +17,7 @@
 // Without it a GUI executable gets one, and it is the first thing a user sees.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use thetrimmer_desktop_lib::{commands, state::AppState, VERSION};
+use thetrimmer_desktop_lib::{state::AppState, trimmer_commands, VERSION};
 
 fn main() {
     tracing_subscriber::fmt()
@@ -49,49 +49,9 @@ fn main() {
         // the only way to ask the operating system for a path.
         .plugin(tauri_plugin_dialog::init())
         .manage(state)
-        .invoke_handler(tauri::generate_handler![
-            // environment
-            commands::doctor,
-            // projects
-            commands::list_projects,
-            commands::create_project,
-            commands::open_project,
-            commands::delete_project,
-            commands::current_project,
-            commands::save_project,
-            // sources
-            commands::add_source,
-            commands::refresh_sources,
-            commands::remove_source,
-            commands::sources,
-            // segments
-            commands::segments,
-            commands::summary,
-            commands::presets,
-            commands::add_segment,
-            commands::update_segment,
-            commands::remove_segment,
-            commands::reorder_segment,
-            commands::parse_timecode,
-            // planning and cutting
-            commands::preview,
-            commands::preview_all,
-            commands::cut_segment,
-            commands::run_batch,
-            commands::cancel_batch,
-            // transcripts
-            commands::search_transcript,
-            commands::transcript_lines,
-            // export
-            commands::export_timeline,
-            // automation
-            commands::plan_watch_folder,
-            // verification policy
-            commands::get_verify_policy,
-            commands::set_verify_policy,
-            // shell integration
-            commands::reveal,
-        ])
+        // One list, shared with the contract test. See `trimmer_commands!` in `lib.rs` for why this is
+        // not written out here.
+        .invoke_handler(trimmer_commands!())
         .run(tauri::generate_context!())
         .unwrap_or_else(|error| {
             tracing::error!("the window failed to start: {error}");

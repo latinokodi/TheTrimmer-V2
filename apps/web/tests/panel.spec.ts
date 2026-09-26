@@ -11,11 +11,9 @@ import { expect, test } from "@playwright/test";
  * call something is ceremony in front of a form that has nothing to do with it.
  */
 
-/** Choose the fixture master. The stub answers the picker with a real path. */
+/** Choose the fixture master. `Browse` opens the picker, and the stub is the picker in a browser. */
 async function chooseMaster(page: import("@playwright/test").Page): Promise<void> {
   await page.getByRole("button", { name: "Browse" }).click();
-  await expect(page.getByRole("dialog", { name: "Choose a video" })).toBeVisible();
-  await page.getByRole("button", { name: "Choose a file…" }).click();
   await expect(page.getByLabel("Video file")).toHaveValue(/A007C012_250312_R1QK\.mov$/);
 }
 
@@ -180,6 +178,77 @@ test("the transcript can be searched and a range marked from a sentence", async 
   await expect(page.locator(".cut-table__row")).toHaveCount(1);
 });
 
+test("Browse opens the picker itself, with no dialog in between", async ({ page }) => {
+  /*
+   * The ask, asserted directly. `Browse` used to open an in-app dialog and leave the operator to find a
+   * second button inside it before the operating system's picker appeared — a click that existed only
+   * because the picker might be missing, and which hid the one dialog that has the operator's
+   * favourites, recent folders, mapped drives and search in it.
+   *
+   * So: one click, a picker call, a source. No dialog.
+   */
+  await page.goto("/");
+
+  const asked = await page.evaluate(() => {
+    const calls: string[] = [];
+    const bridge = (
+      window as unknown as {
+        __TAURI__: { dialog: { open: (options: unknown) => Promise<unknown> } };
+      }
+    ).__TAURI__;
+    const original = bridge.dialog.open.bind(bridge.dialog);
+    bridge.dialog.open = async (options: unknown) => {
+      calls.push(JSON.stringify(options));
+      return await original(options);
+    };
+    (window as unknown as { __PICKER_CALLS__: string[] }).__PICKER_CALLS__ = calls;
+    return true;
+  });
+  expect(asked).toBe(true);
+
+  await page.getByRole("button", { name: "Browse" }).click();
+
+  await expect(page.getByLabel("Video file")).toHaveValue(/\.mov$/);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  // And it asked for a video, not for anything at all.
+  const calls = await page.evaluate(
+    () => (window as unknown as { __PICKER_CALLS__: string[] }).__PICKER_CALLS__,
+  );
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toContain("mp4");
+  expect(calls[0]).toContain("mxf");
+});
+
+test("with no picker at all, Browse says why and offers the path field instead of doing nothing", async ({
+  page,
+}) => {
+  /*
+   * The other half, and the half that used to be a lie. `pickFile` answered `null` both when the
+   * operator cancelled and when there was no picker, so a build with no dialog plugin had a Browse
+   * button that did nothing at all and said nothing about it.
+   *
+   * Now the two are different: cancelling is silent and respected, and unavailable opens the fallback
+   * with the reason in it.
+   */
+  await page.goto("/");
+  await page.evaluate(() => {
+    delete (window as unknown as { __TAURI__?: { dialog?: unknown } }).__TAURI__?.dialog;
+  });
+
+  await page.getByRole("button", { name: "Browse" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Choose a video" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("status")).toContainText("no file picker here");
+  await expect(dialog.getByLabel("Path to the video")).toBeFocused();
+
+  // The fallback is not a dead end: typing the path adds the master.
+  await page.getByLabel("Path to the video").fill("H:\\masters\\reel 2\\A007C012_250312_R1QK.mov");
+  await dialog.getByRole("button", { name: "Add" }).click();
+  await expect(page.getByLabel("Video file")).toHaveValue(/A007C012_250312_R1QK\.mov$/);
+});
+
 test("the progress zone is there before anything runs, and says so", async ({ page }) => {
   await page.goto("/");
 
@@ -205,15 +274,21 @@ test("a dialog takes the keyboard, keeps it, and gives it back", async ({ page }
    * an application they could not see past — and Escape, the first thing every Windows user tries, did
    * nothing. A claim nothing enforces is worse than no claim: a screen reader then refuses to read
    * content that is in fact reachable.
+   *
+   * The source dialog is reached by taking the picker away, because that is the only thing that opens
+   * it now — which is itself the fix the operator asked for.
    */
   await page.goto("/");
+  await page.evaluate(() => {
+    delete (window as unknown as { __TAURI__?: { dialog?: unknown } }).__TAURI__?.dialog;
+  });
   await page.getByRole("button", { name: "Browse" }).click();
 
   const dialog = page.getByRole("dialog", { name: "Choose a video" });
   await expect(dialog).toBeVisible();
 
   // Focus moved in, to the dialog's first control rather than to whatever was behind it.
-  await expect(dialog.getByRole("button", { name: "Choose a file…" })).toBeFocused();
+  await expect(dialog.getByLabel("Path to the video")).toBeFocused();
 
   // Tab cycles within. Six presses from the first control is more than the number of controls it has,
   // so a leak would have shown up.
@@ -226,7 +301,7 @@ test("a dialog takes the keyboard, keeps it, and gives it back", async ({ page }
   }
 
   // Shift+Tab from the first control wraps to the last rather than escaping.
-  await dialog.getByRole("button", { name: "Choose a file…" }).focus();
+  await dialog.getByLabel("Path to the video").focus();
   await page.keyboard.press("Shift+Tab");
   const stillInside = await page.evaluate(
     () => document.querySelector(".dialog")?.contains(document.activeElement) ?? false,

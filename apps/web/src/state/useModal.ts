@@ -44,14 +44,28 @@ export function useModal<T extends HTMLElement>(onClose: () => void): RefObject<
   const close = useRef(onClose);
   close.current = onClose;
 
+  /*
+   * Where the keyboard was, captured **during render** rather than in the effect.
+   *
+   * This is not a style choice. An effect runs after the commit, and by then the dialog's own first
+   * control may already have focus — React applies `autoFocus` during the commit — so the effect would
+   * record the dialog's input as the thing to return to, and on close it would call `.focus()` on an
+   * element that had just been removed from the document. Focus then falls to `<body>`, and the
+   * operator is dropped at the top of the window with no indication of where they were.
+   *
+   * Render happens before the commit, so at this moment `document.activeElement` is still the control
+   * that opened the dialog. The ref makes it idempotent across StrictMode's double render.
+   */
+  const opener = useRef<HTMLElement | null>(null);
+  if (opener.current === null && typeof document !== "undefined") {
+    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  }
+
   useEffect(() => {
     const dialog = ref.current;
     if (dialog === null) {
       return;
     }
-
-    // Where the keyboard was. A dialog that forgets this drops the operator at the top of the page.
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
     const focusable = (): HTMLElement[] =>
       [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
@@ -94,8 +108,9 @@ export function useModal<T extends HTMLElement>(onClose: () => void): RefObject<
       dialog.removeEventListener("keydown", onKeyDown);
       // `isConnected` because the opener can have been unmounted while the dialog was up — the Trim
       // button, for instance, is disabled while a run is in flight and can be gone by the time we return.
-      if (opener !== null && opener.isConnected) {
-        opener.focus();
+      const target = opener.current;
+      if (target !== null && target.isConnected) {
+        target.focus();
       }
     };
   }, []);

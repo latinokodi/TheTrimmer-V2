@@ -30,53 +30,23 @@ use tauri::ipc::{CallbackFn, InvokeBody};
 use tauri::test::{mock_builder, mock_context, noop_assets};
 use tauri::webview::InvokeRequest;
 use tauri::{App, WebviewWindowBuilder};
-use thetrimmer_desktop_lib::{commands, state::AppState};
+use thetrimmer_desktop_lib::{state::AppState, trimmer_commands};
 
 type BoxError = Box<dyn std::error::Error>;
 
 /// Build the application exactly as `main.rs` does.
 ///
-/// The command list is duplicated from the binary on purpose: a test that reused a shared list
-/// would still pass if the binary forgot to register one of them, which is the failure this file
-/// exists to catch. Keeping the list here means the two have to be kept in step by hand, and the
-/// compiler cannot help with that — but the test fails loudly the moment they diverge.
+/// The command list is **the same list** the binary registers — `trimmer_commands!()` lives in the
+/// library and both call it. This file used to keep a hand-written copy, on the argument that a shared
+/// list "would still pass if the binary forgot to register one of them". That is backwards: two lists
+/// drift, and the direction that matters is a command present here and absent from the binary, which
+/// passes every test in this crate and is a dead button in the shipped window. One list means
+/// "registered in the test" and "registered in the window" are the same statement.
 fn build_app(state: AppState) -> Result<App<tauri::test::MockRuntime>, BoxError> {
     Ok(mock_builder()
         .plugin(tauri_plugin_dialog::init())
         .manage(state)
-        .invoke_handler(tauri::generate_handler![
-            commands::doctor,
-            commands::list_projects,
-            commands::create_project,
-            commands::open_project,
-            commands::delete_project,
-            commands::current_project,
-            commands::save_project,
-            commands::add_source,
-            commands::refresh_sources,
-            commands::remove_source,
-            commands::sources,
-            commands::segments,
-            commands::summary,
-            commands::presets,
-            commands::add_segment,
-            commands::update_segment,
-            commands::remove_segment,
-            commands::reorder_segment,
-            commands::parse_timecode,
-            commands::preview,
-            commands::preview_all,
-            commands::cut_segment,
-            commands::run_batch,
-            commands::cancel_batch,
-            commands::search_transcript,
-            commands::transcript_lines,
-            commands::export_timeline,
-            commands::plan_watch_folder,
-            commands::get_verify_policy,
-            commands::set_verify_policy,
-            commands::reveal,
-        ])
+        .invoke_handler(trimmer_commands!())
         .build(mock_context(noop_assets()))?)
 }
 
@@ -187,11 +157,15 @@ fn make_master(scratch: &Scratch) -> Result<PathBuf, BoxError> {
 }
 
 /// A workspace pointed at a private store and a private scratch folder.
+///
+/// The store path is passed in rather than put in `THE_TRIMMER_STORE`. It used to be the environment
+/// variable, and that is process-global: with three of these tests running on Rust's default parallel
+/// threads, each wrote the variable before calling `bootstrap`, so one test's workspace could be opened
+/// over another's database. The symptom was not a crash — it was `storePath` naming the wrong scratch
+/// directory, which looks like a broken assertion rather than a shared global.
 fn harness(name: &str) -> Result<(Scratch, App<tauri::test::MockRuntime>), BoxError> {
     let scratch = Scratch::new(name)?;
-    // `AppState::bootstrap` reads this, so the test never touches the user's own project database.
-    std::env::set_var("THE_TRIMMER_STORE", scratch.join("projects.db"));
-    let state = AppState::bootstrap()?;
+    let state = AppState::bootstrap_at(scratch.join("projects.db"))?;
     let app = build_app(state)?;
     Ok((scratch, app))
 }
@@ -631,5 +605,74 @@ fn commands_before_a_project_exists_fail_politely() -> Result<(), BoxError> {
         json!({ "policy": "forensic-ish" })
     )
     .is_err());
+    Ok(())
+}
+
+/// Every command the interface can name is registered in the handler.
+///
+/// ## Why this test had to exist and why it is new
+///
+/// It did not, while the browser stub was in the shipped bundle. The stub answered all thirty-one
+/// commands from TypeScript, so a command named by `apps/web/src/ipc/commands.ts` and absent from
+/// `generate_handler!` was answered perfectly in the window — the stub was it. The gap was invisible
+/// from every direction at once: invisible to the browser suite, because there the stub *is* the bridge;
+/// invisible to this file, because it only invoked the commands it named; and invisible to the smoke
+/// test, because the fixture it checked was the fixture the stub returned.
+///
+/// The stub is no longer in a production build (see `apps/web/tools/check-bundle.mjs`), which turns
+/// that gap into a button that fails the moment it is pressed. So the names are **read out of the
+/// interface's own source** rather than listed here: a command added there and forgotten in the handler
+/// fails this test, instead of being forgotten on both sides and never noticed.
+///
+/// The detector is Tauri's own "not found" for an unregistered command. Every command invoked with no
+/// arguments either succeeds or refuses with a sentence about the *request* — never about the name — so
+/// anything mentioning the name is a registration fault.
+#[test]
+fn every_command_the_interface_names_is_registered() -> Result<(), BoxError> {
+    let (_scratch, app) = harness("commands")?;
+    let webview = window(&app)?;
+
+    // `apps/desktop/src-tauri` → `apps/desktop` → `apps`, then down into `web`.
+    let source = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/src/ipc/commands.ts"),
+    )?;
+    let start = source
+        .find("export const COMMAND_NAMES = [")
+        .ok_or("commands.ts no longer declares COMMAND_NAMES")?;
+    let end = source[start..]
+        .find("] as const;")
+        .ok_or("COMMAND_NAMES is no longer closed by `] as const;`")?
+        + start;
+
+    let names: Vec<String> = source[start..end]
+        .lines()
+        .filter_map(|line| {
+            let quoted = line.trim().strip_prefix('"')?;
+            quoted
+                .strip_suffix("\",")
+                .or_else(|| quoted.strip_suffix('"'))
+                .map(str::to_string)
+        })
+        .collect();
+
+    // A guard on the parser itself: if the shape of `COMMAND_NAMES` changes, this fails loudly rather
+    // than passing over an empty list.
+    assert!(
+        names.len() >= 30,
+        "only {} command names were parsed out of commands.ts; the parser is wrong, not the handler",
+        names.len()
+    );
+
+    for name in &names {
+        let message = invoke(&webview, name, json!({}))
+            .err()
+            .unwrap_or_default()
+            .to_lowercase();
+        assert!(
+            !message.contains("not found") && !message.contains("unknown command"),
+            "`{name}` is named by the interface but is not in `generate_handler!` in main.rs: {message}"
+        );
+    }
+
     Ok(())
 }

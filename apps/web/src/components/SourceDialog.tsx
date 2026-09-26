@@ -1,33 +1,39 @@
 /**
- * Choosing the video.
+ * Choosing the video, when the operating system's dialog is not the way to do it.
  *
- * ## Why this is a dialog and not a screen
+ * ## Why this is now a fallback rather than the first step
  *
- * Everything else in the application is on the main window. This one thing is a dialog because it is
- * a question with a beginning and an end — which file — and because the window cannot answer a
- * question about a file it has not been told about yet.
+ * `Browse` on the panel opens the **Windows file dialog** directly. It used to open this instead, which
+ * added a click to a one-click job and hid the operating system's own picker — where the operator's
+ * favourites, recent folders, network shares and search all live — behind a button inside a dialog they
+ * had to find first.
  *
- * ## Why a path can be typed as well as picked
+ * So this opens in exactly one situation: `pickFile` answered `unavailable`, which means there is no
+ * picker to show. That is a real situation (a build without the dialog plugin, or a page with no window
+ * behind it) and it needs a real answer, not a dead button. Both things this dialog can do are things
+ * the panel cannot:
  *
- * The picker is the operating system's own dialog. It is the right way to find a file you can see,
- * and it is the wrong way to add a master whose path you already have: an editor with the file on a
- * mapped share, or on a second machine they are remoting into, reads the path out of the Finder, a
- * shot log or a message. Pasting it beats navigating a tree to it, and on a locked-down workstation
- * where the shell's file dialog is disabled by policy it is the only route that works.
+ * * take a **typed or pasted path** as the primary action, and
+ * * list the masters already in this session, with whether each is still on disk.
+ *
+ * A picker that is merely *cancelled* does not come here. Cancelling is a decision and it is respected.
  */
 
 import { useState } from "react";
 
-import { pickFile } from "../ipc/dialog";
+import { VIDEO_FILTERS, pickFile } from "../ipc/dialog";
 import type { SourceView } from "../ipc/types";
 import { useModal } from "../state/useModal";
 
 export function SourceDialog({
   sources,
+  notice,
   onClose,
   onAdd,
 }: {
   readonly sources: readonly SourceView[];
+  /** Why this dialog is open instead of the operating system's picker, when there is a reason. */
+  readonly notice?: string;
   readonly onClose: () => void;
   readonly onAdd: (path: string) => Promise<void>;
 }): JSX.Element {
@@ -38,19 +44,12 @@ export function SourceDialog({
   const dialogRef = useModal<HTMLDivElement>(onClose);
 
   async function pick(): Promise<void> {
-    const chosen = await pickFile({
-      title: "Choose a video",
-      filters: [
-        {
-          name: "Video",
-          extensions: ["mp4", "mov", "mkv", "m4v", "mxf", "avi", "webm", "mts", "m2ts"],
-        },
-      ],
-    });
-    if (chosen === null) {
-      return;
+    const picked = await pickFile({ title: "Choose a video", filters: VIDEO_FILTERS });
+    if (picked.kind === "picked") {
+      await add(picked.path);
+    } else if (picked.kind === "unavailable") {
+      setError(picked.reason);
     }
-    await add(chosen);
   }
 
   async function add(candidate: string): Promise<void> {
@@ -93,25 +92,22 @@ export function SourceDialog({
         </h2>
 
         <div className="dialog__body">
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={() => void pick()}
-            disabled={saving}
-          >
-            Choose a file…
-          </button>
+          {notice !== undefined ? (
+            <p className="note note--warn" role="status">
+              {notice}
+            </p>
+          ) : null}
 
           <div className="field">
             <label className="field__label" htmlFor="source-path">
-              Or paste a path
+              Path to the video
             </label>
             <div className="row">
               <input
                 id="source-path"
                 type="text"
                 value={path}
-                placeholder="H:\masters\reel 2\A007C012_250312_R1QK.mov"
+                placeholder="D:\masters\A007C012.mov"
                 spellCheck={false}
                 onChange={(event) => setPath(event.target.value)}
                 onKeyDown={(event) => {
@@ -122,7 +118,7 @@ export function SourceDialog({
               />
               <button
                 type="button"
-                className="btn"
+                className="btn btn--primary"
                 disabled={path.trim().length === 0 || saving}
                 onClick={() => void add(path)}
               >
@@ -133,6 +129,17 @@ export function SourceDialog({
               A caption file named after the video (<code>&lt;video&gt;.srt</code>) is picked up
               automatically and retimed with every segment.
             </p>
+          </div>
+
+          {/*
+            Kept even here, because "no picker" can be wrong: a machine where the picker failed to
+            install once may still have it working, and this is the only way to find out without
+            restarting. It is no longer the first thing on screen.
+          */}
+          <div className="row">
+            <button type="button" className="btn" onClick={() => void pick()} disabled={saving}>
+              Try the Windows file dialog
+            </button>
           </div>
 
           {sources.length > 0 ? (

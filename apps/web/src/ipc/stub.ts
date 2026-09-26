@@ -719,18 +719,44 @@ const handlers: Record<CommandName, (args: Record<string, unknown>) => unknown> 
  * Install the stub as the window's bridge.
  *
  * The shape is the real one — `{ core: { invoke }, dialog: { open, save } }` — because the interface
- * reaches for that shape and nothing else. `withGlobalTauri` is what puts it there in the window;
- * here it is this function.
+ * reaches for that shape and nothing else.
  *
- * It refuses to overwrite a bridge that is already present, so it can be called unconditionally from
- * the entry point: inside the real window the genuine bridge wins and this is a no-op.
+ * ## This never runs in the shipped window, and that is enforced twice
+ *
+ * `main.tsx` calls it only under `import.meta.env.DEV`, so a production build has no call to it and
+ * Rollup removes the whole module — `tools/check-bundle.mjs` then fails the build if any trace of it
+ * survives into `dist`. That is the load-bearing guarantee.
+ *
+ * ## The guard that failed, and why it looked at the wrong thing
+ *
+ * The second line of defence is the check below, and it used to test the wrong property. It asked
+ * whether `window.__TAURI__` was already defined — the *convenience* global that `withGlobalTauri`
+ * injects. It is injected late, and the stub therefore won the race: the shipped window ran on fixtures,
+ * `doctor` reported a hard-coded ffmpeg build string, and the file picker returned
+ * `H:\masters\reel 2\A007C012_250312_R1QK.mov` without opening anything.
+ *
+ * The real signal is `window.__TAURI_INTERNALS__`: the IPC bridge itself, which is present from the
+ * first script. That is what this now checks, and what `tools/smoke-window.ps1` asserts after the
+ * window is up. The marker it leaves behind is deliberate — when the stub declines, it says *why*, so a
+ * future reader does not have to re-derive this.
  */
 export function installStub(): boolean {
   if (typeof window === "undefined") {
     return false;
   }
-  const existing = (window as unknown as { __TAURI__?: unknown }).__TAURI__;
-  if (existing !== undefined && (existing as { mocks?: unknown }).mocks === undefined) {
+
+  const globals = window as unknown as {
+    __TAURI__?: unknown;
+    __TAURI_INTERNALS__?: unknown;
+    __TAURI_STUB__?: string;
+  };
+
+  if (globals.__TAURI_INTERNALS__ !== undefined) {
+    globals.__TAURI_STUB__ = "declined: window.__TAURI_INTERNALS__ is present, so this is the real window";
+    return false;
+  }
+  if (globals.__TAURI__ !== undefined && (globals.__TAURI__ as { mocks?: unknown }).mocks === undefined) {
+    globals.__TAURI_STUB__ = "declined: a real window.__TAURI__ is already installed";
     return false;
   }
 
@@ -745,7 +771,7 @@ export function installStub(): boolean {
     return handler(args);
   };
 
-  (window as unknown as { __TAURI__: unknown }).__TAURI__ = {
+  globals.__TAURI__ = {
     mocks: true,
     core: { invoke },
     dialog: {
@@ -766,6 +792,7 @@ export function installStub(): boolean {
       },
     },
   };
+  globals.__TAURI_STUB__ = "installed: there is no real bridge, so this is a browser";
   return true;
 }
 

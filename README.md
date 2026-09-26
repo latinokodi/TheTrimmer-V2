@@ -116,21 +116,30 @@ cd apps/web
 npm ci
 npm run dev            # the interface, in a browser, with a fixture project
 npm test               # the formatting arithmetic, ~0.3 s
-npm run e2e            # 10 browser tests over the real interface, ~6 s
+npm run e2e            # 28 browser tests over the real interface, ~9 s
 ```
 
-The stub refuses to replace a bridge that is already present, so `installStub()` is called
-unconditionally and is a no-op inside the real window. A command added to `COMMAND_NAMES` and not
-stubbed is a compile error rather than a control that works in the window and does nothing in a test.
+**The stub is not in a production build, and the build proves it.** `installStub()` is called only
+under `import.meta.env.DEV`, so Vite folds the branch away and Rollup drops the module; `npm run build`
+then runs `tools/check-bundle.mjs`, which opens the built files and fails if any trace of the stub is in
+them. That last step is not a formality — the stub *was* shipping for several revisions, the window ran
+entirely on fixtures, and `npm run build` is what makes that impossible rather than merely unlikely.
+See [ADR-019](docs/adr/019-the-stub-never-ships.md).
 
-**The contract has two tests, of two different things.** The browser tests drive the real interface
-and prove its behaviour; `cargo test -p thetrimmer-desktop --test ipc_contract -- --ignored` drives
-the real commands through Tauri's real invoke handler and proves the *shape* of what Rust sends. The
-stub agrees with the interface by construction, so it can never catch a renamed field — that is what
-the second test is for, and it is the one that found `add_source` answering a different object from
-the `sources` command, `get_verify_policy` refusing to answer before a project was open, and an out
-point producing a segment one frame longer than the dialog promised. See
-[ADR-016](docs/adr/016-dev-loop.md).
+A command added to `COMMAND_NAMES` and not stubbed is a compile error rather than a control that works
+in the window and does nothing in a test.
+
+**The contract has three tests, of three different things.** The browser tests drive the real interface
+and prove its behaviour. `cargo test -p thetrimmer-desktop --test ipc_contract` drives the real commands
+through Tauri's real invoke handler and proves the *shape* of what Rust sends — the stub agrees with the
+interface by construction, so it can never catch a renamed field, which is why that test exists and why
+it found `add_source` answering a different object from the `sources` command, `get_verify_policy`
+refusing to answer before a project was open, and an out point producing a segment one frame longer than
+the dialog promised. And `tools/smoke-window.ps1` starts the built window and asks it whether its bridge
+is Rust, whether the commands it calls on mount answered, and whether the file picker opens — the
+questions no test of the interface or the engine can ask.
+
+See [ADR-016](docs/adr/016-dev-loop.md) and [ADR-019](docs/adr/019-the-stub-never-ships.md).
 
 **Sources.** A project holds sources — masters, not copies. Each is probed and its facts
 remembered: rate, frame count, container timescale, audio layout, size. A source that has gone

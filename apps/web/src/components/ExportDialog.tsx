@@ -74,8 +74,11 @@ export function ExportDialog({
       defaultPath: `${sequenceName.trim()}.${chosen.extension}`,
       filters: [{ name: chosen.label, extensions: [chosen.extension] }],
     });
-    if (picked !== null) {
-      setPath(picked);
+    if (picked.kind === "picked") {
+      setError(null);
+      setPath(picked.path);
+    } else if (picked.kind === "unavailable") {
+      setError(picked.reason);
     }
   }
 
