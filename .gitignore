@@ -1,46 +1,32 @@
-# Rust
-/target
-**/*.rs.bk
-*.pdb
+# Python: the engine's own environment and bytecode. The virtual environment is created by
+# start.bat and is never committed; requirements.txt is what describes it.
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Node
+# Node: the window's dependencies, and the built interface. Both are produced by start.bat.
+# `frontend/dist` is what the engine serves to the window, and it is a build artefact, not source.
 node_modules/
-dist/
-dist-ssr/
-*.local
+frontend/node_modules/
+frontend/dist/
 .vite/
 
-# Playwright: traces, screenshots on failure and the HTML report are all build output. `screens/` is
-# deliberately NOT ignored — it holds the interface screenshots a layout test writes, which are the
-# thing a person reviews when the design changes.
-apps/web/test-results/
-apps/web/playwright-report/
-apps/web/blob-report/
+# Packaging output, from `npm run pack` / `npm run dist`.
+/dist/
+/release/
 
-# Tauri build output
-apps/desktop/src-tauri/target/
-apps/desktop/src-tauri/gen/
-
-# Local data: projects, caches, logs, licences
-.local/
+# Local data: anything a person trimmed while trying the application, and its logs.
 *.trimmerproj
 *.trimmerproj-journal
 /scratch/
 *.log
-
-# Media used by tests and oracle runs
-/testdata/generated/
-/crates/trimmer-core/tests/fixtures/generated/
 
 # Editors
 .vscode/*
 !.vscode/extensions.json
 .idea/
 .DS_Store
-
-# Python oracle virtualenv (the V1 engine is invoked in-place, never vendored)
-__pycache__/
-.venv/
-.mypy_cache/
-.pytest_cache/
-.ruff_cache/
+Thumbs.db

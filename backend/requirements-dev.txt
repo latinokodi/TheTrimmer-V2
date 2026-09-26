@@ -1,0 +1,3 @@
+# Only needed to run `backend\tests`. The application itself needs aiohttp and nothing else.
+-r requirements.txt
+pytest>=8.0

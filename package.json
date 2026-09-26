@@ -1,0 +1,31 @@
+{
+  "name": "thetrimmer",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Frame-exact, verified segment cutting for post-production.",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dev": "concurrently -k \"npm --prefix frontend run dev\" \"wait-on http://127.0.0.1:5173 && cross-env THE_TRIMMER_DEV=http://127.0.0.1:5173 electron .\"",
+    "build": "npm --prefix frontend run build",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "electron": "^33.0.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1",
+    "cross-env": "^7.0.3",
+    "electron-builder": "^25.1.8",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.thetrimmer.app",
+    "productName": "TheTrimmer",
+    "directories": { "output": "dist" },
+    "files": ["electron/**/*", "frontend/dist/**/*", "backend/**/*"],
+    "extraResources": [{ "from": "backend", "to": "backend" }],
+    "win": { "target": "nsis" }
+  }
+}
