@@ -22,4 +22,4 @@ decision no longer applies, it is *superseded* and the reason is stated — neve
 - [ADR-012 — SQLite for projects, and why not a document file](adr/012-sqlite.md) *(new in V2)*
 - [ADR-013 — Presets are data, and a preset that reshapes the frame forfeits passthrough](adr/013-presets.md) *(new in V2)*
 - [ADR-014 — Overshoot is a warning; a missing frame is a failure](adr/014-overshoot-verdict.md) *(new in V2)*
-- [ADR-015 — Licensing is offline, signed and file-based](adr/015-licensing.md) *(new in V2)*
+- [ADR-015 — This build ships without a licensing feature](adr/015-licensing.md) *(new in V2)*

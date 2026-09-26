@@ -188,6 +188,8 @@ fn machine_name() -> String {
 /// nothing else for the thread to do.
 pub struct EngineMeasurer {
     prober: trimmer_media::Prober,
+    /// The resolved tools, so a hash pass can be run without resolving them again per call.
+    tools: ToolPaths,
 }
 
 impl EngineMeasurer {
@@ -196,7 +198,8 @@ impl EngineMeasurer {
     pub fn new() -> Self {
         let tools = ToolPaths::resolve().unwrap_or_else(|_| ToolPaths::new("ffmpeg", "ffprobe"));
         Self {
-            prober: trimmer_media::Prober::new(tools),
+            prober: trimmer_media::Prober::new(tools.clone()),
+            tools,
         }
     }
 }
@@ -238,15 +241,37 @@ impl trimmer_verify::MediaMeasurer for EngineMeasurer {
 
     fn frame_hashes(
         &self,
-        _path: &trimmer_core::MediaPath,
-        _start_frame: i64,
-        _count: i64,
-        _rate: trimmer_core::FrameRate,
+        path: &trimmer_core::MediaPath,
+        start_frame: i64,
+        count: i64,
+        rate: trimmer_core::FrameRate,
     ) -> trimmer_core::CoreResult<trimmer_verify::FrameHashes> {
-        // Frame hashing costs two ffmpeg passes per sample point and is not wired into the desktop
-        // application yet. The check reports itself as skipped rather than pretending to have run —
-        // which is the whole reason `trimmer-verify` distinguishes those two states.
-        Ok(trimmer_verify::FrameHashes::new(Vec::new(), 0))
+        // A real hash pass: one ffmpeg run per side, which is why the *policy* decides whether it
+        // happens. `Strict` and `Forensic` ask for it; `Standard` does not.
+        //
+        // Returning an empty list here — as an earlier version did — meant the frame comparison
+        // reported itself skipped while the batch still called the cut verified. The queue's
+        // certification rule now catches that and reports the file uncertified, which is honest, but
+        // the right answer is to make the measurement rather than to report its absence.
+        if count <= 0 {
+            return Ok(trimmer_verify::FrameHashes::new(Vec::new(), start_frame));
+        }
+        let executor = trimmer_media::CutExecutor::new(self.tools.clone());
+        let options = trimmer_media::RunOptions {
+            policy: trimmer_media::PollPolicy::long(),
+            ..trimmer_media::RunOptions::default()
+        };
+        let digests = block_on(executor.frame_hashes(
+            path.as_path(),
+            rate.seconds_of(start_frame),
+            usize::try_from(count).unwrap_or(usize::MAX),
+            &options,
+        ))
+        .map_err(|error| trimmer_core::CoreError::Caption {
+            path: path.to_string(),
+            reason: error.to_string(),
+        })?;
+        Ok(trimmer_verify::FrameHashes::new(digests, start_frame))
     }
 
     fn extract_frame(

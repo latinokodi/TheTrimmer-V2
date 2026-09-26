@@ -189,6 +189,10 @@ struct FakeMeasurer {
     /// the source path, so a cut is compared against a source that has the frames it has.
     output_frames: i64,
     source_frames: i64,
+    /// Whether decoded-frame hashes are available. `false` models the real case the audit found —
+    /// a measurer that can report metadata but not hashes — and is how the uncertified path is
+    /// exercised without pretending the gap does not exist.
+    hashes: bool,
 }
 
 impl FakeMeasurer {
@@ -199,6 +203,18 @@ impl FakeMeasurer {
             facts: Mutex::new(Vec::new()),
             output_frames,
             source_frames,
+            hashes: true,
+        })
+    }
+
+    /// A measurer that can report metadata but NOT decoded-frame hashes, which is what a build
+    /// without the hash pass looks like from the queue's side.
+    fn without_hashes(output_frames: i64, source_frames: i64) -> Arc<Self> {
+        Arc::new(Self {
+            facts: Mutex::new(Vec::new()),
+            output_frames,
+            source_frames,
+            hashes: false,
         })
     }
 
@@ -231,12 +247,28 @@ impl trimmer_verify::MediaMeasurer for FakeMeasurer {
 
     fn frame_hashes(
         &self,
-        _path: &MediaPath,
-        _start_frame: i64,
-        _count: i64,
+        path: &MediaPath,
+        start_frame: i64,
+        count: i64,
         _rate: FrameRate,
     ) -> trimmer_core::CoreResult<FrameHashes> {
-        Ok(FrameHashes::new(Vec::new(), 0))
+        // A lossless copy decodes to identical frames, so both sides report the same digests and the
+        // comparison matches at offset zero. The digests are derived from the frame *content* (here,
+        // simply the index) rather than from the file name, because the check is comparing "is this
+        // the same picture" — two files holding the same packets answer yes, and an implementation
+        // that hashed the path instead would pass this fake while failing on real media.
+        //
+        // `end_to_end.rs` proves the same property with real ffmpeg by hashing actual decoded frames.
+        if !self.hashes || count <= 0 {
+            return Ok(FrameHashes::new(Vec::new(), start_frame));
+        }
+        let _ = path;
+        Ok(FrameHashes::new(
+            (0..count)
+                .map(|index| format!("frame-{index:04}"))
+                .collect(),
+            start_frame,
+        ))
     }
 
     fn extract_frame(
@@ -626,10 +658,13 @@ async fn a_batch_cuts_every_runnable_segment_and_reports_each_one() {
             failed,
             skipped,
         } => {
+            // Three cuts, all certified. The fake measurer supplies decoded-frame hashes, so the
+            // `Strict` policy's frame comparison actually ran and matched — which is the whole point
+            // of the honesty fix: before it, this number was 3 whether or not the checks ran.
             assert_eq!(
                 (*succeeded, *unverified, *failed, *skipped),
                 (3, 0, 0, 0),
-                "{events:#?}"
+                "every cut had the evidence its policy asked for: {events:#?}"
             );
         }
         other => panic!("wrong event: {other:?}"),
@@ -642,6 +677,188 @@ async fn a_batch_cuts_every_runnable_segment_and_reports_each_one() {
             ),
             "no {state:?} event"
         );
+    }
+}
+
+#[tokio::test]
+async fn a_cut_with_real_evidence_is_certified() {
+    // The positive half of the honesty fix: when the measurer can supply the decoded-frame hashes the
+    // `Strict` policy asks for, the comparison runs, matches, and the file is certified. Before the
+    // wiring was added this could not happen at all — the check was skipped and the file was reported
+    // as verified anyway, which is the bug the next test pins from the other side.
+    let mut fixture = Fixture::new("certified").with_segments(1).await;
+    let queue = queue_for(
+        fixture.engine.clone(),
+        FakeMeasurer::reporting(100, 100_000),
+    );
+    let outcome = queue
+        .run(
+            &mut fixture.workspace,
+            &QueueOptions::default(),
+            Arc::new(CollectingQueueSink::new()),
+        )
+        .await
+        .expect("ran");
+
+    assert_eq!(outcome.failed(), 0);
+    assert_eq!(
+        outcome.unverified(),
+        0,
+        "with evidence there is nothing uncertified"
+    );
+    assert!(outcome.is_clean(), "{}", outcome.report());
+
+    match &outcome.jobs[0].3 {
+        JobStatus::Succeeded {
+            verification, plan, ..
+        } => {
+            assert!(verification.is_certified(plan), "{verification:?}");
+            // `unrun_required_checks` reports every skipped check the policy asked for, including the
+            // ones that could not apply to this plan. The gaps that matter are the applicable ones.
+            let real_gaps: Vec<&trimmer_verify::CheckResult> = verification
+                .unrun_required_checks()
+                .into_iter()
+                .filter(|result| trimmer_verify::check_applies(result.check, plan))
+                .collect();
+            assert!(real_gaps.is_empty(), "no applicable gaps: {real_gaps:?}");
+            // The frame comparison must have actually RUN, not been skipped.
+            let alignment = verification
+                .get(trimmer_verify::Check::FrameAlignment)
+                .expect("the frame check is present");
+            assert!(
+                !alignment.status.is_skipped(),
+                "the frame comparison was skipped: {:?}",
+                alignment.status
+            );
+        }
+        other => panic!("expected a certified file, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_cut_whose_required_checks_did_not_run_is_uncertified_not_verified() {
+    // The regression test for the honesty bug an audit found. This measurer reports facts but no
+    // frame hashes, so the frame-alignment check the `Strict` policy asks for cannot run — and a run
+    // that could not make a check it asked for must not be reported as verified.
+    let mut fixture = Fixture::new("uncertified").with_segments(1).await;
+    let queue = queue_for(
+        fixture.engine.clone(),
+        FakeMeasurer::without_hashes(100, 100_000),
+    );
+    let outcome = queue
+        .run(
+            &mut fixture.workspace,
+            &QueueOptions::default(),
+            Arc::new(CollectingQueueSink::new()),
+        )
+        .await
+        .expect("ran");
+
+    assert_eq!(outcome.total(), 1);
+    assert_eq!(outcome.failed(), 0, "nothing failed");
+    assert_eq!(outcome.unverified(), 1, "but nothing was certified either");
+    assert!(!outcome.is_clean(), "an uncertified run is not a clean run");
+
+    match &outcome.jobs[0].3 {
+        JobStatus::Unverified {
+            verification, plan, ..
+        } => {
+            assert!(verification.ok(), "no check failed");
+            let gaps = verification.unrun_required_checks();
+            assert!(!gaps.is_empty(), "there must be recorded gaps");
+            assert!(
+                gaps.iter()
+                    .any(|result| result.check == trimmer_verify::Check::FrameAlignment),
+                "the frame comparison is the gap: {gaps:?}"
+            );
+            assert!(!verification.is_certified(plan));
+        }
+        other => panic!("expected an uncertified file, got {other:?}"),
+    }
+
+    // And the report says why, naming the gap rather than blaming the file.
+    let report = outcome.report();
+    assert!(report.contains("uncertified"), "{report}");
+    assert!(report.contains("did not run"), "{report}");
+}
+
+#[tokio::test]
+async fn a_check_that_cannot_apply_to_this_plan_is_not_counted_as_a_gap() {
+    // A whole-segment re-encode has no head to preserve a timescale for, so `TimescalePreserved`
+    // declining is a complete answer. Counting it as a gap would mark every such cut uncertified for
+    // a check that could never have run — the verdict would be useless exactly where it matters.
+    let mut fixture = Fixture::new("inapplicable").with_segments(1).await;
+    let queue = queue_for(
+        fixture.engine.clone(),
+        FakeMeasurer::reporting(100, 100_000),
+    );
+    let outcome = queue
+        .run(
+            &mut fixture.workspace,
+            &QueueOptions::default(),
+            Arc::new(CollectingQueueSink::new()),
+        )
+        .await
+        .expect("ran");
+
+    match &outcome.jobs[0].3 {
+        JobStatus::Succeeded { plan, .. } => {
+            // The fixture's source has no keyframe listing, so the plan is a whole re-encode.
+            assert_eq!(plan.mode, trimmer_core::CutMode::Reencode, "{plan:?}");
+            assert!(!trimmer_verify::check_applies(
+                trimmer_verify::Check::TimescalePreserved,
+                plan
+            ));
+        }
+        other => panic!("expected a certified file, got {other:?}"),
+    }
+}
+#[tokio::test]
+async fn switching_verification_off_is_recorded_rather_than_hidden() {
+    // The distinction this pins: asking for nothing and being told nothing is honest, whereas asking
+    // for a check and not being told it did not run is not. With the policy off there is no gap to
+    // report, so the cut succeeds — and every check must still be recorded as skipped, with the
+    // reason, so the absence of verification is auditable rather than invisible.
+    let mut fixture = Fixture::new("nothing-asked").with_segments(1).await;
+    let queue = queue_for(
+        fixture.engine.clone(),
+        FakeMeasurer::reporting(100, 100_000),
+    );
+    let options = QueueOptions {
+        skip_verification: true,
+        ..QueueOptions::default()
+    };
+    let outcome = queue
+        .run(
+            &mut fixture.workspace,
+            &options,
+            Arc::new(CollectingQueueSink::new()),
+        )
+        .await
+        .expect("ran");
+
+    assert_eq!(outcome.failed(), 0);
+    match &outcome.jobs[0].3 {
+        JobStatus::Succeeded { verification, .. } => {
+            assert!(
+                verification.unrun_required_checks().is_empty(),
+                "a policy that asks for nothing cannot leave a gap"
+            );
+            assert_eq!(
+                verification.results.len(),
+                9,
+                "every check must still be recorded as skipped"
+            );
+            for result in &verification.results {
+                match &result.status {
+                    trimmer_verify::CheckStatus::Skipped { reason } => {
+                        assert!(reason.contains("verification is off"), "{reason}");
+                    }
+                    other => panic!("expected a recorded skip, got {other:?}"),
+                }
+            }
+        }
+        other => panic!("unexpected status: {other:?}"),
     }
 }
 

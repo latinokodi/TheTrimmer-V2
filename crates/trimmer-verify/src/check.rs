@@ -298,6 +298,64 @@ impl Evidence {
     }
 }
 
+/// True when a policy asks for a check.
+///
+/// The mapping lives here rather than on `VerifyPolicy` because the policy is a domain type that
+/// knows nothing about checks — it says *how hard to look*, not *what to look at* — and putting the
+/// table on the domain side would make `trimmer-core` depend on this crate to say so.
+///
+/// `Standard` asks for frame-count, duration and audio alignment, which need only the metadata
+/// every probe already returns. `Strict` additionally asks for the decoded-frame comparison, which
+/// costs a hash pass. `Forensic` asks for everything including the head comparison and the
+/// caption check.
+#[must_use]
+pub const fn policy_requires(policy: VerifyPolicy, check: Check) -> bool {
+    use VerifyPolicy::{Forensic, Off, Standard, Strict};
+    match policy {
+        Off => false,
+        Standard => matches!(
+            check,
+            Check::Frames | Check::Duration | Check::AudioAlignment | Check::CodecMatch
+        ),
+        Strict => matches!(
+            check,
+            Check::Frames
+                | Check::Duration
+                | Check::AudioAlignment
+                | Check::CodecMatch
+                | Check::FrameAlignment
+                | Check::TimescalePreserved
+                | Check::Overshoot
+        ),
+        Forensic => true,
+    }
+}
+
+/// True when a check could have run against this plan at all.
+///
+/// The distinction this draws is the difference between a skip that means "we did not look" and one
+/// that means "there was nothing to look at". `TimescalePreserved` is the clearest example: a plan
+/// that re-encodes no head has no timescale of its own to preserve, so the check declining is a
+/// complete answer. Counting it as a gap would mark every whole-segment re-encode uncertified for a
+/// check that could never have run.
+#[must_use]
+pub fn check_applies(check: Check, plan: &CutPlan) -> bool {
+    match check {
+        // A head exists only when the plan re-encodes one, and both of these are about the head:
+        // there is no timescale of its own to preserve, and nothing to compare against the source.
+        Check::TimescalePreserved | Check::HeadFidelity => plan.mode == CutMode::HeadPatch,
+        // Everything else is about the delivered file as a whole, or about the source, and applies
+        // whatever the plan decided.
+        Check::Frames
+        | Check::Duration
+        | Check::AudioAlignment
+        | Check::FrameAlignment
+        | Check::Captions
+        | Check::CodecMatch
+        | Check::Overshoot => true,
+    }
+}
+
 /// The verdict on one delivered cut.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -318,6 +376,57 @@ impl VerifyReport {
     #[must_use]
     pub fn ok(&self) -> bool {
         !self.results.iter().any(CheckResult::is_failed)
+    }
+
+    /// The checks this run was supposed to make, could have made, and did not.
+    ///
+    /// A check is skipped when the measurement it needs was not taken — a legitimate outcome, because
+    /// a decode pass costs real time — but a skip under a policy that *asked* for the check is a gap,
+    /// and a gap is not a pass.
+    ///
+    /// ## Two kinds of skip, and only one of them is a gap
+    ///
+    /// A check can decline for a reason that has nothing to do with missing evidence:
+    ///
+    /// * **Inapplicable** — the plan re-encodes no head, so there is no timescale to preserve; the
+    ///   source has no caption file, so there is nothing to compare. [`check_applies`] answers this
+    ///   from the plan alone, and such a skip is a complete answer rather than a hole.
+    /// * **Not measured** — the policy asked for a decoded-frame comparison and no hashes were taken.
+    ///   That is the gap this method exists to surface.
+    ///
+    /// Treating the first as a gap would mark every whole-segment re-encode uncertified for a check
+    /// that could never have run, which would make the verdict useless exactly where it matters.
+    ///
+    /// This exists because it was missing. The queue called `verify_cut` with no evidence, so under
+    /// the default `Strict` policy the frame-alignment check — the whole reason the policy is called
+    /// strict — reported [`CheckStatus::Skipped`], [`VerifyReport::ok`] returned `true` because
+    /// nothing had *failed*, and the batch reported every cut as verified. The product's headline
+    /// claim was untrue while the report said everything was fine — the worst shape a bug can take,
+    /// and the reason a skip and a pass must be distinguishable by the caller and not only by eye.
+    #[must_use]
+    pub fn unrun_required_checks(&self) -> Vec<&CheckResult> {
+        self.results
+            .iter()
+            .filter(|result| {
+                result.status.is_skipped() && policy_requires(self.policy, result.check)
+            })
+            .collect()
+    }
+
+    /// True when the run made every check its policy asked for and none of them failed.
+    ///
+    /// `plan` is needed because some checks decline as *inapplicable* rather than as unmeasured, and
+    /// only the plan can say which. See [`VerifyReport::unrun_required_checks`].
+    ///
+    /// A caller that wants to say "this file is certified" must use this rather than
+    /// [`VerifyReport::ok`], which answers the narrower question "did anything fail".
+    #[must_use]
+    pub fn is_certified(&self, plan: &CutPlan) -> bool {
+        self.ok()
+            && self
+                .unrun_required_checks()
+                .iter()
+                .all(|result| !check_applies(result.check, plan))
     }
 
     /// The checks that failed, for a caller that wants to show only the problems.

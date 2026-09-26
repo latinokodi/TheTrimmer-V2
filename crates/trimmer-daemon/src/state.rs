@@ -122,6 +122,12 @@ pub struct DaemonState {
     pub tools: Option<ToolPaths>,
     /// The runs, newest last, bounded by [`MAX_RUNS`].
     pub runs: Mutex<HashMap<Uuid, RunRecord>>,
+    /// The transcript index, built once per file and kept.
+    ///
+    /// On the state rather than constructed per request, because building it means reading the SRT,
+    /// parsing every cue and folding all of them: a client polling a search endpoint would otherwise
+    /// pay that on every call, which an audit measured as the daemon's worst hot path.
+    pub transcripts: trimmer_app::TranscriptService,
 }
 
 impl std::fmt::Debug for DaemonState {
@@ -156,11 +162,17 @@ impl DaemonState {
                  the tools are installed or THE_TRIMMER_FFMPEG / THE_TRIMMER_FFPROBE are set"
             );
         }
+        // One transcript index for the process, built lazily per file and kept.
+        let transcripts = trimmer_app::TranscriptService::new(
+            Arc::new(trimmer_app::ports::FileTranscripts),
+            trimmer_core::Grouping::Sentence,
+        );
         Ok(Arc::new(Self {
             store: Arc::new(store),
             config,
             tools,
             runs: Mutex::new(HashMap::new()),
+            transcripts,
         }))
     }
 

@@ -31,8 +31,8 @@ work, executed by separate agents with the audit skill loaded as their brief.
 | 15 | `error-handling-patterns` | `CoreError` | One variant per condition a caller handles, each carrying the values that produced it. `Cancelled` is a distinct type rather than an error, because a user pressing Cancel is not a failure. |
 | 16 | `performance-profiling` | `trimmer-media` | Probe once and cache: one `ffprobe -print_format json` answers rate, frames, timebase and audio. Keyframe listing uses `-skip_frame nokey`, so a two-hour master costs a seek rather than a decode. |
 | 17 | `async-python-patterns` | `trimmer-media` | The V1 heartbeat thread becomes a `tokio` interval task and cancellation becomes a watch channel, so Cancel is instant even in the middle of a multi-minute copy. |
-| 18 | `deployment-procedures` | `docs/RELEASE.md` | A release is a checklist with a rollback: build, sign, checksum, publish, verify the update feed resolves, keep the previous artifact addressable. |
-| 19 | `vulnerability-scanner` | `docs/SECURITY.md` | Argv-array process spawning everywhere (no shell), no `unsafe`, path canonicalisation before a project stores a path, and a licence file read with a size cap. |
+| 18 | `deployment-procedures` | `.github/workflows/ci.yml` | A release is a checklist with a rollback: build, sign, checksum, publish, verify the update feed resolves, keep the previous artifact addressable. |
+| 19 | `vulnerability-scanner` | `docs/SECURITY.md` | Argv-array process spawning everywhere (no shell), no `unsafe`, path canonicalisation before a project stores a path, a loopback-only daemon bind, and a bearer token that must be at least 16 characters. |
 | 20 | `accessibility` | `apps/web` | The workspace is fully keyboard-drivable, the cut table is a real grid with row and column semantics, timecode fields have `aria-describedby` error text, and every status colour has a non-colour cue. |
 | 21 | `design-taste-frontend` | `apps/web` tokens | Rejected the generic dashboard look. Chose a dark, dense, editor-grade surface: one accent, tabular figures for every timecode, no rounded-everything, no gradient headers. |
 | 22 | `design-tokens-to-css` | `apps/web/src/styles/tokens.css` | One 4 px spacing scale and a Major-Third type scale, emitted as CSS custom properties with light and dark values, so no component hard-codes a colour or a size. |
@@ -69,7 +69,7 @@ report findings with file and line, a severity, and a concrete fix. Reports live
 | # | Skill | Target | Report |
 |---|---|---|---|
 | 34 | `code-review-checklist` | all Rust crates | `docs/audit/code-review.md` |
-| 35 | `vulnerability-scanner` | `trimmer-media`, `trimmer-daemon`, `trimmer-store`, licensing | `docs/audit/security.md` |
+| 35 | `vulnerability-scanner` | `trimmer-media`, `trimmer-daemon`, `trimmer-store` | `docs/audit/security.md` |
 | 36 | `accessibility` | `apps/web` | `docs/audit/accessibility.md` |
 | 37 | `performance-profiling` | probe path, transcript index, batch queue | `docs/audit/performance.md` |
 | 38 | `documentation-templates` | `README.md` and `docs/` | `docs/audit/documentation.md` |
@@ -77,6 +77,17 @@ report findings with file and line, a severity, and a concrete fix. Reports live
 | 40 | `web-quality-audit` | `apps/web` production build | `docs/audit/web-quality.md` |
 
 ---
+
+## A decision reversed after the work was done
+
+`crates/trimmer-license` was built to the `rust-pro` and `vulnerability-scanner` briefs — 54 tests,
+offline signature verification, a machine binding, a capability table — and then removed at the
+product owner's direction, because this build ships without a licensing feature.
+
+That is recorded here rather than quietly dropped, for the same reason the ADRs carry V1's decisions
+forward: work that was done and reversed is part of the project's reasoning, and a reader who finds
+no trace of it cannot tell whether it was considered and rejected or never considered at all.
+[ADR-015](adr/015-licensing.md) holds the mechanism and the decision.
 
 ## Counting
 

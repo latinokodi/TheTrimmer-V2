@@ -624,7 +624,7 @@ async fn cancel_run(
 /// transcript here" is a fact about the file rather than a missing resource, and a client that
 /// needs to tell those apart can look at the file it asked about. See the crate docs.
 async fn search_transcripts(
-    State(_state): State<Arc<DaemonState>>,
+    State(state): State<Arc<DaemonState>>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
     let video = MediaPath::new(text(&body, "video")?);
@@ -633,11 +633,11 @@ async fn search_transcripts(
         .unwrap_or(20)
         .clamp(0, 1_000) as usize;
 
-    let service = trimmer_app::TranscriptService::new(
-        Arc::new(FileTranscripts),
-        trimmer_core::Grouping::Sentence,
-    );
-    let view = match service.load(&video) {
+    // The state's index, not one built for this request: the transcript module documents that the
+    // index is "built once and kept", and building one per request re-read the SRT, re-parsed three
+    // thousand cues and re-folded all of them on every polled search — the daemon's worst hot path,
+    // found by an audit.
+    let view = match state.transcripts.load(&video) {
         Ok(Some(view)) => view,
         Ok(None) => {
             return Ok(Json(json!({

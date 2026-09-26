@@ -187,10 +187,20 @@ function summarise(status: JobStatus): string {
           ? ` · ${status.overshoot} frame(s) past the out point, as a stream copy does`
           : ""
       }`;
-    case "unverified":
-      return `${status.frames.toLocaleString()} frames written, but ${
-        status.checks.filter((check) => check.status.kind === "failed").length
-      } check(s) failed`;
+    case "unverified": {
+      // Two different reasons a file is uncertified, and they must not read alike: a check that
+      // FAILED means the file is suspect, whereas a check that never RAN means this run cannot vouch
+      // for it. Collapsing them would either libel a good file or excuse a bad one.
+      const failed = status.checks.filter((check) => check.status.kind === "failed").length;
+      const missing = status.checks.filter((check) => check.status.kind === "skipped").length;
+      const why = [
+        failed > 0 ? `${failed} check(s) failed` : null,
+        missing > 0 ? `${missing} check(s) were not run` : null,
+      ]
+        .filter(Boolean)
+        .join(" and ");
+      return `${status.frames.toLocaleString()} frames written, but ${why || "not every check ran"}`;
+    }
     case "failed":
       return status.reason;
     case "skipped":

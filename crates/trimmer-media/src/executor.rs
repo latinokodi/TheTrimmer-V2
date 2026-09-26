@@ -487,6 +487,68 @@ impl CutExecutor {
         })
     }
 
+    /// The MD5 of each decoded frame in a window, as `ffmpeg -f framemd5` reports it.
+    ///
+    /// This is the product's ground truth for "is this the same picture". Two files holding the
+    /// same packets decode to identical frames, so their digests match exactly, and a re-encoded
+    /// frame never does. That is what makes the alignment check a proof rather than an estimate.
+    ///
+    /// `-map 0:v:0 -an` is not optional: without it the muxer hashes audio frames too, and one
+    /// audio frame per 21 ms quietly pads every list.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::ProcessFailed`] when ffmpeg cannot read the file, and
+    /// [`MediaError::Cancelled`] when the caller cancels.
+    pub async fn frame_hashes(
+        &self,
+        path: &Path,
+        start_seconds: f64,
+        count: usize,
+        options: &RunOptions,
+    ) -> MediaResult<Vec<String>> {
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        let args = crate::process::argv(&[
+            "-hide_banner",
+            "-nostdin",
+            "-v",
+            "error",
+            "-ss",
+            &format!("{start_seconds:.6}"),
+            "-i",
+            path.to_str().unwrap_or_default(),
+            "-map",
+            "0:v:0",
+            "-an",
+            "-frames:v",
+            &count.to_string(),
+            "-f",
+            "framemd5",
+            "-",
+        ]);
+        let step = RunOptions {
+            label: "hash frames".to_owned(),
+            ..options.clone()
+        };
+        let output = self
+            .runner
+            .run(self.tools.path(ToolSet::Ffmpeg), &args, &step)
+            .await?;
+        Ok(output
+            .stdout
+            .lines()
+            .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+            .filter_map(|line| {
+                line.split(',')
+                    .next_back()
+                    .map(|field| field.trim().to_owned())
+                    .filter(|field| !field.is_empty())
+            })
+            .collect())
+    }
+
     /// Run one prepared step, recording it.
     async fn run_step(
         &self,

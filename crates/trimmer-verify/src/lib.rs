@@ -84,8 +84,9 @@ pub mod measure;
 
 pub use audit::{constant_time_eq, AuditEntry, AuditManifest};
 pub use check::{
-    policy_label, verify_cut, verify_cut_with, Check, CheckResult, CheckStatus, Evidence,
-    VerifyReport, AUDIO_LEVEL_TOLERANCE_FRAMES, HEAD_FIDELITY_MIN, VERIFICATION_OFF,
+    check_applies, policy_label, policy_requires, verify_cut, verify_cut_with, Check, CheckResult,
+    CheckStatus, Evidence, VerifyReport, AUDIO_LEVEL_TOLERANCE_FRAMES, HEAD_FIDELITY_MIN,
+    VERIFICATION_OFF,
 };
 pub use facts::{CutFacts, FrameHashes, Similarity};
 pub use measure::{MediaMeasurer, NoMeasurer};

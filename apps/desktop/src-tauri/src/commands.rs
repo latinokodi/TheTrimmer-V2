@@ -864,23 +864,27 @@ pub async fn search_transcript(
     limit: usize,
 ) -> Reply<serde_json::Value> {
     let path = MediaPath::new(video);
-    state.with_workspace(|workspace| {
-        let rate = workspace
+    // Read the rate out under a short lock, then search outside it. The transcript index is the
+    // expensive part and it lives in the state, so it must not be behind the workspace lock.
+    let rate = state.with_workspace(|workspace| {
+        workspace
             .project()
             .media(&path)
             .map(|media| media.rate)
             .ok_or_else(|| {
                 "that source has not been probed, so its frame rate is unknown".to_owned()
-            })?;
-        let service =
-            trimmer_app::TranscriptService::new(workspace.transcripts(), Grouping::Sentence);
-        let view = service.load(&path).map_err(explain)?;
-        let Some(view) = view else {
-            return Ok(serde_json::json!([]));
-        };
-        let hits = view.find_phrase(&phrase, rate, limit.clamp(1, 500));
-        serde_json::to_value(hits).map_err(explain)
-    })
+            })
+    })?;
+    // The state's own service, not a fresh one: the index is built once and kept, and constructing a
+    // service per keystroke would re-read the file, re-parse three thousand cues and re-fold all of
+    // them — which is exactly the "built once and kept" promise the module documents, and exactly
+    // what an audit found broken here.
+    let view = state.transcripts.load(&path).map_err(explain)?;
+    let Some(view) = view else {
+        return Ok(serde_json::json!([]));
+    };
+    let hits = view.find_phrase(&phrase, rate, limit.clamp(1, 500));
+    serde_json::to_value(hits).map_err(explain)
 }
 
 /// The transcript beside a video, as lines, for the reading pane.
@@ -890,35 +894,32 @@ pub async fn transcript_lines(
     video: String,
 ) -> Reply<serde_json::Value> {
     let path = MediaPath::new(video);
-    state.with_workspace(|workspace| {
-        let service = trimmer_app::TranscriptService::new(
-            workspace.transcripts(),
-            Grouping::Sentence,
-        );
-        let view = service.load(&path).map_err(explain)?;
-        let Some(view) = view else {
-            return Ok(serde_json::json!([]));
-        };
-        let rate = workspace
+    // The rate comes out under a short lock; the index is read from the state, outside it.
+    let rate = state.with_workspace(|workspace| {
+        Ok(workspace
             .project()
             .media(&path)
-            .map_or(trimmer_core::FrameRate::FPS_25, |media| media.rate);
-        let lines: Vec<serde_json::Value> = view
-            .groups
-            .iter()
-            .enumerate()
-            .map(|(index, group)| {
-                serde_json::json!({
-                    "index": index,
-                    "text": group.text,
-                    "startFrame": group.start_frame(rate),
-                    "endFrame": group.end_frame(rate),
-                    "timecode": trimmer_core::timecode::format_timecode(group.start_frame(rate), rate, None),
-                })
+            .map_or(trimmer_core::FrameRate::FPS_25, |media| media.rate))
+    })?;
+    let view = state.transcripts.load(&path).map_err(explain)?;
+    let Some(view) = view else {
+        return Ok(serde_json::json!([]));
+    };
+    let lines: Vec<serde_json::Value> = view
+        .groups
+        .iter()
+        .enumerate()
+        .map(|(index, group)| {
+            serde_json::json!({
+                "index": index,
+                "text": group.text,
+                "startFrame": group.start_frame(rate),
+                "endFrame": group.end_frame(rate),
+                "timecode": trimmer_core::timecode::format_timecode(group.start_frame(rate), rate, None),
             })
-            .collect();
-        Ok(serde_json::Value::Array(lines))
-    })
+        })
+        .collect();
+    Ok(serde_json::Value::Array(lines))
 }
 
 // ---------------------------------------------------------------------------------------

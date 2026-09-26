@@ -164,6 +164,8 @@ impl JobStatus {
                 };
                 format!(
                     "{frames} frames in {seconds:.1}s, checks {} {tail}",
+                    // This line is for a *certified* file, which the caller has already established,
+                    // so it reports the narrower question: did anything fail.
                     if verification.ok() {
                         "passed"
                     } else {
@@ -176,16 +178,37 @@ impl JobStatus {
                 seconds,
                 ..
             } => {
+                // A file is uncertified for one of two different reasons, and the sentence must say
+                // which: a check that FAILED means the file is suspect, whereas a check that never
+                // RAN means this run cannot vouch for it. Collapsing them would either libel a good
+                // file or excuse a bad one.
                 let failed: Vec<&str> = verification
                     .failed()
                     .iter()
                     .map(|result| result.check.label())
                     .collect();
-                format!(
-                    "written in {seconds:.1}s but {} failed: {}",
-                    failed.len(),
-                    failed.join(", ")
-                )
+                let gaps: Vec<&str> = verification
+                    .unrun_required_checks()
+                    .iter()
+                    .map(|result| result.check.label())
+                    .collect();
+                let why = match (failed.is_empty(), gaps.is_empty()) {
+                    (false, false) => format!(
+                        "{} failed ({}) and {} did not run ({})",
+                        failed.len(),
+                        failed.join(", "),
+                        gaps.len(),
+                        gaps.join(", ")
+                    ),
+                    (false, true) => format!("{} failed: {}", failed.len(), failed.join(", ")),
+                    (true, false) => format!(
+                        "{} check(s) this policy asks for did not run: {}",
+                        gaps.len(),
+                        gaps.join(", ")
+                    ),
+                    (true, true) => "a check failed without saying which".to_owned(),
+                };
+                format!("uncertified — written in {seconds:.1}s but {why}")
             }
             Self::Failed { reason, cancelled } => {
                 if *cancelled {
@@ -733,7 +756,10 @@ impl Queue {
             .filter_map(|step| step.seconds)
             .sum::<f64>();
 
-        if verification.ok() {
+        // `ok()` answers "did anything fail"; `is_certified()` answers "did every check the policy
+        // asked for actually run, and pass". Only the second may be reported as verified, because a
+        // skip under a policy that requested the check is a gap rather than a pass.
+        if verification.is_certified(&cut.plan) {
             JobStatus::Succeeded {
                 output: cut.output.clone(),
                 plan: Box::new(cut.plan.clone()),
@@ -759,29 +785,77 @@ impl Queue {
     /// Not `async`: the measurement seam is synchronous by design, so the verdict logic never has
     /// to be. The real measurer blocks on the async prober internally, which is acceptable here
     /// because a batch is sequential and there is nothing else for this thread to do.
+    ///
+    /// ## Why the evidence is gathered here
+    ///
+    /// An audit found that this method called `verify_cut` with no evidence at all, so under the
+    /// default `Strict` policy the frame-alignment check — the whole reason the policy is called
+    /// strict — reported itself skipped, `ok()` returned true because nothing had *failed*, and the
+    /// batch reported every cut as verified. The verdict logic was right; the wiring was absent.
+    ///
+    /// The frames are therefore hashed here, at the point both files certainly have frames: the
+    /// keyframe the body begins on. For a copy that is frame zero of the output; for a head patch it
+    /// is `keyframe - start_frame` into the delivered file. Anchoring on the *last* twelve frames of
+    /// the request would be the stronger check for a dropped tail — `trimmer-verify` says so in its
+    /// own documentation — but the body start is the one position guaranteed to exist in both files
+    /// whatever the overshoot, and a comparison that cannot be made is worth less than one that can.
+    ///
+    /// A hash pass that fails is not fatal. The check reports itself skipped and the file comes back
+    /// uncertified, which is the honest outcome and still better than claiming a pass.
     fn verify(
         &self,
         request: &SegmentCutRequest,
         plan: &CutPlan,
         policy: VerifyPolicy,
     ) -> VerifyReport {
-        // The measurer is synchronous by design: it is handed facts that something else already
-        // gathered, so the verdict logic never has to be async. `trimmer-app`'s real measurer
-        // wraps the async prober and blocks on it, which is acceptable because a batch is
-        // sequential and there is nothing else for this thread to do.
         if policy == VerifyPolicy::Off {
             let facts = Self::empty_facts(&request.output);
             return trimmer_verify::verify_cut(plan, &facts, &facts, policy);
         }
-        let Ok(cut_facts) = self.measurer.facts(&request.output) else {
-            let unknown = Self::empty_facts(&request.output);
-            return trimmer_verify::verify_cut(plan, &unknown, &unknown, policy);
-        };
-        let Ok(source_facts) = self.measurer.facts(&request.media.path) else {
-            let unknown = Self::empty_facts(&request.output);
-            return trimmer_verify::verify_cut(plan, &cut_facts, &unknown, policy);
-        };
-        trimmer_verify::verify_cut(plan, &cut_facts, &source_facts, policy)
+
+        // The facts. A probe that fails leaves its check reporting a skip rather than inventing one.
+        let cut_facts = self
+            .measurer
+            .facts(&request.output)
+            .unwrap_or_else(|_| Self::empty_facts(&request.output));
+        let source_facts = self
+            .measurer
+            .facts(&request.media.path)
+            .unwrap_or_else(|_| Self::empty_facts(&request.output));
+
+        if !policy.hashes_frames() {
+            return trimmer_verify::verify_cut(plan, &cut_facts, &source_facts, policy);
+        }
+
+        // The sample window, anchored on the keyframe the body begins on.
+        const SAMPLE_USIZE: usize = 24;
+        // A frame count fits an i64 by construction — a master with more than 2^63 frames does not
+        // exist — so the conversion is stated rather than performed with a lossy cast.
+        let sample = i64::try_from(SAMPLE_USIZE).unwrap_or(i64::MAX);
+        let rate = request.media.rate;
+        let anchor = plan.keyframe.unwrap_or(plan.start_frame);
+        let cut_anchor = anchor - plan.start_frame;
+
+        let mut evidence = trimmer_verify::Evidence::default();
+        if let (Ok(source), Ok(delivered)) = (
+            self.measurer
+                .frame_hashes(&request.media.path, anchor, sample, rate),
+            self.measurer
+                .frame_hashes(&request.output, cut_anchor, sample, rate),
+        ) {
+            // `first_frame` records which frame each window starts on, so the comparison knows what
+            // it is aligning and can report which offset matched.
+            evidence = evidence.with_frame_hashes(
+                trimmer_verify::FrameHashes::new(source.digests, anchor),
+                trimmer_verify::FrameHashes::new(delivered.digests, cut_anchor),
+            );
+        }
+
+        if policy.is_forensic() {
+            evidence = with_captions(evidence, request, rate);
+        }
+
+        trimmer_verify::verify_cut_with(plan, &cut_facts, &source_facts, policy, &evidence)
     }
 
     /// Facts that say "nothing is known", so a check that cannot measure reports rather than
@@ -820,6 +894,31 @@ impl ProgressSink for JobSink {
             progress,
         });
     }
+}
+
+/// Read the source caption cues and the written sidecar, when the delivered cut has one.
+///
+/// The written sidecar is named after the output, which is where `caption::retime_file` puts it so a
+/// player loads it with no further setup. When there is no sidecar — a cut made without a transcript
+/// — the source cues are still read, because the caption check then reports the *mismatch* of "the
+/// source had captions and none were written" rather than a skip, which is the more useful verdict.
+fn with_captions(
+    evidence: trimmer_verify::Evidence,
+    request: &SegmentCutRequest,
+    rate: trimmer_core::FrameRate,
+) -> trimmer_verify::Evidence {
+    let _ = rate;
+    let Some(source_path) = trimmer_core::caption::find_for(request.media.path.as_path()) else {
+        return evidence;
+    };
+    let Ok(source) = trimmer_core::caption::read(&source_path) else {
+        return evidence;
+    };
+    let sidecar = request.output.with_extension("srt");
+    let written = trimmer_core::caption::read(sidecar.as_path())
+        .map(|transcript| transcript.cues)
+        .unwrap_or_default();
+    evidence.with_captions(source.cues, written)
 }
 
 /// The frames and seconds a status delivered, for the batch totals.

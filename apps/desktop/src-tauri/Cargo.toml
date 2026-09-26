@@ -12,6 +12,12 @@ repository.workspace = true
 name = "thetrimmer_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+# The window. Named explicitly so the binary and the library can both be built, which is what lets
+# the commands be unit-tested without opening one.
+name = "thetrimmer"
+path = "src/main.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -25,7 +31,6 @@ trimmer-app.workspace = true
 
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
-tauri-plugin-opener = "2"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
