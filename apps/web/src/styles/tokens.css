@@ -1,0 +1,256 @@
+/*
+ * TheTrimmer's design tokens.
+ *
+ * One source of truth for every colour, size, radius and shadow in the interface. No component
+ * hard-codes a value; if a component needs something that is not here, the token set is what is
+ * wrong, not the component.
+ *
+ * ## Why these names
+ *
+ * Tokens are named for their *role* — `--surface-raised`, `--signal-danger` — and never for their
+ * appearance. `--orange` would be a lie the moment the accent changes, and `--text-muted` is the
+ * same token in both themes with a different value. The whole light theme below is therefore a
+ * value set, not a second stylesheet.
+ *
+ * ## Why this palette
+ *
+ * The audience is editors cutting broadcast material, often in a dim suite, often for hours. That
+ * decides three things:
+ *
+ * 1. **Dark by default, and genuinely dark.** `--surface-sunken` is near-black so a video thumbnail
+ *    or a waveform reads against it rather than glowing out of a mid-grey. The raised surfaces step
+ *    up in small, even increments, because a large jump creates banding that becomes tiring.
+ * 2. **One accent, used sparingly.** A cutting tool's most important information is a timecode, and
+ *    colour competes with it. The accent marks the thing being acted on and the selection, and
+ *    nothing else.
+ * 3. **Semantic status colours that survive colour blindness.** Never the only cue: every status
+ *    also carries a word or a shape, so `--signal-danger` is a reinforcement rather than the
+ *    message. That is what makes the interface usable for the roughly one in twelve men who cannot
+ *    separate the red from the green.
+ *
+ * ## Scales
+ *
+ * Spacing is a 4 px rhythm and type is a Major Third (1.25) from a 13 px base — chosen because the
+ * interface is dense: a cut table with four timecodes per row has no room for a 16 px body size,
+ * and 13 px mono at 1.5 line height is comfortable for hours.
+ */
+
+:root {
+  /* ---- The spacing scale: a 4 px rhythm ------------------------------------------------ */
+  --space-0: 0;
+  --space-1: 0.25rem; /*  4 px */
+  --space-2: 0.5rem; /*  8 px */
+  --space-3: 0.75rem; /* 12 px */
+  --space-4: 1rem; /* 16 px */
+  --space-5: 1.5rem; /* 24 px */
+  --space-6: 2rem; /* 32 px */
+  --space-7: 3rem; /* 48 px */
+  --space-8: 4rem; /* 64 px */
+
+  /* ---- Type: Major Third from a 13 px base --------------------------------------------- */
+  --text-2xs: 0.6875rem; /* 11 px — axis labels, units */
+  --text-xs: 0.75rem; /* 12 px — secondary metadata */
+  --text-sm: 0.8125rem; /* 13 px — body */
+  --text-base: 0.875rem; /* 14 px — emphasised body */
+  --text-lg: 1.125rem; /* 18 px — panel titles */
+  --text-xl: 1.4375rem; /* 23 px — the project name */
+  --text-2xl: 1.75rem; /* 28 px — the one big number */
+
+  --leading-tight: 1.2;
+  --leading-normal: 1.5;
+  --leading-loose: 1.7;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /*
+   * The UI stack is the platform's own, so there is no font download, no flash of unstyled text and
+   * no network request at startup. The figure stack is a monospace because a timecode is a column
+   * of digits and every one of them must line up; `tabular-nums` is also applied wherever a figure
+   * appears, so a proportional fallback still aligns.
+   */
+  --font-ui:
+    "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --font-figure: "Cascadia Mono", "Consolas", "SF Mono", ui-monospace, monospace;
+
+  /* ---- Radii: small, because a dense interface reads better with crisp edges ------- */
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+
+  /* ---- Motion: short, and every one of them is disabled by the reduced-motion block --- */
+  --motion-fast: 90ms;
+  --motion-base: 140ms;
+  --easing: cubic-bezier(0.2, 0, 0.2, 1);
+
+  /* ---- Focus: one ring, used everywhere, never removed ------------------------------- */
+  --focus-width: 2px;
+  --focus-offset: 2px;
+
+  /* ---- Layout ------------------------------------------------------------------------ */
+  --rail-width: 260px;
+  --panel-width: 340px;
+  --row-height: 34px;
+  --toolbar-height: 48px;
+  --statusbar-height: 28px;
+}
+
+/* ==========================================================================================
+   Dark theme — the default
+   ========================================================================================== */
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Surfaces, sunken to raised. The steps are deliberately even: an editor looks at this for
+     hours, and uneven steps read as banding. */
+  --surface-sunken: #0b0d10;
+  --surface-base: #101317;
+  --surface-raised: #161a20;
+  --surface-overlay: #1c2129;
+  --surface-hover: #212732;
+  --surface-active: #28303c;
+  --surface-inset: #0d1014;
+
+  /* Lines. `--line-strong` is for a boundary that must be seen, `--line-subtle` for one that
+     must merely be felt. */
+  --line-subtle: #1e242c;
+  --line: #2a323d;
+  --line-strong: #3a4553;
+
+  /* Text. Four levels, and every one is used: the interface has a lot of metadata. */
+  --text-primary: #e7ecf2;
+  --text-secondary: #a8b3c0;
+  --text-muted: #7b8797;
+  --text-faint: #5a6472;
+  --text-inverse: #0b0d10;
+
+  /* One accent. Used for the active tab, the selection, the primary button and focus. */
+  --accent: #4c9aff;
+  --accent-hover: #63a9ff;
+  --accent-subtle: rgb(76 154 255 / 14%);
+  --accent-border: rgb(76 154 255 / 45%);
+
+  /* Status. Each is paired with a word or a glyph everywhere it appears. */
+  --signal-ok: #46b17b;
+  --signal-ok-subtle: rgb(70 177 123 / 14%);
+  --signal-warn: #d9a441;
+  --signal-warn-subtle: rgb(217 164 65 / 14%);
+  --signal-danger: #e5645f;
+  --signal-danger-subtle: rgb(229 100 95 / 14%);
+  --signal-info: #58a6d8;
+  --signal-info-subtle: rgb(88 166 216 / 14%);
+
+  /* The re-encoded head: a distinct colour because it is the one thing the user pays for. */
+  --signal-head: #b98ae0;
+  --signal-head-subtle: rgb(185 138 224 / 16%);
+
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-overlay: 0 8px 28px rgb(0 0 0 / 55%), 0 1px 0 rgb(255 255 255 / 4%) inset;
+}
+
+/* ==========================================================================================
+   Light theme — a second value set, not a second stylesheet
+   ========================================================================================== */
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --surface-sunken: #eceef2;
+  --surface-base: #f6f7f9;
+  --surface-raised: #ffffff;
+  --surface-overlay: #ffffff;
+  --surface-hover: #eef0f4;
+  --surface-active: #e2e6ed;
+  --surface-inset: #f2f4f7;
+
+  --line-subtle: #e6e9ee;
+  --line: #d3d8e0;
+  --line-strong: #b6bdc9;
+
+  --text-primary: #14181d;
+  --text-secondary: #47505c;
+  --text-muted: #6b7482;
+  --text-faint: #8b93a0;
+  --text-inverse: #ffffff;
+
+  --accent: #1f6feb;
+  --accent-hover: #1a5fd0;
+  --accent-subtle: rgb(31 111 235 / 10%);
+  --accent-border: rgb(31 111 235 / 40%);
+
+  --signal-ok: #1f7a4d;
+  --signal-ok-subtle: rgb(31 122 77 / 10%);
+  --signal-warn: #92650a;
+  --signal-warn-subtle: rgb(146 101 10 / 12%);
+  --signal-danger: #b3261e;
+  --signal-danger-subtle: rgb(179 38 30 / 10%);
+  --signal-info: #1a6a9e;
+  --signal-info-subtle: rgb(26 106 158 / 10%);
+  --signal-head: #6b3fa0;
+  --signal-head-subtle: rgb(107 63 160 / 12%);
+
+  --shadow-raised: 0 1px 2px rgb(16 20 26 / 8%);
+  --shadow-overlay: 0 8px 24px rgb(16 20 26 / 14%);
+}
+
+/* ==========================================================================================
+   Reduced motion
+   ========================================================================================== */
+
+/*
+ * Every transition and animation in the interface goes through a token, so honouring this
+ * preference is one block rather than a hunt. Nothing here is decorative motion — it is all
+ * feedback — so the durations go to zero rather than the transitions being removed, which keeps
+ * `transitionend` handlers working.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-base: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ==========================================================================================
+   Forced colours (Windows high contrast)
+   ========================================================================================== */
+
+/*
+ * In forced-colours mode the operating system replaces the palette, so the interface must not
+ * fight it. Borders are made explicit because a background-only separation disappears, and the
+ * accent is mapped to the system highlight so selection is still visible.
+ */
+@media (forced-colors: active) {
+  :root {
+    --line-subtle: CanvasText;
+    --line: CanvasText;
+    --line-strong: CanvasText;
+    --accent: Highlight;
+    --accent-border: Highlight;
+    --surface-hover: Highlight;
+    --surface-active: Highlight;
+  }
+
+  .panel,
+  .card,
+  .row,
+  button,
+  input,
+  select,
+  [role="gridcell"],
+  [role="columnheader"] {
+    border: 1px solid CanvasText;
+  }
+}

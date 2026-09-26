@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The capabilities TheTrimmer's window needs. Deliberately minimal: the page can open a file picker and reveal a file in Explorer, and nothing else. Everything that touches a file, a process or the licence goes through a typed Rust command, so the webview never holds a capability it could be tricked into using.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-message",
+    "dialog:allow-confirm",
+    "opener:allow-reveal-item-in-dir",
+    "opener:allow-open-path"
+  ]
+}

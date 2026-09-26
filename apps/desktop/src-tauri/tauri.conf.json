@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TheTrimmer",
+  "version": "2.0.0",
+  "identifier": "com.thetrimmer.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev --prefix ../web",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build --prefix ../web",
+    "frontendDist": "../web/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "TheTrimmer",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1100,
+        "minHeight": 700,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "decorations": true,
+        "theme": "Dark",
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.ico"
+    ],
+    "copyright": "TheTrimmer",
+    "category": "Video",
+    "shortDescription": "Frame-exact, verified segment cutting for post-production",
+    "longDescription": "Cut segments out of long masters by Premiere timecode, re-encoding only the frames a cut cannot avoid, and prove the result frame for frame.",
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      },
+      "nsis": {
+        "installMode": "perMachine",
+        "languages": ["English"]
+      }
+    },
+    "resources": []
+  }
+}

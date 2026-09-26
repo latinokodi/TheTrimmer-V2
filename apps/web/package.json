@@ -1,0 +1,26 @@
+{
+  "name": "thetrimmer-web",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "description": "TheTrimmer's interface. Plain React over a typed IPC bridge; no state library, because the state is a project and the project lives in Rust.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  }
+}

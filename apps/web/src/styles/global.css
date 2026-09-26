@@ -1,0 +1,447 @@
+/*
+ * Global reset and primitives.
+ *
+ * Everything here is either a reset, a base element style, or one of six primitives the components
+ * compose from. If a rule in this file is not one of those three, it belongs in a component file.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  /* The interface is an application, not a document: text selection is opt-in per surface, because
+     an accidental drag across a cut table selecting forty rows is a nuisance with no undo. */
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* Text that a user will want to copy: a timecode, a note, a transcript line. */
+.selectable {
+  user-select: text;
+  cursor: text;
+}
+
+/* ---- Focus ------------------------------------------------------------------------------ */
+
+/*
+ * One ring, everywhere, and it is never removed. `:focus-visible` rather than `:focus` so a mouse
+ * click does not leave a ring behind, which is the reason people remove focus styles in the first
+ * place — and then keyboard users cannot see where they are.
+ */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: var(--focus-width) solid var(--accent);
+  outline-offset: var(--focus-offset);
+  border-radius: var(--radius-sm);
+}
+
+/* ---- Type primitives -------------------------------------------------------------------- */
+
+.figures {
+  font-family: var(--font-figure);
+  /* Every figure in this interface is compared against another figure in a column. */
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: -0.01em;
+}
+
+.label {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.faint {
+  color: var(--text-faint);
+}
+
+.numeric-column {
+  text-align: right;
+}
+
+/* Truncation that keeps the end of a path visible, which is the part that identifies it. */
+.truncate-start {
+  direction: rtl;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Layout primitives ------------------------------------------------------------------ */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* ---- Surfaces --------------------------------------------------------------------------- */
+
+.panel {
+  background: var(--surface-raised);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.card {
+  background: var(--surface-raised);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+}
+
+.divider {
+  border: 0;
+  border-top: 1px solid var(--line-subtle);
+}
+
+/* ---- Controls --------------------------------------------------------------------------- */
+
+/*
+ * A button is a button because the browser already gives it the right semantics: keyboard
+ * activation, a disabled state, a form role. Rebuilding that on a `div` is how an interface ends
+ * up unusable by keyboard, so nothing here does.
+ */
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  transition:
+    background var(--motion-fast) var(--easing),
+    border-color var(--motion-fast) var(--easing);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--line-strong);
+}
+
+.btn:active:not(:disabled) {
+  background: var(--surface-active);
+}
+
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-inverse);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.btn--danger {
+  border-color: var(--signal-danger);
+  color: var(--signal-danger);
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: var(--signal-danger-subtle);
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.btn--icon {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
+}
+
+input[type="text"],
+input[type="search"],
+select,
+textarea {
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--surface-inset);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-2);
+  width: 100%;
+  transition: border-color var(--motion-fast) var(--easing);
+}
+
+input:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--line-strong);
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: var(--accent);
+}
+
+input[aria-invalid="true"] {
+  border-color: var(--signal-danger);
+}
+
+/* The placeholder for a timecode field is the format itself, so it is worth reading. */
+input::placeholder {
+  color: var(--text-faint);
+  font-family: var(--font-figure);
+}
+
+input.timecode-field {
+  font-family: var(--font-figure);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* ---- Status ----------------------------------------------------------------------------- */
+
+/*
+ * A status is never colour alone. Each of these renders a word as well as a tint, and the shape is
+ * a filled or hollow dot so it survives both forced colours and a monochrome print.
+ */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+
+.status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: currentcolor;
+  flex: none;
+}
+
+.status--ok {
+  color: var(--signal-ok);
+}
+
+.status--warn {
+  color: var(--signal-warn);
+}
+
+.status--danger {
+  color: var(--signal-danger);
+}
+
+.status--info {
+  color: var(--signal-info);
+}
+
+.status--idle {
+  color: var(--text-faint);
+}
+
+/* A hollow dot for "not run", so it is distinguishable without colour. */
+.status--idle::before {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px currentcolor;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 18px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.badge--head {
+  background: var(--signal-head-subtle);
+  color: var(--signal-head);
+}
+
+.badge--ok {
+  background: var(--signal-ok-subtle);
+  color: var(--signal-ok);
+}
+
+.badge--warn {
+  background: var(--signal-warn-subtle);
+  color: var(--signal-warn);
+}
+
+.badge--danger {
+  background: var(--signal-danger-subtle);
+  color: var(--signal-danger);
+}
+
+.badge--info {
+  background: var(--signal-info-subtle);
+  color: var(--signal-info);
+}
+
+/* ---- Scrollbars ------------------------------------------------------------------------ */
+
+/*
+ * A default Windows scrollbar is bright enough to become the most prominent thing on a dark
+ * interface. These are thin and low contrast, and they still respond to hover.
+ */
+.scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroll::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: var(--radius-pill);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+  background-clip: content-box;
+}
+
+/* ---- Screen reader only ---------------------------------------------------------------- */
+
+/*
+ * For text that must be announced but not seen — a live region, or the label of an icon-only
+ * control. Not `display: none`, which would remove it from the accessibility tree too.
+ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Skip link: the first tab stop, so a keyboard user can jump past the toolbar. */
+.skip-link {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: 100;
+  padding: var(--space-2) var(--space-3);
+  background: var(--accent);
+  color: var(--text-inverse);
+  border-radius: var(--radius-md);
+  transform: translateY(-200%);
+  transition: transform var(--motion-fast) var(--easing);
+}
+
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+/* ---- Boot fallback --------------------------------------------------------------------- */
+
+.boot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: var(--space-2);
+  color: var(--text-muted);
+}
+
+.boot__title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+}
