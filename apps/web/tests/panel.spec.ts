@@ -314,6 +314,46 @@ test("a dialog takes the keyboard, keeps it, and gives it back", async ({ page }
   await expect(page.getByRole("button", { name: "Browse" })).toBeFocused();
 });
 
+test("the window opens with a titlebar, and fullscreen is a choice rather than the starting state", async ({
+  page,
+}) => {
+  /*
+   * A window with no titlebar cannot be restored, minimized or closed, and that is what the shipped
+   * window was: borderless fullscreen. `GetWindowLong` on it returned `0x14000000` — `WS_VISIBLE |
+   * WS_CLIPCHILDREN` and nothing else, so there was no caption, no system menu, no minimize box and no
+   * maximize box, and the page could not do any of it either because the capability file refuses
+   * `minimize` and `set_fullscreen`.
+   *
+   * The window now opens maximized with the operating system's titlebar, so those are Windows' job —
+   * and fullscreen is still available as something the operator asks for and can undo. This test holds
+   * the offer, not the operating system's chrome, which `tools/smoke-window.ps1` checks against the
+   * real style bits.
+   */
+  await page.goto("/");
+
+  const fullscreen = page.getByRole("button", { name: "Fullscreen" });
+  await expect(fullscreen).toBeVisible();
+  await expect(fullscreen).toHaveAttribute("title", /Hide the titlebar/);
+
+  // Pressing it asks the window, and the label follows what the window reports rather than what was
+  // requested — the difference matters the moment somebody uses the titlebar's maximize button.
+  await fullscreen.click();
+  const restore = page.getByRole("button", { name: "Restore" });
+  await expect(restore).toBeVisible();
+  await expect(restore).toHaveAttribute("title", /get the titlebar back/);
+
+  // F11 goes both ways, which is what makes offering it safe: a user who hides the titlebar with a key
+  // has the same key to bring it back.
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "F11", bubbles: true }));
+  });
+  await expect(page.getByRole("button", { name: "Fullscreen" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Fullscreen" })).toHaveAttribute(
+    "title",
+    /Hide the titlebar/,
+  );
+});
+
 test("motion is feedback, and the system can switch it off", async ({ page }) => {
   const sweep = async (): Promise<string> => {
     return await page.evaluate(() => {

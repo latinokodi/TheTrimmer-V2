@@ -66,6 +66,7 @@ import { ProofPanel } from "./components/ProofPanel";
 import { SourceDialog } from "./components/SourceDialog";
 import { TranscriptPanel } from "./components/TranscriptPanel";
 import { VIDEO_FILTERS, pickFile } from "./ipc/dialog";
+import { readFullscreen, setFullscreen } from "./ipc/window";
 import { useAppModel } from "./state/useAppModel";
 import { useCutLog } from "./state/useCutLog";
 import { useSegmentDraft } from "./state/useSegmentDraft";
@@ -82,6 +83,7 @@ export function App(): JSX.Element {
   const [exportOpen, setExportOpen] = useState(false);
   const [searchFocusToken, setSearchFocusToken] = useState(0);
   const [pickerNotice, setPickerNotice] = useState<string | null>(null);
+  const [fullscreen, setFullscreenState] = useState(false);
 
   const queued = model.segments.length;
   const runnable = model.summary?.runnable ?? 0;
@@ -158,6 +160,46 @@ export function App(): JSX.Element {
     }
   }, [model]);
 
+  /**
+   * Fullscreen, the one window state this interface owns.
+   *
+   * The window opens maximized with the operating system's titlebar, so restore, minimize, close, move,
+   * snap and resize are the operating system's — and can be relied on, because Windows draws them. That
+   * is the fix for a window that could not be restored, minimized or closed at all; see ADR-020.
+   *
+   * Fullscreen is still wanted — nothing is more distracting beside a monitor than a taskbar — so it is
+   * offered as an explicit, reversible action. The state is **read from the window**, never remembered:
+   * `F11`, the button, and the titlebar's own maximize button can each change it, and a button that
+   * shows what we last set rather than what is true is a button that lies after `Win+Up`.
+   */
+  const refreshFullscreen = useCallback(async () => {
+    const value = await readFullscreen();
+    if (value !== null) {
+      setFullscreenState(value);
+    }
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    const current = await readFullscreen();
+    // `null` means there is no window to ask — a browser — and there is nothing useful to do about it.
+    if (current === null) {
+      return;
+    }
+    const result = await setFullscreen(!current);
+    if (result.kind === "ok") {
+      setFullscreenState(result.fullscreen);
+    } else {
+      setPickerNotice(result.reason);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshFullscreen();
+    // The maximise button in the titlebar changes this behind our back, and so does Win+Up.
+    window.addEventListener("focus", refreshFullscreen);
+    return () => window.removeEventListener("focus", refreshFullscreen);
+  }, [refreshFullscreen]);
+
   const trimNow = useCallback(async () => {
     // A marked range that is not queued is what the plain "Trim" means. With something already queued
     // the button says `Trim n` and the marks are left alone — they are for the next range, and a person
@@ -172,6 +214,17 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      /*
+       * F11 is handled before the Ctrl block, because it is the one window shortcut that carries no
+       * modifier and every Windows user already knows it. The window opens maximized with its own
+       * titlebar, so fullscreen is a choice rather than the state it starts in — and the way out of it
+       * is the same key that went in, which is the whole reason it is safe to offer at all.
+       */
+      if (event.key === "F11") {
+        event.preventDefault();
+        void toggleFullscreen();
+        return;
+      }
       if (!event.ctrlKey && !event.metaKey) {
         return;
       }
@@ -206,7 +259,7 @@ export function App(): JSX.Element {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [browse, queue, trimNow]);
+  }, [browse, queue, toggleFullscreen, trimNow]);
 
   return (
     <ErrorBoundary>
@@ -226,6 +279,18 @@ export function App(): JSX.Element {
             Frame-exact, lossless segment cutting &nbsp;·&nbsp; only the keyframe head is re-encoded
           </p>
           <span className="spacer" />
+          <button
+            type="button"
+            className="btn btn--ghost btn--small"
+            onClick={() => void toggleFullscreen()}
+            title={
+              fullscreen
+                ? "Leave fullscreen and get the titlebar back (F11)"
+                : "Hide the titlebar and the taskbar (F11)"
+            }
+          >
+            {fullscreen ? "Restore" : "Fullscreen"}
+          </button>
           <button
             type="button"
             className="btn btn--ghost btn--small"

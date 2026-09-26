@@ -116,6 +116,8 @@ interface StubState {
   runs: number;
   /** The last path `reveal` was asked for. A browser cannot open Explorer; this records the intent. */
   revealed: string | null;
+  /** What `setFullscreen` was last asked for. A browser tab cannot go fullscreen; see the bridge. */
+  fullscreen: boolean;
 }
 
 function freshState(): StubState {
@@ -126,6 +128,7 @@ function freshState(): StubState {
     segments: [],
     runs: 0,
     revealed: null,
+    fullscreen: false,
   };
 }
 
@@ -774,6 +777,22 @@ export function installStub(): boolean {
   globals.__TAURI__ = {
     mocks: true,
     core: { invoke },
+    /*
+     * The window handle, faked the same way everything else is.
+     *
+     * A browser tab has no window to put in fullscreen, so this tracks the value and reports it back —
+     * which is exactly enough for the interface to render its button and behave, and no more. It is
+     * deliberately not a real fullscreen request: a browser test that made the page go fullscreen would
+     * be testing the browser, not the product.
+     */
+    window: {
+      getCurrentWindow: () => ({
+        isFullscreen: async (): Promise<boolean> => state.fullscreen,
+        setFullscreen: async (value: boolean): Promise<void> => {
+          state.fullscreen = value;
+        },
+      }),
+    },
     dialog: {
       async open(): Promise<string | null> {
         // There is no file picker in a browser. Returning the fixture is the useful behaviour for

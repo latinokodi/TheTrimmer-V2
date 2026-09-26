@@ -56,6 +56,8 @@ work, executed by separate agents with the audit skill loaded as their brief.
 | 40 | `accessibility` | `apps/web/src/state/useModal.ts`, `panel.spec.ts` | The audit's modal section exposed a claim with nothing behind it: both dialogs set `aria-modal="true"` and neither trapped focus, moved focus in, returned it, or handled Escape — so Tab left the dialog and reached the panel behind the scrim. All four are now enforced in one hook and asserted by a test that presses Tab six times and checks where the focus is. The same pass found the 1.3 s infinite progress sweep was outside the `prefers-reduced-motion` token block, because a literal cannot be reached by a token; the duration is a token now and the animation is switched off outright. |
 | 41 | `systematic-debugging` | `apps/web/src/main.tsx`, `tools/check-bundle.mjs`, `tools/smoke-window.ps1` | Used for the third time, on the largest fault in the project: a user reported that Browse did not open the file dialog, and the root cause was that **the shipped window was running the browser stub** — every command answered from a TypeScript fixture. The skill's Iron Law is what stopped the obvious fix. "Make the picker open" would have been a symptom fix that left the stub in the bundle; the phases forced the question *why did the guard not decline*, which produced the actual mechanism (`__TAURI__` is injected after the module scripts run; `__TAURI_INTERNALS__` is not) and the actual remedy (a dev-only affordance does not belong in a shipped bundle at all). Its Phase 4 requirement — create a failing case *before* claiming a fix — is why the bundle check and the picker check were each deliberately broken afterwards to prove they can fail; the bundle guard reported three independent needles and the picker guard reported `Command plugin:dialog\|open not allowed by ACL`. |
 
+| 42 | `systematic-debugging` | `tauri.conf.json`, `tools/smoke-window.ps1`, `apps/web/src/ipc/window.ts` | Used again, on the fault a user reported as "Im unable to restore, minimize or close the app window". The Iron Law is what produced the measurement instead of the guess: rather than reasoning about what `fullscreen: true` does, the window's real `GWL_STYLE` was read from the process and came back `0x14000000` — `WS_VISIBLE \| WS_CLIPCHILDREN`, with no caption, no system menu, no minimize box, no maximize box and no resizable frame. That turned "the titlebar seems to be missing" into a list of five specific bits, each of which the fix restores and the smoke test now asserts. Phase 4's requirement is why the check was then proven able to fail by putting `fullscreen: true` back: it reported `GWL_STYLE is 0x14000000`, the same value the broken window had. |
+
 ### Skills consulted and deliberately *not* applied
 
 Recording a rejection is as useful as recording an adoption.
@@ -99,12 +101,15 @@ no trace of it cannot tell whether it was considered and rejected or never consi
 
 ## Counting
 
-Forty-eight distinct skills are named above. Forty-one changed a decision in the shipped code or its
+Forty-eight distinct skills are named above. Forty-two changed a decision in the shipped code or its
 documentation, and seven are independent audits. The requirement was twenty.
 
 Numbers 38–40 were applied to the visual revision recorded in
 [ADR-018](adr/018-visual-language.md), which is also where the two silent defects those skills
 surfaced are written up: a class with no rule and a declared window minimum the content could not
-meet. Number 41 was applied to the fault recorded in
+meet. Numbers 41 and 42 were applied to the two faults found after it —
 [ADR-019](adr/019-the-stub-never-ships.md), where the shipped window turned out to be running the
-browser stub and every test in the project was green.
+browser stub, and [ADR-020](adr/020-the-window-has-a-titlebar.md), where it turned out to have no
+titlebar. Both are the same mistake in different clothing: a component was asked about the system it
+fronts and described its own intentions instead, so every test was green while the product was
+unusable.

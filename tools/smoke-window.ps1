@@ -8,7 +8,7 @@
 # missing `withGlobalTauri` left the page with no bridge to call. Every one of them was invisible to
 # the Rust suite, which is 404 tests that all pass while the application is unusable.
 #
-# ## The fault this script then failed to catch, which is why step 4 exists
+# ## The fault this script then failed to catch, which is why step 3 exists
 #
 # For several revisions this script reported PASSED on a window that was running **entirely on the
 # browser stub**. `installStub()` was meant to decline inside the real window but tested
@@ -20,14 +20,28 @@
 # ready" passed on a hard-coded string. Nothing in the application did anything real, and the file
 # picker returned a fixed path without opening a dialog — which is exactly what a user reported.
 #
-# A check that can be satisfied by a fixture is not a check. So step 4 asserts the thing the fixture
+# A check that can be satisfied by a fixture is not a check. So step 3 asserts the thing the fixture
 # cannot fake: **that there is no stub** — plus, because the picker is the one capability the page
 # holds, that the picker is actually reachable and actually opens.
+#
+# The fault that produced steps 6, in the same shape
+#
+# A user then reported being unable to restore, minimize or close the window. Tauri said the window was
+# decorated, minimizable, maximizable and closable; Windows said it had no caption at all. Asking the
+# wrong party produced a healthy report about an unusable window, twice.
 #
 #   1. the page loaded at all, and it is the interface rather than an error page;
 #   2. the interface rendered, from the assets that were just built;
 #   3. the bridge is Rust, not a browser fixture;
-#   4. the file picker opens — the operating system's own dialog, which is what Browse calls.
+#   4. the commands the interface calls on mount answered;
+#   5. the window has a titlebar, minimizes, restores and toggles fullscreen;
+#   6. clicking Browse opens the operating system's file dialog;
+#   7. the window closes when asked to close.
+#
+# Step 5 asks Windows for the window's style bits rather than asking Tauri, and that is not pedantry:
+# `isDecorated()`, `isMinimizable()`, `isMaximizable()` and `isClosable()` all answered `true` on a
+# window that had no caption, no system menu and no minimize or maximize box. Tauri describes the window
+# that was requested. Only the style bits describe the window that exists.
 #
 # ## How it reaches the page without a human
 #
@@ -243,7 +257,119 @@ try {
     }
     Write-Host "  ok      the bridge answered: $($status.Split([char]10)[0])" -ForegroundColor Green
 
-    # 6. Clicking Browse opens the picker.
+    # 6. The window can be restored, minimized and closed.
+    #
+    #    A user reported being unable to do any of those three. The cause was that the window opened
+    #    borderless fullscreen: `GetWindowLong` on it returned `0x14000000` — `WS_VISIBLE |
+    #    WS_CLIPCHILDREN` and nothing else, so there was no caption, no system menu, no minimize box, no
+    #    maximize box and no resizable frame. The page could not do it either: `minimize` and
+    #    `set_fullscreen` are both refused by the capability file.
+    #
+    #    This asks **Windows**, not Tauri, and that distinction is the whole reason the fault lasted.
+    #    `isDecorated()`, `isMinimizable()`, `isMaximizable()` and `isClosable()` all returned `true` on
+    #    that window — Tauri describes the window that was *requested*, and every one of those answers
+    #    was wrong about the window that existed. A check built on them would have reported a healthy
+    #    window with no titlebar. The style bits cannot lie.
+    $proc.Refresh()
+    $handle = $proc.MainWindowHandle
+    if ($handle -eq 0) {
+        throw "the window has no main window handle, so nothing about its frame can be checked."
+    }
+
+    Add-Type -Namespace Trimmer -Name Win -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)]
+public static extern int GetWindowLong(System.IntPtr hWnd, int nIndex);
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)]
+public static extern bool IsIconic(System.IntPtr hWnd);
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)]
+public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true)]
+public static extern bool PostMessage(System.IntPtr hWnd, uint msg, System.IntPtr wParam, System.IntPtr lParam);
+'@
+
+    $GWL_STYLE = -16
+    $SW_MINIMIZE = 6
+    $SW_RESTORE = 9
+    $WM_CLOSE = 0x0010
+
+    $style = [Trimmer.Win]::GetWindowLong($handle, $GWL_STYLE)
+    if ($style -eq 0) {
+        throw "GetWindowLong returned 0 for the window, so the frame cannot be read (last error $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error()))."
+    }
+    foreach ($bit in @(
+            @{ Mask = 0x00C00000; Name = 'WS_CAPTION';     Why = 'a titlebar to drag, double-click and restore from' },
+            @{ Mask = 0x00080000; Name = 'WS_SYSMENU';     Why = 'the system menu, which is where Close lives' },
+            @{ Mask = 0x00020000; Name = 'WS_MINIMIZEBOX'; Why = 'the minimize button' },
+            @{ Mask = 0x00010000; Name = 'WS_MAXIMIZEBOX'; Why = 'the maximize and restore button' },
+            @{ Mask = 0x00040000; Name = 'WS_THICKFRAME';  Why = 'a resizable, snappable frame' }
+        )) {
+        if (($style -band $bit.Mask) -ne $bit.Mask) {
+            throw "the window has no $($bit.Name) (GWL_STYLE is 0x$('{0:X8}' -f $style)), so there is $($bit.Why). The window must open maximized with decorations rather than fullscreen; see ADR-020."
+        }
+    }
+    Write-Host "  ok      the window has a titlebar: caption, system menu, minimize and maximize boxes (GWL_STYLE 0x$('{0:X8}' -f $style))" -ForegroundColor Green
+
+    #    How much room the panel was given, printed rather than asserted. The window is now smaller than
+    #    it was — a titlebar and a taskbar cost about 80 logical pixels — and the question worth asking
+    #    is whether the layout still fits. It does, and the browser suite is what proves it: it renders
+    #    the whole panel at 1440x960 and at 1920x1080 and fails on any zone squeezed below its content,
+    #    which is a *smaller* window than this one. Asserting it here as well would fail on a machine
+    #    whose screen is smaller than the design, which is the environment's limit and not a fault.
+    $client = [string] (Invoke-Js "window.__TAURI__.window.getCurrentWindow().innerSize().then((v) => v.width + 'x' + v.height)")
+    $needed = [string] (Invoke-Js "(() => { const s = getComputedStyle(document.documentElement); return s.getPropertyValue('--frame-min-width').trim() + 'x' + s.getPropertyValue('--frame-min-height').trim(); })()")
+    Write-Host "  ..      client area $client, layout minimum $needed" -ForegroundColor DarkGray
+
+    #    Minimized the way the titlebar's button minimizes it, and restored again. `IsIconic` is Windows
+    #    saying the window is minimized, which is the question the user could not get answered.
+    [void] [Trimmer.Win]::ShowWindow($handle, $SW_MINIMIZE)
+    Start-Sleep -Milliseconds 700
+    if (-not [Trimmer.Win]::IsIconic($handle)) {
+        throw "the window did not minimize when asked, so its minimize button cannot work."
+    }
+    [void] [Trimmer.Win]::ShowWindow($handle, $SW_RESTORE)
+    Start-Sleep -Milliseconds 700
+    if ([Trimmer.Win]::IsIconic($handle)) {
+        throw "the window did not restore from minimized."
+    }
+    Write-Host '  ok      the window minimized and restored' -ForegroundColor Green
+
+    #    Fullscreen, through the interface's own button, because that is the one window state the page
+    #    owns — and it is a round trip, since a one-way trip into fullscreen is the fault being fixed.
+    $asked = [string] (Invoke-Js @'
+(() => {
+  const button = [...document.querySelectorAll(".titlebar button")].find(
+    (candidate) => /^(Fullscreen|Restore)$/.test(candidate.textContent.trim()),
+  );
+  if (!button) { return "no fullscreen control on the titlebar"; }
+  if (button.textContent.trim() !== "Fullscreen") { return "the control does not start at Fullscreen"; }
+  button.click();
+  return "clicked";
+})()
+'@)
+    if ($asked -ne 'clicked') {
+        throw "could not press the fullscreen control: $asked"
+    }
+    Start-Sleep -Seconds 2
+    $nowFullscreen = [string] (Invoke-Js "window.__TAURI__.window.getCurrentWindow().isFullscreen().then((v) => String(v))")
+    if ($nowFullscreen -ne 'true') {
+        throw "the interface's fullscreen control did not put the window in fullscreen (isFullscreen is $nowFullscreen). Check ``core:window:allow-set-fullscreen`` in capabilities/default.json."
+    }
+    [void] (Invoke-Js @'
+(() => {
+  [...document.querySelectorAll(".titlebar button")]
+    .find((candidate) => candidate.textContent.trim() === "Restore")
+    .click();
+  return "clicked";
+})()
+'@)
+    Start-Sleep -Seconds 2
+    $backAgain = [string] (Invoke-Js "window.__TAURI__.window.getCurrentWindow().isFullscreen().then((v) => String(v))")
+    if ($backAgain -ne 'false') {
+        throw "the window went into fullscreen and would not come back out (isFullscreen is $backAgain). Fullscreen the operator cannot leave is the fault this whole step exists for."
+    }
+    Write-Host '  ok      fullscreen goes both ways, from the interface''s own control' -ForegroundColor Green
+
+    # 7. Clicking Browse opens the picker.
     #
     #    The whole chain, in the shipped window: the button, the handler, `pickFile`, the plugin, and the
     #    operating system's dialog. This is the assertion the reported fault needed — "clicking the browse
@@ -307,9 +433,16 @@ try {
         Write-Host '  ok      Browse opened the Windows file dialog: it is on screen' -ForegroundColor Green
     }
 
+    # 8. And closed, the way the titlebar's X closes it. This is last because it ends the process.
+    [void] [Trimmer.Win]::PostMessage($handle, $WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero)
+    if (-not $proc.WaitForExit(10000)) {
+        throw "WM_CLOSE did not close the window within ten seconds, so the Close button would not either."
+    }
+    Write-Host '  ok      the window closed when asked to close' -ForegroundColor Green
+
     $socket.Dispose()
     Write-Host ''
-    Write-Host 'PASSED  the built window loads its interface, reaches Rust, and can open a picker' -ForegroundColor Green
+    Write-Host 'PASSED  the window loads its interface from Rust, can open a picker, and can be controlled' -ForegroundColor Green
     exit 0
 } catch {
     Write-Host ''

@@ -27,3 +27,4 @@ decision no longer applies, it is *superseded* and the reason is stated — neve
 - [ADR-017 — The product is four executables, and the window is checked by starting it](adr/017-shipping.md) *(new in V2)*
 - [ADR-018 — Colour is state, the faces are bundled, and no string is clipped](adr/018-visual-language.md) *(new in V2)*
 - [ADR-019 — The browser stub never ships, and a check a fixture can satisfy is not a check](adr/019-the-stub-never-ships.md) *(new in V2)*
+- [ADR-020 — The window opens maximized, not fullscreen, and the check asks Windows](adr/020-the-window-has-a-titlebar.md) *(new in V2)*

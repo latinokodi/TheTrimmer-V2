@@ -90,9 +90,16 @@ a full round trip through `invoke` to Rust and back.
   [ADR-015](docs/adr/015-licensing.md) for why, and for what was built and then removed.
 
 The window is checked by starting it, not by reading it: `tools/smoke-window.ps1` launches the built
-binary, waits for the interface to render **from the build that was just made**, and asserts that the
-status bar reports what the `doctor` command returned — a full round trip through `invoke` to Rust and
-back. It runs in CI as the `desktop` job.
+binary and asks it four things. That the interface rendered **from the build that was just made**. That
+its bridge is Rust rather than the browser fixture. That the commands the window calls on mount
+answered. And that the window itself is usable — it reads the real `GWL_STYLE` from the process and
+fails if the caption, system menu, minimize box, maximize box or resizable frame is missing, then
+minimises and restores it, round-trips fullscreen, and closes it. It runs in CI as the `desktop` job.
+
+The window opens **maximized with the Windows titlebar**, not fullscreen. Fullscreen removes the
+titlebar, and with it every way to restore, minimize or close the application; it is available as `F11`
+and as a button in the header, and the same key that enters it leaves it. See
+[ADR-020](docs/adr/020-the-window-has-a-titlebar.md).
 
 ## The workspace
 

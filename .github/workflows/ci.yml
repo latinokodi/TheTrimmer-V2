@@ -194,9 +194,10 @@ jobs:
   # a browser suite and a real media cut, because every one of those tests the *interface* or the
   # *engine* and none of them starts the application.
   #
-  # `tools/smoke-window.ps1` starts the built window and asks it four questions: did the interface
+  # `tools/smoke-window.ps1` starts the built window and asks it six questions: did the interface
   # render from the assets just built; is the bridge Rust rather than the browser fixture; did the
-  # commands the window calls on mount answer; and does the file picker actually open.
+  # commands the window calls on mount answer; does the window have a titlebar it can be restored,
+  # minimized and closed from; does the file picker open; and does it close when asked to close.
   #
   # The third and fourth exist because the second was missing for several revisions. The check that
   # *was* here — "the footer reports what `doctor` returned" — passed on a hard-coded ffmpeg build
@@ -204,6 +205,11 @@ jobs:
   # test in this file was green while the shipped application did nothing at all. A check that a
   # fixture can satisfy is not a check, so the smoke test now asserts the absence of the fixture and
   # the presence of the picker, neither of which a stub can fake.
+  #
+  # The window question is asked of Windows rather than of Tauri for the same reason. `isDecorated()`,
+  # `isMinimizable()`, `isMaximizable()` and `isClosable()` all answered `true` on a window with no
+  # caption, no system menu and no minimize or maximize box, because Tauri reports the window that was
+  # *requested*. Only the style bits describe the window that exists.
   desktop:
     name: desktop
     runs-on: windows-latest

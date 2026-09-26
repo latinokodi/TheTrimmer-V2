@@ -13,7 +13,7 @@
     "windows": [
       {
         "title": "TheTrimmer",
-        "fullscreen": true,
+        "maximized": true,
         "resizable": true,
         "minWidth": 1440,
         "minHeight": 960,
