@@ -74,6 +74,23 @@ jobs:
       - name: Lints
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # Two crates producing a binary of the same name is resolved silently by Cargo: one overwrites
+      # the other, and which wins depends on build order. That made `thetrimmer doctor` open a GUI.
+      # `crates/trimmer-cli/tests/workspace_shape.rs` asserts this, and the step below is the same
+      # check at the point where the artifacts are actually produced.
+      - name: No duplicate binary names
+        run: |
+          $names = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages |
+            ForEach-Object { $_.targets } | Where-Object { $_.kind -contains 'bin' } |
+            ForEach-Object { $_.name }
+          $dupes = $names | Group-Object | Where-Object { $_.Count -gt 1 }
+          if ($dupes) {
+            $dupes | ForEach-Object { Write-Error "binary $($_.Name) is produced $($_.Count) times" }
+            exit 1
+          }
+          Write-Host "$($names.Count) distinct binaries"
+        shell: pwsh
+
       # The V1 engine, for the differential oracle. A failure here is not fatal: the oracle skips
       # with a printed reason, and the job says so rather than pretending it ran.
       - name: Fetch the V1 engine for the oracle

@@ -11,7 +11,10 @@ use trimmer_app::{
 use trimmer_core::{
     caption, parse_timecode, MediaPath, Project, ProjectId, Segment, SegmentId, VerifyPolicy,
 };
-use trimmer_verify::{verify_cut, CutFacts, MediaMeasurer, VerifyReport};
+use trimmer_verify::{
+    verify_cut, verify_cut_with, CutFacts, Evidence, FrameHashes, MediaMeasurer, Similarity,
+    VerifyReport,
+};
 use uuid::Uuid;
 
 use crate::cli::{BatchArgs, CutArgs, DaemonArgs, ProbeArgs, VerifyArgs, WatchArgs};
@@ -305,6 +308,13 @@ pub async fn cut(context: &Context, args: &CutArgs) -> Outcome {
         .await
         .map_err(|error| Failure::refused(error.to_string()))?;
 
+    // The captions are written *before* the verification, and the order matters: the caption check
+    // compares the sidecar against the source's cues retimed onto this window, so a sidecar written
+    // afterwards is not there to be compared and the check reports a genuine disagreement — "the cut
+    // carries 0 cues and the window holds 1" — rather than a skip. Writing first is what makes the
+    // check meaningful, and it is a real ordering bug that the check found.
+    write_captions(context, args, &media, &output, start, end)?;
+
     if policy == VerifyPolicy::Off {
         println!(
             "{} frames written to {}",
@@ -324,7 +334,6 @@ pub async fn cut(context: &Context, args: &CutArgs) -> Outcome {
         }
     }
 
-    write_captions(context, args, &media, &output, start, end)?;
     Ok(OK)
 }
 
@@ -374,6 +383,12 @@ fn confirm() -> Result<bool, Failure> {
 }
 
 /// Measure a finished cut and hand back the verdict.
+///
+/// The evidence is gathered here for the same reason the queue gathers it: a policy that asks for a
+/// decoded-frame comparison must not be answered with a skip, because a skip under a policy that
+/// requested the check is a gap rather than a pass. An earlier version called [`verify_cut`] with no
+/// evidence, so `frames` and `duration` were checked and everything else reported itself skipped
+/// while the verdict still read `ok`.
 fn verify_files(
     measurer: &dyn trimmer_verify::MediaMeasurer,
     plan: &trimmer_core::CutPlan,
@@ -388,7 +403,72 @@ fn verify_files(
     let source_facts = measurer
         .facts(source)
         .unwrap_or_else(|_| unknown_facts(source));
-    verify_cut(plan, &cut_facts, &source_facts, policy)
+
+    if !policy.hashes_frames() {
+        return verify_cut_with(
+            plan,
+            &cut_facts,
+            &source_facts,
+            policy,
+            &Evidence::default(),
+        );
+    }
+
+    // The sample window is anchored on the keyframe the body begins on: frame zero of the output for
+    // a copy, and `keyframe - start_frame` into it for a head patch. That is the one position both
+    // files are guaranteed to share whatever the overshoot.
+    const SAMPLE: usize = 24;
+    let sample = i64::try_from(SAMPLE).unwrap_or(i64::MAX);
+    let rate = source_facts
+        .rate
+        .or(cut_facts.rate)
+        .unwrap_or(trimmer_core::FrameRate::FPS_25);
+    let anchor = plan.keyframe.unwrap_or(plan.start_frame);
+    let cut_anchor = anchor - plan.start_frame;
+
+    let mut evidence = Evidence::default();
+    if let (Ok(source_hashes), Ok(cut_hashes)) = (
+        measurer.frame_hashes(source, anchor, sample, rate),
+        measurer.frame_hashes(&cut_path, cut_anchor, sample, rate),
+    ) {
+        evidence = evidence.with_frame_hashes(
+            FrameHashes::new(source_hashes.digests, anchor),
+            FrameHashes::new(cut_hashes.digests, cut_anchor),
+        );
+    }
+
+    // The head, when the policy compares it pixel-wise. A re-encoded frame never hashes equal to its
+    // original, so this is a similarity score rather than a digest comparison.
+    if policy.is_forensic() {
+        let source_frame = measurer
+            .extract_frame(source, plan.start_frame, rate)
+            .unwrap_or_default();
+        let cut_frame = measurer
+            .extract_frame(&cut_path, 0, rate)
+            .unwrap_or_default();
+
+        if !source_frame.is_empty() && !cut_frame.is_empty() {
+            evidence = evidence.with_head_similarity(
+                measurer
+                    .ssim(&source_frame, &cut_frame)
+                    .unwrap_or(Similarity::UNMEASURABLE),
+            );
+        }
+
+        // And the captions, when there is a transcript beside the source. The written sidecar is
+        // named after the output, which is where the retime puts it.
+        if let Some(source_srt) = trimmer_core::caption::find_for(source.as_path()) {
+            if let Ok(transcript) = trimmer_core::caption::read(&source_srt) {
+                let sidecar = cut_path.with_extension("srt");
+                let written = trimmer_core::caption::read(sidecar.as_path())
+                    .map(|found| found.cues)
+                    .unwrap_or_default();
+                evidence = evidence.with_captions(transcript.cues, written);
+            }
+        }
+    }
+
+    verify_cut_with(plan, &cut_facts, &source_facts, policy, &evidence)
 }
 
 /// Facts that say "nothing is known", so a check that could not measure reports rather than

@@ -80,9 +80,14 @@ Stating these is the point of the document.
   `Forensic` hash, `Standard` does not. A cut made under `Strict` therefore runs two extra ffmpeg
   passes over 24 frames each. That is the cost of the strongest check that does not decode the whole
   segment, and it is why the policy is a choice rather than a constant.
-* **The follow-up audit findings** in `docs/audit/` are recorded, triaged and not all closed. The
-  three that mattered most — the unverified-verification bug, the per-request transcript index, and
-  the unused `opener` permission — are fixed and each has a regression test. The rest are listed
-  there with a severity and are honest outstanding work.
+* **The audit findings** in `docs/audit/` are recorded and triaged. The ones that affected a claim
+  the product makes are fixed, each with a regression test: the unverified-verification bug, the
+  per-request transcript index in both front ends, the unused `opener` permission, the refuse-instead-
+  of-measure `frame_hashes` and `extract_frame` in two crates, and the caption sidecar being written
+  *after* the check that compares it. The remainder are smaller and are listed there with a severity.
+* **The `thetrimmer` binary collision** is fixed and guarded twice — by a test that reads
+  `cargo metadata`, and by a CI step. Two crates declared a binary of the same name, Cargo resolved it
+  silently by letting one overwrite the other, and the result was that `thetrimmer doctor` opened a
+  Tauri window that could not find its own frontend. No behavioural test could have caught it.
 * **The installer is unsigned.** The bundle job stops rather than producing one, because a
   certificate is a secret this repository should not hold.

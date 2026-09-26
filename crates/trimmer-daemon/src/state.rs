@@ -300,13 +300,16 @@ fn poison() -> String {
 /// silently passing it.
 pub struct ProbeMeasurer {
     prober: Prober,
+    /// The resolved tools, so a frame-hash pass does not have to resolve them again.
+    tools: ToolPaths,
 }
 
 impl ProbeMeasurer {
     /// Wrap a prober.
     #[must_use]
-    pub const fn new(prober: Prober) -> Self {
-        Self { prober }
+    pub fn new(prober: Prober) -> Self {
+        let tools = prober.tools().clone();
+        Self { prober, tools }
     }
 }
 
@@ -352,33 +355,107 @@ impl MediaMeasurer for ProbeMeasurer {
     /// [`MediaMeasurer::facts`] only, so this is unreachable from the daemon's own routes;
     /// returning a refusal rather than an empty result means that if it ever *does* become
     /// reachable, the check reports itself as unmeasurable instead of passing.
+    /// A real hash pass.
+    ///
+    /// Refusing here — as an earlier version did, on the reasoning that the queue called only
+    /// [`MediaMeasurer::facts`] — meant the frame comparison reported itself skipped while the report
+    /// still called the cut verified. The queue's certification rule catches that and reports the file
+    /// uncertified, which is honest, but the right answer is to make the measurement. It costs one
+    /// ffmpeg run per side, which is why the *policy* decides whether it happens.
     fn frame_hashes(
         &self,
-        _path: &MediaPath,
-        _start_frame: i64,
-        _count: i64,
-        _rate: trimmer_core::FrameRate,
+        path: &MediaPath,
+        start_frame: i64,
+        count: i64,
+        rate: trimmer_core::FrameRate,
     ) -> CoreResult<FrameHashes> {
-        Err(CoreError::Invariant(
-            "the daemon does not measure frame hashes".to_owned(),
-        ))
+        if count <= 0 {
+            return Ok(FrameHashes::new(Vec::new(), start_frame));
+        }
+        let handle = tokio::runtime::Handle::try_current().map_err(|_| {
+            CoreError::Invariant("there is no runtime to hash frames on".to_owned())
+        })?;
+        let executor = trimmer_media::CutExecutor::new(self.tools.clone());
+        let options = trimmer_media::RunOptions {
+            policy: trimmer_media::PollPolicy::long(),
+            ..trimmer_media::RunOptions::default()
+        };
+        let digests = tokio::task::block_in_place(|| {
+            handle.block_on(executor.frame_hashes(
+                path.as_path(),
+                rate.seconds_of(start_frame),
+                usize::try_from(count).unwrap_or(usize::MAX),
+                &options,
+            ))
+        })
+        .map_err(|error| CoreError::Invariant(error.to_string()))?;
+        Ok(FrameHashes::new(digests, start_frame))
     }
 
-    /// Not measured here; see [`MediaMeasurer::frame_hashes`].
+    /// The first frame of a file, as PNG bytes, so the head can be compared pixel-wise.
+    ///
+    /// Refusing here meant the head-fidelity check reported itself skipped even under the `Forensic`
+    /// policy that asks for it — the same shape of bug as the missing hash pass: the verdict logic was
+    /// right and the measurement was absent. ffmpeg writes an image to a path, so this extracts to a
+    /// scratch file and reads it back, which is simpler than feeding the bytes through a pipe.
     fn extract_frame(
         &self,
-        _path: &MediaPath,
-        _frame: i64,
-        _rate: trimmer_core::FrameRate,
+        path: &MediaPath,
+        frame: i64,
+        rate: trimmer_core::FrameRate,
     ) -> CoreResult<Vec<u8>> {
-        Err(CoreError::Invariant(
-            "the daemon does not extract frames".to_owned(),
-        ))
+        let handle = tokio::runtime::Handle::try_current().map_err(|_| {
+            CoreError::Invariant("there is no runtime to extract a frame on".to_owned())
+        })?;
+        let executor = trimmer_media::CutExecutor::new(self.tools.clone());
+        let options = trimmer_media::RunOptions {
+            policy: trimmer_media::PollPolicy::long(),
+            ..trimmer_media::RunOptions::default()
+        };
+        let scratch =
+            std::env::temp_dir().join(format!("trimmer-frame-{}-{frame}.png", std::process::id()));
+        tokio::task::block_in_place(|| {
+            handle.block_on(executor.frame_png(
+                path.as_path(),
+                rate.seconds_of(frame),
+                &scratch,
+                &options,
+            ))
+        })
+        .map_err(|error| CoreError::Invariant(error.to_string()))?;
+        let bytes = std::fs::read(&scratch).unwrap_or_default();
+        let _ = std::fs::remove_file(&scratch);
+        Ok(bytes)
     }
 
     /// Unmeasurable, rather than a number nobody took.
-    fn ssim(&self, _a: &[u8], _b: &[u8]) -> CoreResult<Similarity> {
-        Ok(Similarity::UNMEASURABLE)
+    /// The similarity between two PNG frames, measured with ffmpeg's `ssim` filter.
+    ///
+    /// The two byte slices are written to scratch files first: `ssim` takes two inputs, and a path
+    /// per side is simpler than teaching this to feed ffmpeg from memory.
+    fn ssim(&self, a: &[u8], b: &[u8]) -> CoreResult<Similarity> {
+        if a.is_empty() || b.is_empty() {
+            return Ok(Similarity::UNMEASURABLE);
+        }
+        let handle = tokio::runtime::Handle::try_current()
+            .map_err(|_| CoreError::Invariant("there is no runtime to compare on".to_owned()))?;
+        let left = std::env::temp_dir().join(format!("trimmer-ssim-a-{}.png", std::process::id()));
+        let right = std::env::temp_dir().join(format!("trimmer-ssim-b-{}.png", std::process::id()));
+        std::fs::write(&left, a).map_err(|error| CoreError::Invariant(error.to_string()))?;
+        std::fs::write(&right, b).map_err(|error| CoreError::Invariant(error.to_string()))?;
+        let executor = trimmer_media::CutExecutor::new(self.tools.clone());
+        let options = trimmer_media::RunOptions {
+            policy: trimmer_media::PollPolicy::long(),
+            ..trimmer_media::RunOptions::default()
+        };
+        let score =
+            tokio::task::block_in_place(|| handle.block_on(executor.ssim(&left, &right, &options)));
+        let _ = std::fs::remove_file(&left);
+        let _ = std::fs::remove_file(&right);
+        Ok(match score {
+            Ok(Some(value)) => Similarity::measured(value),
+            _ => Similarity::UNMEASURABLE,
+        })
     }
 }
 

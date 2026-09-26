@@ -109,6 +109,15 @@ impl Prober {
         }
     }
 
+    /// The resolved tools.
+    ///
+    /// Exposed so a caller that needs a *different* ffmpeg call — a frame-hash pass, say — can reuse
+    /// the resolution rather than doing it again and possibly picking a different build from `PATH`.
+    #[must_use]
+    pub const fn tools(&self) -> &ToolPaths {
+        &self.tools
+    }
+
     /// Probe a file into the domain's shape.
     ///
     /// # Errors

@@ -549,6 +549,93 @@ impl CutExecutor {
             .collect())
     }
 
+    /// How similar two decoded frames are, as ffmpeg's `ssim` filter reports it, 0..=1.
+    ///
+    /// Frame hashes cannot compare a re-encoded frame with its original — every pixel moves a little
+    /// by construction — so the *head* of a cut is checked this way instead: the score peaks on the
+    /// right frame and falls away on its neighbours, which is what makes "did the head land on the
+    /// mark" answerable at all.
+    ///
+    /// Returns `None` when the comparison could not be measured, which the check reports as
+    /// unmeasurable rather than as a pass.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::Cancelled`] when the caller cancels, and a process failure when ffmpeg
+    /// cannot run.
+    pub async fn ssim(&self, a: &Path, b: &Path, options: &RunOptions) -> MediaResult<Option<f64>> {
+        let args = crate::process::argv(&[
+            "-hide_banner",
+            "-nostdin",
+            "-nostats",
+            "-i",
+            a.to_str().unwrap_or_default(),
+            "-i",
+            b.to_str().unwrap_or_default(),
+            "-lavfi",
+            "ssim",
+            "-f",
+            "null",
+            "-",
+        ]);
+        let step = RunOptions {
+            label: "compare frames".to_owned(),
+            ..options.clone()
+        };
+        let output = self
+            .runner
+            .run(self.tools.path(ToolSet::Ffmpeg), &args, &step)
+            .await?;
+        // ffmpeg writes the score to stderr as `... All:0.998 (18.5)`.
+        Ok(output
+            .stderr
+            .split("All:")
+            .nth(1)
+            .and_then(|rest| rest.split_whitespace().next())
+            .and_then(|value| value.parse::<f64>().ok()))
+    }
+
+    /// Write one decoded frame as a PNG, so two frames can be compared pixel-wise.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::ProcessFailed`] when ffmpeg cannot read the frame.
+    pub async fn frame_png(
+        &self,
+        path: &Path,
+        at_seconds: f64,
+        out: &Path,
+        options: &RunOptions,
+    ) -> MediaResult<bool> {
+        if let Some(parent) = out.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let args = crate::process::argv(&[
+            "-hide_banner",
+            "-nostdin",
+            "-v",
+            "error",
+            "-y",
+            "-ss",
+            &format!("{at_seconds:.6}"),
+            "-i",
+            path.to_str().unwrap_or_default(),
+            "-map",
+            "0:v:0",
+            "-frames:v",
+            "1",
+            out.to_str().unwrap_or_default(),
+        ]);
+        let step = RunOptions {
+            label: "extract a frame".to_owned(),
+            ..options.clone()
+        };
+        self.runner
+            .run(self.tools.path(ToolSet::Ffmpeg), &args, &step)
+            .await?;
+        Ok(out.is_file() && out.metadata().is_ok_and(|meta| meta.len() > 0))
+    }
+
     /// Run one prepared step, recording it.
     async fn run_step(
         &self,
