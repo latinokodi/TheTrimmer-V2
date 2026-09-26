@@ -38,6 +38,8 @@ const ROOT = path.join(__dirname, "..");
 
 let mainWindow = null;
 let backend = null;
+/** True once the application has decided to quit, so a shutdown is not reported as a fault. */
+let stopping = false;
 
 /** Only one copy of the application at a time: two would fight over the port and the store. */
 if (!app.requestSingleInstanceLock()) {
@@ -68,12 +70,21 @@ function startBackend() {
   backend.stdout.on("data", (chunk) => process.stdout.write(`[engine] ${chunk}`));
   backend.stderr.on("data", (chunk) => process.stderr.write(`[engine] ${chunk}`));
   backend.on("close", (code) => {
-    console.log(`[thetrimmer] backend exited with ${code}`);
+    // A backend killed by `stopBackend` reports a null code, because a signal is not an exit
+    // status. Saying "exited with null" during a normal quit reads as a crash, and a log that
+    // cries wolf on every clean shutdown is a log nobody reads on the one that matters.
+    console.log(
+      stopping
+        ? "[thetrimmer] backend stopped"
+        : `[thetrimmer] backend exited unexpectedly (code ${code}); the window cannot cut ` +
+            `anything until it is restarted`,
+    );
     backend = null;
   });
 }
 
 function stopBackend() {
+  stopping = true;
   if (backend) {
     backend.kill();
     backend = null;
