@@ -429,25 +429,109 @@ class MediaInfo:
         return nominal_rate(self.rate)
 
     @property
-    def variable(self) -> bool:
-        """True when the file's real rate does not match the rate it claims.
+    def grid_drift(self) -> float:
+        """How far the file's timestamps have wandered from the grid its rate describes.
 
-        The head-patch method assumes a constant frame grid: every frame exactly one
-        tick apart from the first. A variable-rate screen recording breaks that
-        assumption, so the app warns instead of silently trimming the wrong frames.
+        In frames, at the end of the file. A file of 52210 frames that claims 30 fps puts
+        frame 52209 at 1740.300 s; if its container says 1740.366 s, its timestamps are a
+        whole frame away from that grid by the end -- one frame in some places and none in
+        others, because the two grids cross.
         """
-        if self.average_rate is None or self.average_rate == 0:
+        if self.frames <= 0 or self.rate <= 0 or self.duration <= 0:
+            return 0.0
+        on_the_grid = self.frames / float(self.rate)
+        return abs(self.duration - on_the_grid) * float(self.rate)
+
+    @property
+    def variable(self) -> bool:
+        """True when the file's real frame grid is not the one its rate claims.
+
+        Two tests, and the second is the one that earns its place.
+
+        A relative rate difference catches a genuinely variable-rate recording. It does not
+        catch the commoner case: this project's reference master reports ``30/1`` and averages
+        ``156630000/5221099`` -- a difference of 0.0019%, under any sensible threshold -- yet
+        across 52210 frames it accumulates to *exactly one frame*. That is enough for a mark to
+        land a frame out in one part of the file and exactly right in another, which is a
+        frame-exactness claim the file cannot support, so it has to be said.
+
+        The test is therefore the accumulated drift and not the instantaneous ratio: half a
+        frame anywhere in the file is the point at which "the mark is frame-exact" stops being
+        true.
+        """
+        if self.rate <= 0:
             return False
-        drift = abs(float(self.rate) - float(self.average_rate)) / float(self.rate)
-        return drift > 0.001
+        if self.average_rate is not None and self.average_rate != 0:
+            if abs(float(self.rate) - float(self.average_rate)) / float(self.rate) > 0.001:
+                return True
+        return self.grid_drift > 0.5
 
     @property
     def rate_text(self) -> str:
         return format_rate(self.rate)
 
+    @property
+    def grid_rate(self) -> Fraction:
+        """The frame rate this file's frames are **actually** on.
+
+        Not the same thing as the rate it *claims*, and the difference is the whole of the
+        frame-exactness problem on real masters. The reference master here reports
+        ``r_frame_rate 30/1`` and averages ``156630000/5221099`` -- 29.99943. Counting frames
+        at 30 puts frame 52209 at 1740.300 s while the file says 1740.366 s: the two grids are
+        a whole frame apart by the end, having crossed somewhere in the middle. Every mark is
+        then a frame out in one part of the file and exactly right in another, which is not a
+        grid any check can be exact against.
+
+        So a frame's time is measured on this rate, not on the nominal one. A constant-rate
+        file has the two identical and nothing changes; a drifting one is converted on the grid
+        it really has, and the accumulated error goes to zero.
+
+        ``avg_frame_rate`` is the exact rational the container reports, so it is used when it
+        is there. When it is not, the rate is derived from the frame count over the file's own
+        span, which is the same quantity computed rather than reported.
+        """
+        if self.average_rate is not None and self.average_rate > 0:
+            return self.average_rate
+        if self.frames > 0 and self.duration > self.start_time:
+            # A wide bound on purpose. `parse_rate`'s usual limit of 1001 is right for reading
+            # a spelling like "29.97" and wrong here: it would turn 29.999431 into 29999/1000,
+            # a thousandth of a frame per second out, which is three quarters of a second of
+            # accumulated error over a twenty-nine minute file -- the very fault this is here
+            # to remove.
+            return Fraction(self.frames / (self.duration - self.start_time)).limit_denominator(
+                1_000_000
+            )
+        return self.rate
+
+    @property
+    def grid_rate_text(self) -> str:
+        """The grid rate as ffmpeg wants it, for ``-r``."""
+        return format_rate(self.grid_rate)
+
     def seconds_of(self, frame: int) -> float:
-        """Frame number -> seconds from the start of the file."""
-        return frame / float(self.rate)
+        """Frame number -> **when that frame is shown**, on the file's own clock.
+
+        Two corrections, and both were the cause of a one-frame error that showed up as a
+        failed alignment check on real material.
+
+        A frame's presentation time is ``start_time + frame / rate``, not ``frame / rate``: a
+        master whose picture begins at 0.021 s -- 0.63 of a frame at 30 fps -- has every frame
+        a fraction of a frame later than counting from zero says, and a seek aimed with the
+        bare division lands on the frame *before* the one meant.
+
+        And the rate is the file's own grid rate, not the nominal one, so the frames are not
+        counted on a grid the file is not on.
+
+        This is a *timestamp*, and every caller wants one: seek targets, the keyframe search
+        window, and the caption shift. Durations are a different quantity and are computed as
+        ``frames / rate`` where they are needed -- see `_encode_head` and `_concat_list`, which
+        must not take this in, because a duration does not move with the file's start.
+        """
+        return self.start_time + frame / float(self.grid_rate)
+
+    def frame_of(self, seconds: float) -> int:
+        """A time on the file's clock -> the frame shown then. The inverse of `seconds_of`."""
+        return round((seconds - self.start_time) * float(self.grid_rate))
 
     def summary(self) -> str:
         audio = (f"{self.audio.codec} {self.audio.sample_rate} Hz "

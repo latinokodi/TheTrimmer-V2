@@ -91,7 +91,7 @@ def sample_frames(spec: TrimSpec, plan, media: MediaInfo, count: int = 3) -> lis
     overshoot before the exact-frame trim runs. On a short segment those margins would
     swallow every sample, so they shrink with it: a three-second cut still gets one.
     """
-    rate = float(media.rate)
+    rate = float(media.grid_rate)
     margin = max(1, min(round(2.0 * rate), spec.frames // 8))
     first = max(plan.head_frames + margin, margin)
     # The last sample's window has to sit inside what was asked for: the frames past the
@@ -128,7 +128,16 @@ def measure_offset(source: Path, output: Path, in_frame: int, rate, at_frame: in
     if len(segment) < window:
         return OffsetCheck(at_frame, None, rate_value)
     source_frames = ff.frame_md5s(source, source_start_time, window + 2 * search)
-    for index in range(len(source_frames) - window + 1):
+    # Closest match first, and only then further out.
+    #
+    # A window of near-identical frames -- a locked-off shot, a title card, a still -- matches
+    # at several offsets at once, and this used to return the **earliest** hit. That biased
+    # every ambiguous measurement in one direction: on material that is exactly on the mark it
+    # reported one frame of drift, consistently negative, and the alignment check failed for a
+    # cut that was frame-exact. Scanning outward from the expected position reports the offset
+    # the content actually sits at, and only gives up when nothing within the search matches.
+    candidates = sorted(range(len(source_frames) - window + 1), key=lambda i: abs(i - search))
+    for index in candidates:
         if source_frames[index:index + window] == segment:
             return OffsetCheck(at_frame, index - search, rate_value)
     return OffsetCheck(at_frame, None, rate_value)
@@ -155,7 +164,7 @@ def measure_offsets(source: Path, output: Path, spec: TrimSpec, plan, media: Med
         output_start = ff.stream_start_time(output)
 
     def one(frame: int) -> OffsetCheck:
-        return measure_offset(source, output, spec.in_frame, media.rate, frame,
+        return measure_offset(source, output, spec.in_frame, media.grid_rate, frame,
                               source_start=source_start, output_start=output_start)
 
     if len(frames) == 1 or workers <= 1:
@@ -300,10 +309,10 @@ def verify(source: Path, spec: TrimSpec, report: TrimReport, media: MediaInfo) -
     else:
         result.failures.append(
             f"frames      {frames}, expected {spec.frames}..{spec.frames + MAX_OVERSHOOT}")
-    tolerance = 4.0 / float(media.rate)
-    expected = spec.frames / float(media.rate)
+    tolerance = 4.0 / float(media.grid_rate)
+    expected = spec.frames / float(media.grid_rate)
     if abs(video_duration - expected) <= tolerance:
-        gap = (video_duration - expected) * float(media.rate)
+        gap = (video_duration - expected) * float(media.grid_rate)
         result.checks.append(
             f"duration    video {video_duration:.3f}s of {expected:.3f}s requested "
             f"({gap:+.2f} frame(s) of trailing hold)")
@@ -326,7 +335,7 @@ def verify(source: Path, spec: TrimSpec, report: TrimReport, media: MediaInfo) -
     if report.plan.mode == "reencode":
         # Nothing in this file is a stream copy -- there was no keyframe to copy from --
         # so hashes cannot match the source and looking is the only honest check.
-        looked = head_frame_offset(source, output, spec.in_frame, media.rate,
+        looked = head_frame_offset(source, output, spec.in_frame, media.grid_rate,
                                    at_frame=spec.frames // 2,
                                    source_start=media.start_time,
                                    output_start=facts.video_start)
@@ -356,12 +365,12 @@ def verify(source: Path, spec: TrimSpec, report: TrimReport, media: MediaInfo) -
             result.checks.append("alignment   " + check.describe())
         else:
             result.failures.append("alignment   " + check.describe())
-    head_seconds = report.plan.head_frames / float(media.rate)
+    head_seconds = report.plan.head_frames / float(media.grid_rate)
     # The head is a re-encode, so it is checked by looking, not by hashing: the frame
     # the segment shows a little way in must be the frame the in point plus that time
     # names, within one frame.
     if head_seconds >= 0.3:
-        looked = head_frame_offset(source, output, spec.in_frame, media.rate,
+        looked = head_frame_offset(source, output, spec.in_frame, media.grid_rate,
                                    at_frame=max(1, report.plan.head_frames // 2),
                                    source_start=media.start_time,
                                    output_start=facts.video_start)

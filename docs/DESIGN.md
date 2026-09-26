@@ -177,7 +177,46 @@ reversible alternative.
 All three were considered and declined. There is no licence check, no activation, and no automatic
 update. `start.bat` is the distribution for now; `npm run dist` exists but is unexercised.
 
-## 16. Nothing is claimed that is not checkable
+## 17. A frame's time comes from the file, not from the rate it claims
+
+The defect that survived the longest, because it only shows on real masters and only by a frame.
+
+`r_frame_rate` is what a file *claims*. `avg_frame_rate` is what it *is*. The reference master
+reports `30/1` and averages `156630000/5221099` — 29.99943. The two rates are 0.0019% apart, which
+passes every sanity check anyone would write, and across 52210 frames they diverge by **exactly one
+frame**. The two grids cross somewhere in the middle of the file, so a mark is a frame out in one
+part and exactly right in another. No threshold on the rate ratio catches that; the quantity that
+matters is the **accumulated** drift, and it has to be measured over the file rather than per second.
+
+**Decision.** `MediaInfo.grid_rate` is the file's own grid — the container's exact `avg_frame_rate`,
+or the frame count over the file's own span when the container will not say — and every
+frame-to-time and time-to-frame conversion uses it. `rate` survives for what it is actually for:
+timecode labels, which count at the nominal rate because that is what a timecode is.
+
+**Consequences.** A constant-rate file has the two rates identical and nothing changes. A drifting
+one is converted on the grid it has, so the accumulated error goes to zero. And because the drift is
+now measured (`grid_drift`, in frames) rather than merely suspected, the plan can say *"its
+timestamps are 0.99 frame(s) away from that grid by the end"* instead of the vague warning it used
+to print — which is the difference between an operator knowing a failed check means the cut moved
+and knowing the file has no grid to be exact against.
+
+The same measurement found two more faults in the same area:
+
+* A frame's presentation time is `start_time + n / grid_rate`. The bare `n / rate` ignored a
+  `start_time` of 0.021 s — 0.63 of a frame — so the re-encoded head began one frame early.
+* A body copy aimed at a keyframe's own timestamp makes ffmpeg take the keyframe **before** it. The
+  copy came out a whole GOP long (8.33 s on this master) with its content a whole GOP early, which
+  is why the picture ran ahead of the sound. `body_seek` aims inside the GOP instead and takes the
+  preroll — now a known quantity — off the copied length.
+
+## 18. A log keeps its end in view
+
+The log is the record of a cut, and the newest line is the one being read. It used to follow the
+tail only when it was already at the bottom, on the theory that scrolling up to read something
+should not be undone by the next line. In practice a cut produces more lines than fit, so the thing
+the operator wants is always the thing below the fold. It now scrolls to the end on every line.
+
+## 19. Nothing is claimed that is not checkable
 
 Every module in this tree carries a docstring explaining *why* it exists in the terms of the failures
 it prevents, and `docs/TRUTH.md` pairs each claim with its check. A claim nobody can test is removed

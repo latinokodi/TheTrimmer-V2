@@ -144,15 +144,75 @@ def test_a_concat_offset_that_would_empty_the_head_is_clamped_and_recorded(keyfr
     assert any("clamped" in note for note in plan.notes)
 
 
-def test_a_variable_rate_file_is_planned_anyway_and_says_so(keyframes):
-    # No check can make a mark exact against a grid that does not exist, so the honest
-    # answer is a warning beside a plan that still works.
+def test_a_file_whose_timestamps_are_off_its_grid_is_planned_anyway_and_says_so(keyframes):
+    # No check can make a mark exact against a frame grid that does not exist, so the honest
+    # answer is a warning beside a plan that still works -- and the warning carries the
+    # measurement, because "0.99 frame(s) away by the end" is the number that says whether a
+    # failed alignment check means the cut moved or the file has no grid to be exact against.
     keyframes(4.0)
-    variable = media()
-    variable.average_rate = Fraction(24000, 1001)
-    plan = cutter.plan_trim(spec(100, 200), variable)
-    assert plan.mode == "copy"
-    assert any("variable frame rate" in note for note in plan.notes)
+    off_grid = media(frames=300, rate=Fraction(30))
+    off_grid.average_rate = Fraction(24000, 1001)
+    plan = cutter.plan_trim(spec(100, 200), off_grid)
+    assert any("away from that grid" in note for note in plan.notes)
+
+
+def test_a_file_whose_timestamps_accumulate_a_whole_frame_of_drift_is_flagged(keyframes):
+    """The case a rate comparison misses.
+
+    The reference master reports 30/1 and averages 29.99943 -- 0.0019% apart, under any
+    sensible threshold -- yet over 52210 frames the difference is exactly one frame. A mark
+    then lands a frame out in one part of the file and exactly right in another.
+    """
+    keyframes(4.0)
+    drifting = media(frames=52210, rate=Fraction(30))
+    drifting.duration = 52210 / 30 + 1 / 30           # a frame of drift by the end
+    drifting.average_rate = Fraction(30)
+    assert drifting.grid_drift == pytest.approx(1.0, abs=0.01)
+    assert drifting.variable is True
+    assert any("away from that grid" in note for note in
+               cutter.plan_trim(spec(100, 200), drifting).notes)
+
+
+def test_frames_are_counted_on_the_grid_the_file_is_actually_on():
+    """The case that made alignment checks fail on real material.
+
+    The reference master reports ``30/1`` and averages ``156630000/5221099``. Counting its
+    frames at 30 puts them a whole frame away from where they are by the end of the file, so a
+    mark is a frame out in one part of the file and exact in another -- which is not a grid any
+    check can be exact against. The engine converts on the file's own grid instead.
+    """
+    master = media(frames=52210, rate=Fraction(30))
+    master.average_rate = Fraction(156630000, 5221099)
+    master.duration = 1740.366333
+    master.start_time = 0.021
+
+    assert master.grid_rate_text == "156630000/5221099"
+    assert master.grid_drift == pytest.approx(0.99, abs=0.02)
+
+    on_the_grid = master.seconds_of(52209)
+    on_the_claimed_rate = master.start_time + 52209 / 30
+    assert on_the_grid - on_the_claimed_rate == pytest.approx(1 / 30, abs=0.002)
+
+    # And the frame a time names comes back the same way, so the two are inverses.
+    assert master.frame_of(on_the_grid) == 52209
+
+
+def test_an_ordinary_rate_is_its_own_grid():
+    plain = media(frames=300, rate=Fraction(25))
+    assert plain.grid_rate == Fraction(25)
+    assert plain.grid_rate_text == "25"
+    assert plain.seconds_of(100) == pytest.approx(4.0)
+    assert plain.frame_of(4.0) == 100
+
+
+def test_an_ordinary_constant_rate_file_is_not_flagged(keyframes):
+    # The check has to be quiet on clean material or it is noise nobody reads.
+    keyframes(4.0)
+    clean = media(frames=300, rate=Fraction(25))
+    assert clean.grid_drift == pytest.approx(0.0, abs=0.01)
+    assert clean.variable is False
+    assert not any("away from that grid" in note
+                   for note in cutter.plan_trim(spec(100, 200), clean).notes)
 
 
 # ---------------------------------------------------------------------------------------

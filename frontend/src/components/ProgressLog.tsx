@@ -44,17 +44,15 @@ export function ProgressLog({
 }): JSX.Element {
   const log = useRef<HTMLDivElement>(null);
 
-  // Follow the tail, the way a terminal does — but only when it is already at the bottom, so
-  // scrolling up to read something is not undone by the next line arriving.
+  // Follow the tail, always. A cut says a great deal and the newest line is the one being
+  // read, so the log keeps its end in view: a log that has to be scrolled by hand to see what
+  // just happened is a log that hides the thing it exists to show.
   useEffect(() => {
     const element = log.current;
     if (element === null) {
       return;
     }
-    const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 40;
-    if (atBottom) {
-      element.scrollTop = element.scrollHeight;
-    }
+    element.scrollTop = element.scrollHeight;
   }, [lines]);
 
   const fraction = stepFraction(progress);

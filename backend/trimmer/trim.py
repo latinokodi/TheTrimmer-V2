@@ -175,14 +175,21 @@ def plan_trim(spec: TrimSpec, media: MediaInfo) -> TrimPlan:
         )
 
     notes: list[str] = []
-    if media.variable and media.average_rate is not None:
+    if media.variable:
+        # Say what was measured, not just that something is off: "one frame" is a number the
+        # operator can weigh, and it is the number that decides whether a failed alignment
+        # check means the cut moved or the file has no grid to be exact against.
+        averages = ("--" if media.average_rate is None
+                    else f"{float(media.average_rate):.5f}")
+        drift = media.grid_drift
         notes.append(
-            f"the file claims {media.rate_text} fps but averages "
-            f"{float(media.average_rate):.4f}: it may be variable frame rate, and a "
-            "frame grid the method assumes may not hold"
+            f"the file claims {media.rate_text} fps but averages {averages}, so its "
+            f"timestamps are {drift:.2f} frame(s) away from that grid by the end; a frame "
+            "grid the method assumes may not hold, and a mark can be a frame out in part of "
+            "the file and exact in another"
         )
 
-    rate = media.rate
+    rate = media.grid_rate
     in_seconds = media.seconds_of(spec.in_frame)
     out_seconds = media.seconds_of(spec.out_frame)
     # Look a little before the in point (a keyframe exactly on it counts) and up to 30s
@@ -252,7 +259,7 @@ def trim(
     """
     media = media or ff.probe(spec.source)
     plan = plan_trim(spec, media)
-    rate = media.rate
+    rate = media.grid_rate
     whole = spec.frames / float(rate)
 
     if spec.output.exists() and not spec.overwrite:
@@ -341,7 +348,7 @@ def _encode_head(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, head: Path,
                  log, cancel, progress=None) -> list[str]:
     encoder, extra = ENCODERS[media.codec.lower()]
     pix_fmt = media.pix_fmt if media.pix_fmt in PASSTHROUGH_PIX_FMTS else "yuv420p"
-    head_seconds = plan.head_frames / float(media.rate)
+    head_seconds = plan.head_frames / float(media.grid_rate)
     args = [
         ff.tool("ffmpeg"), *_common_input(),
         "-ss", f"{media.seconds_of(spec.in_frame):.6f}", "-i", str(media.path),
@@ -349,7 +356,7 @@ def _encode_head(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, head: Path,
         *_video_map(media),
         "-vf", "setpts=PTS-STARTPTS",
         "-c:v", encoder, "-preset", spec.preset, "-crf", str(spec.crf),
-        "-pix_fmt", pix_fmt, "-r", media.rate_text,
+        "-pix_fmt", pix_fmt, "-r", media.grid_rate_text,
         "-video_track_timescale", str(media.timebase.denominator),
         *extra,
     ]
@@ -415,12 +422,15 @@ def _copy_body(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, body: Path,
     back together.
     """
     body_frames = spec.out_frame + 1 - plan.keyframe
-    whole = body_frames / float(media.rate)
+    whole = body_frames / float(media.grid_rate)
     # The picture seeks inside the GOP and gives the preroll back, so the copy begins on the
     # keyframe that opens the body. The sound keeps the engine's output seek at the mark
     # itself: audio has no GOP, so it lands exactly and needs none of that care.
-    start, duration = body_seek(plan, media.rate, body_frames)
-    audio_start = f"{media.seconds_of(plan.keyframe):.6f}"
+    start, duration = body_seek(plan, media.grid_rate, body_frames)
+    # The sound begins at the keyframe's own presentation time, which is where the picture
+    # begins, so the two are cut from the same instant rather than a frame apart.
+    audio_start = (f"{plan.keyframe_seconds:.6f}" if plan.keyframe_seconds is not None
+                   else f"{media.seconds_of(plan.keyframe):.6f}")
     commands: list[list[str]] = []
 
     video = body.with_name("body-picture.mp4")
@@ -502,7 +512,7 @@ def _copy(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, output: Path, log, c
     Aimed through :func:`body_seek`, because this is the same input-seek-and-copy that used
     to start a whole GOP early whenever the target was a keyframe's own timestamp.
     """
-    start, duration = body_seek(plan, media.rate, spec.frames + 1)
+    start, duration = body_seek(plan, media.grid_rate, spec.frames + 1)
     args = [
         ff.tool("ffmpeg"), *_common_input(),
         "-ss", start, "-i", str(media.path),
@@ -522,7 +532,7 @@ def _reencode(media: MediaInfo, spec: TrimSpec, output: Path, log, cancel,
     args = [
         ff.tool("ffmpeg"), *_common_input(),
         "-ss", f"{media.seconds_of(spec.in_frame):.6f}", "-i", str(media.path),
-        "-t", f"{spec.frames / float(media.rate):.6f}",
+        "-t", f"{spec.frames / float(media.grid_rate):.6f}",
         *_video_map(media),
         "-vf", "setpts=PTS-STARTPTS",
         "-c:v", encoder, "-preset", spec.preset, "-crf", str(spec.crf),
