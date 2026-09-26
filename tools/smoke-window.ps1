@@ -160,19 +160,22 @@ try {
     }
     Write-Host "  ok      the interface rendered from the build just made ($($assets -join ', '))" -ForegroundColor Green
 
-    # 4. The bridge answered. The status bar shows what the `doctor` command returned, so this is a
+    # 4. The bridge answered. The footer line shows what the `doctor` command returned, so this is a
     #    full round trip through `invoke` and back — it cannot pass without the bridge and without the
     #    command being registered.
+    #
+    #    The selector moved once, when the shell was rearranged, and this check is the reason that was
+    #    noticed: it failed with an empty string rather than reporting a healthy window.
     $bridge = $false
     $deadline = (Get-Date).AddSeconds($Seconds)
     $status = ''
     while ((Get-Date) -lt $deadline -and -not $bridge) {
-        $status = Invoke-Js "(() => { const el = document.querySelector('.statusbar'); return el ? el.innerText : ''; })()"
+        $status = Invoke-Js "(() => { const el = document.querySelector('.footerline'); return el ? el.innerText : ''; })()"
         if ($status -match 'ffmpeg ready|no H\.264 encoder|checking ffmpeg') { $bridge = $true }
         else { Start-Sleep -Milliseconds 400 }
     }
     if (-not $bridge) {
-        throw "the status bar never reported the doctor command. It says: `"$status`""
+        throw "the footer line never reported the doctor command. It says: `"$status`""
     }
     Write-Host "  ok      the bridge answered: $($status.Split([char]10)[0])" -ForegroundColor Green
 

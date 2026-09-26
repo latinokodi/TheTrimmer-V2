@@ -1,0 +1,49 @@
+Rebuild the UI on the original's architecture
+
+Three attempts at this window and the third is a copy of the first, which is the
+lesson: a trimming tool's form *is* the product, and arranging it in columns with
+side panels makes a simple tool look like a complicated one. The original
+TheTrimmer was a centred column of labelled cards — Video, Subtitles, Range,
+Options — then buttons, a progress strip and a log. So is this.
+
+The improvements are added as cards rather than built around the form:
+
+  - Queue: the original trimmed one range. The engine could always cut a batch; the
+    window never exposed it. Card, table, `Trim n`.
+  - Transcript: the original had a subtitle *path* box. This keeps the path box and
+    adds a search over the same file, because nobody knows the timecode of "the bit
+    about custody" by heart.
+  - Progress and log that work. The shell has always emitted `cut-progress` and
+    **nothing was listening** — so a four-minute cut looked like a hung window and
+    the exact ffmpeg command line was thrown away. `useCutLog` is the listener.
+  - Delivery preset with its description, instead of an encoder name and a CRF.
+    "Which encoder" is a question an editor should not have to answer.
+
+Every setting is on the window with its value visible. The Range and Options cards
+share one label column, so `In point`, `Out point`, `Delivery`, `Handles` and
+`Verify` all start on the same left edge.
+
+Deleted: TrimPanel, Toolbar, StatusBar — the shell is now one component with its
+cards inline, because splitting a form into components that only exist to be placed
+is how it drifted apart in the first place.
+
+start.bat was broken and is now a launcher for tools/start.ps1, which:
+
+  - rebuilds the interface only when a source file is newer than the bundle. It used
+    to rebuild `dist` unconditionally, and new content hashes make the window
+    relink — turning a one-second start into a two-minute one for nothing.
+  - closes a running window before linking. Windows will not let the linker replace
+    an open executable, and cargo reports that as `Access is denied`, which reads
+    like a permissions problem.
+  - builds all four binaries rather than only the window, so the folder is never
+    half-stale.
+  - says what is out of date, and takes -Check, -Rebuild and -NoLaunch.
+
+tools/smoke-window.ps1 starts the built window and asserts that the interface
+rendered *from the build just made* — the hashed asset names are read out of
+`apps/web/dist/index.html` and looked for in the live DOM — and that the footer line
+reports what `doctor` returned, a full round trip through `invoke`. It found a real
+fault immediately: the selector it watched had been renamed, so it failed with an
+empty string instead of reporting a healthy window.
+
+14 browser tests, 9 unit, 404 Rust, smoke-window passing.

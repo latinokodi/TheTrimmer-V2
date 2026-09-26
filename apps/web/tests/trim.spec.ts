@@ -3,23 +3,23 @@ import { expect, test } from "@playwright/test";
 /**
  * The whole product, driven as a person drives it.
  *
- * Each test starts from a fresh page and a fresh stub, so the order they run in cannot matter. Every
- * assertion is about something on screen: a control that is offered, a sentence that is shown, a
- * button that is enabled, a number that is right.
+ * The window is a column of cards in the order the work happens — Video, Subtitles, Range, Options,
+ * Queue, actions, Progress — and these tests walk that order. Each starts from a fresh page and a fresh
+ * stub, so the order they run in cannot matter.
  *
- * There is no project setup step, and that is the point of the flow being tested: the window opens a
- * session by itself, so the first thing a person can do is choose a video.
+ * There is no project setup step: the window opens a session by itself, because the original
+ * application's project dialog was ceremony around a form that had nothing to do with it.
  */
 
-/** Choose the fixture master through the picker. The stub answers with a real path. */
+/** Choose the fixture master. The stub answers the picker with a real path. */
 async function chooseMaster(page: import("@playwright/test").Page): Promise<void> {
-  await page.getByRole("button", { name: "Choose a video…" }).click();
-  await expect(page.getByRole("dialog", { name: "Choose a video" })).toBeVisible();
   await page.getByRole("button", { name: "Browse…" }).click();
-  await expect(page.locator(".trim__master-name")).toHaveText("A007C012_250312_R1QK.mov");
+  await expect(page.getByRole("dialog", { name: "Choose a video" })).toBeVisible();
+  await page.getByRole("button", { name: "Choose a file…" }).click();
+  await expect(page.getByLabel("Video file")).toHaveValue(/A007C012_250312_R1QK\.mov$/);
 }
 
-/** Type a range and wait for the length line to agree it parses. */
+/** Type a range and wait for the plan line to agree it parses. */
 async function mark(
   page: import("@playwright/test").Page,
   inPoint: string,
@@ -27,25 +27,48 @@ async function mark(
 ): Promise<void> {
   await page.getByLabel("In point").fill(inPoint);
   await page.getByLabel("Out point").fill(outPoint);
-  await expect(page.locator(".trim__length")).not.toContainText("Type both timecodes");
+  await expect(page.locator(".range__plan")).not.toContainText("Type both timecodes");
 }
 
-test("a first run offers the one thing to do next, with no project to set up", async ({ page }) => {
+test("the cards are in the order the work happens, and the first one says what to do", async ({
+  page,
+}) => {
   await page.goto("/");
 
-  // No dialog, no project picker: the window is already in a session, and the only thing missing is a
-  // video. The claim is on screen rather than in a tooltip.
   await expect(page.getByRole("heading", { name: "TheTrimmer" })).toBeVisible();
-  await expect(page.locator(".titlebar__tagline")).toContainText("Frame-exact, lossless segment cutting");
-  await expect(page.getByText("Choose a video to trim")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Choose a video…" })).toBeVisible();
+  await expect(page.locator(".masthead__tagline")).toContainText("Frame-exact, lossless segment trimming");
 
-  // The marks are not offered until there is a video, because a timecode without a frame rate is not
-  // a number.
-  await expect(page.getByLabel("In point")).toBeHidden();
+  // The four cards the original had, in the original's order, plus the queue — the thing the engine
+  // always supported and the window never exposed. The Range card carries the timecode format in its
+  // heading, the way the original's did, so the headings are compared by their first line.
+  const titles = (await page.locator(".card__title").allInnerTexts()).map(
+    (title) => title.split("\n")[0]?.trim() ?? "",
+  );
+  expect(titles.slice(0, 5)).toEqual(["Video", "Subtitles", "Range", "Options", "Queue"]);
+  expect(titles).toContain("Progress");
 
-  // Every setting is on the main window rather than behind a disclosure.
-  await expect(page.getByRole("button", { name: "Queue it" })).toBeHidden();
+  // The first card is the one that needs answering, and it says so.
+  await expect(page.getByLabel("Video file")).toHaveValue("");
+  await expect(page.locator(".card__facts").first()).toContainText("Pick a video");
+});
+
+test("every option is on the window, in the Options card, with its value visible", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  for (const control of ["In point", "Out point", "Delivery", "Handles", "Verify"]) {
+    await expect(page.getByLabel(control)).toBeVisible();
+  }
+
+  // Nothing is folded away anywhere.
+  await expect(page.locator("details")).toHaveCount(0);
+
+  // The three settings are inside the Options card rather than scattered.
+  const options = page.locator(".card", { has: page.getByRole("heading", { name: "Options" }) });
+  await expect(options.getByLabel("Delivery")).toBeVisible();
+  await expect(options.getByLabel("Handles")).toBeVisible();
+  await expect(options.getByLabel("Verify")).toBeVisible();
 });
 
 test("the marks show the frame numbers as they are typed, and the length is inclusive", async ({
@@ -55,35 +78,31 @@ test("the marks show the frame numbers as they are typed, and the length is incl
   await chooseMaster(page);
 
   await page.getByLabel("In point").fill("00:00:01:00");
-  await expect(page.getByText("frame 25")).toBeVisible();
+  await expect(page.locator(".range__help").first()).toContainText("frame 25");
 
-  // 00:00:02:00 is frame 50, and it is the **last frame kept** — so the range is 26 frames, not 25.
+  // 00:00:02:00 is frame 50 and the **last frame kept**, so the range is 26 frames, not 25.
   await page.getByLabel("Out point").fill("00:00:02:00");
-  await expect(page.getByText("frame 50, the last one kept")).toBeVisible();
-  await expect(page.locator(".trim__length")).toContainText("26 frames");
+  await expect(page.locator(".range__help").last()).toContainText("frame 50, the last one kept");
+  await expect(page.locator(".range__plan")).toContainText("26 frames");
 
   await expect(page.getByRole("button", { name: "Trim", exact: true })).toBeEnabled();
 });
 
-test("the plan is answered while the marks are being typed, not on a button press", async ({
-  page,
-}) => {
+test("the plan is answered while the marks are typed, not on a button press", async ({ page }) => {
   await page.goto("/");
   await chooseMaster(page);
   await mark(page, "00:00:01:00", "00:00:02:00");
 
-  // Nothing was pressed. The plan arrives as the marks are set, because the answer changes the
-  // decision and an answer that arrives afterwards is not an answer.
-  await expect(page.getByText(/lossless copy/)).toBeVisible();
+  await expect(page.locator(".range__plan")).toContainText(/lossless copy/);
 
-  // A range that starts *between* keyframes is a head patch instead, and the number of re-encoded
-  // frames is on screen — the decision this product exists to make visible.
+  // A range starting *between* keyframes is a head patch instead, and the split is on screen — the
+  // decision this product exists to make visible.
   await page.getByLabel("In point").fill("00:00:01:12");
-  await expect(page.getByText(/head patch/)).toBeVisible();
-  await expect(page.getByText(/frames re-encoded/)).toBeVisible();
+  await expect(page.locator(".range__plan")).toContainText(/head patch/);
+  await expect(page.locator(".range__plan")).toContainText(/copied/);
 });
 
-test("a range that is backwards offers no button, and says nothing misleading", async ({ page }) => {
+test("a range that is backwards offers no button", async ({ page }) => {
   await page.goto("/");
   await chooseMaster(page);
 
@@ -94,13 +113,13 @@ test("a range that is backwards offers no button, and says nothing misleading", 
   await expect(page.getByRole("button", { name: "Queue it" })).toBeDisabled();
 });
 
-test("a timecode the source cannot reach says so, in the field", async ({ page }) => {
+test("a timecode the source cannot reach says so, in the plan line", async ({ page }) => {
   await page.goto("/");
   await chooseMaster(page);
 
-  // The fixture is 3 101 frames: 2 minutes 4 seconds. 03:00:00:00 is well past the end.
+  // The fixture is 3 101 frames: 2 minutes 4 seconds.
   await page.getByLabel("Out point").fill("03:00:00:00");
-  await expect(page.locator(".trim__length")).toContainText(/past the end of the source/);
+  await expect(page.locator(".range__plan")).toContainText(/past the end of the source/);
   await expect(page.getByRole("button", { name: "Trim", exact: true })).toBeDisabled();
 });
 
@@ -110,31 +129,27 @@ test("queueing ranges and trimming them produces verified files", async ({ page 
 
   await mark(page, "00:00:01:00", "00:00:02:00");
   await page.getByRole("button", { name: "Queue it" }).click();
-
-  // The range becomes a row and the marks clear, ready for the next one.
   await expect(page.locator(".cut-table__row")).toHaveCount(1);
   await expect(page.getByLabel("In point")).toHaveValue("");
 
   await mark(page, "00:00:04:00", "00:00:06:00");
   await page.getByRole("button", { name: "Queue it" }).click();
   await expect(page.locator(".cut-table__row")).toHaveCount(2);
-  await expect(page.getByRole("button", { name: "Trim 2" })).toBeVisible();
 
-  // The button is disabled while the model is busy, and queueing a segment re-plans the queue. Waiting
-  // for it to become pressable is what a person does — Playwright's `click` would otherwise time out
-  // against a disabled element and report the *interface* as broken rather than the timing.
   const trim = page.getByRole("button", { name: "Trim 2" });
+  await expect(trim).toBeVisible();
   await expect(trim).toBeEnabled({ timeout: 10_000 });
   await trim.click();
 
-  // The proof: one row per segment, each opening onto the checks it was measured against.
+  // The proof card appears, one row per segment, each opening onto the checks it was measured against.
+  await expect(page.getByRole("heading", { name: "What came out" })).toBeVisible();
   await expect(page.locator(".proof__item")).toHaveCount(2);
   await page.locator(".proof__head").first().click();
   await expect(page.locator(".checks__name").first()).toHaveText("Frames");
   await expect(page.getByText("Run signature")).toBeVisible();
 });
 
-test("the verification policy is on the main window and reaches the project", async ({ page }) => {
+test("the verification policy is on the window and reaches the project", async ({ page }) => {
   await page.goto("/");
   await chooseMaster(page);
 
@@ -144,15 +159,18 @@ test("the verification policy is on the main window and reaches the project", as
   await expect(policy).toHaveValue("forensic");
 });
 
-test("delivery settings are on the main window, not behind a disclosure", async ({ page }) => {
+test("the delivery preset is offered with its description, not as an encoder name", async ({
+  page,
+}) => {
   await page.goto("/");
   await chooseMaster(page);
 
-  // Nothing to open: both controls are visible with their values, which is the whole of the change
-  // from the three-disclosure layout this replaced.
-  await expect(page.getByLabel("Delivery")).toBeVisible();
-  await expect(page.getByLabel("Handles")).toBeVisible();
-  await expect(page.locator("details")).toHaveCount(0);});
+  const preset = page.getByLabel("Delivery");
+  await expect(preset.locator("option").first()).toContainText("the project default");
+  // Every preset the project offers comes with the sentence that says who wants it.
+  const text = await preset.locator("option").nth(1).innerText();
+  expect(text.length).toBeGreaterThan(30);
+});
 
 test("the transcript can be searched and a range marked from a sentence", async ({ page }) => {
   await page.goto("/");
@@ -166,6 +184,14 @@ test("the transcript can be searched and a range marked from a sentence", async 
   await expect(page.locator(".cut-table__row")).toHaveCount(1);
 });
 
+test("the progress card is there before anything runs, and says so", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.getByRole("heading", { name: "Progress" })).toBeVisible();
+  await expect(page.locator(".progress-status")).toHaveText("ready");
+  await expect(page.locator(".log")).toContainText("Nothing has run yet");
+});
+
 test("the interface works with no window behind it, which is the whole point", async ({ page }) => {
   await page.goto("/");
   const bridged = await page.evaluate(() => {
@@ -173,5 +199,5 @@ test("the interface works with no window behind it, which is the whole point", a
     return tauri?.mocks === true;
   });
   expect(bridged).toBe(true);
-  await expect(page.getByRole("main")).toBeVisible();
+  await expect(page.locator(".app__column")).toBeVisible();
 });

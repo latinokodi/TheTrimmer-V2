@@ -88,7 +88,7 @@ export function SourceDialog({
           onClick={() => void pick()}
           disabled={saving}
         >
-          Browse…
+          Choose a file…
         </button>
 
         <div className="field">

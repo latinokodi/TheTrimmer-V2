@@ -1,341 +1,132 @@
 /*
- * The application layout.
+ * The application layout: a column of cards.
  *
  * ============================================================================================
- * The shape
+ * The shape, and why it is this one
  * ============================================================================================
  *
- * ```
- * ┌ title bar ───────────────────────────────────────────────────────────────────┐
- * ├──────────────────────────────────────────┬───────────────────────────────────┤
- * │ the trim panel: video, marks, settings,  │ the queue: one row per marked     │
- * │ the length line, the two buttons         │ range, then the proof underneath  │
- * ├──────────────────────────────────────────┴───────────────────────────────────┤
- * │ transcript: search on the left, hits on the right                            │
- * ├──────────────────────────────────────────────────────────────────────────────┤
- * │ status bar                                                                   │
- * └──────────────────────────────────────────────────────────────────────────────┘
- * ```
+ * The original TheTrimmer window was a single centred column of labelled cards — Video, Subtitles,
+ * Range, Options — then a row of buttons, a progress strip and a log. This is that structure, because
+ * two versions of this shell tried to be cleverer and both were worse: a three-column dashboard, then a
+ * two-column workbench, and each one rearranged a form that did not need rearranging. A trimming tool's
+ * form *is* the product; putting it in a grid with side panels makes a simple tool look like a
+ * complicated one.
  *
- * Two columns and three strips, every row of the grid doing work. An earlier version was three columns
- * with a rail, a table and a tabbed inspector, and on a 1440 px window it left a column of empty space
- * down the middle while five settings sat behind three collapsed sections. Empty space in a tool is
- * not calm; it is area that could have been showing you the thing you were about to decide.
+ * So: one column, cards in the order the work happens, nothing folded away, and the features the
+ * original did not have — a queue, transcript search, a working progress log — added as cards of their
+ * own rather than built around the form.
  *
- * ============================================================================================
- * The design decisions
- * ============================================================================================
+ * ## The card
  *
- * ## Density is the feature
+ * A 1 px border on a slightly raised surface, an 8 px radius, and a bold title inside the top-left.
+ * That is the original's treatment and it is the right amount of structure: enough that the sections are
+ * unmistakable when scanning, not so much that the window becomes a filing cabinet. Cards are the one
+ * place in this interface where a border is correct, because they are the *only* grouping mechanism —
+ * there is no second level of nesting to distinguish.
  *
- * 13 px body, 32 px rows, a 4 px rhythm, one fact per line. The audience is an editor with this window
- * open for six hours beside Premiere, comparing timecodes; whitespace costs a scroll, and a scroll
- * loses the row you were looking at.
+ * ## Centred, and capped
  *
- * ## Nothing is folded away
+ * The column is 940 px and centred. A form that spans a 1900 px display puts a label and its field far
+ * enough apart that reading it costs a head movement, and a timecode 1200 px from its own label is a
+ * timecode you check twice.
  *
- * Every setting is on the main window with its current value visible: the delivery preset, the
- * handles, the verification policy. A disclosure whose heading carries its value is better than one
- * that does not; not needing a disclosure at all is better than both.
+ * ## Density
  *
- * ## Separation without boxes
- *
- * No `border: 1px solid` around anything on the main window. Grouping is a change of surface tone, a
- * hairline nearly the same value as the surface it sits on, or a 2 px marker on the left edge of the
- * selected row. A box around a two-field form is a border that says nothing the label did not, and
- * eight of them in one window is a filing cabinet.
+ * 13 px body, 4 px rhythm, one fact per line, and every figure in the monospace stack with
+ * `tabular-nums`. Nothing is folded away: the delivery preset, the handles and the verification policy
+ * are all in the Options card with their values visible.
  *
  * ## One accent, and motion only as feedback
  *
- * A neutral ramp with one desaturated accent. No gradient anywhere, no glow, no purple, no pure black.
- * The only motion is feedback for something the user just did — 90–140 ms, `transform` and `opacity`
- * only, so it cannot reflow a row mid-click. There is no entry animation and nothing that moves on its
- * own: movement in a tool is not delight, it is something to wait for.
- *
- * ## Alignment is the craft
- *
- * Every figure is monospace with `tabular-nums`, so a column of timecodes lines up digit for digit. The
- * cut table is a CSS grid with one template, so column *n* is the same width in the header as in every
- * row. Rows are a fixed height so a plan landing cannot resize the row under the pointer.
+ * A neutral ramp with one desaturated accent. No gradient, no glow, no pure black. The only motion is
+ * feedback for something the user just did — 90–140 ms, `transform` and `opacity` only. Nothing moves on
+ * its own: movement in a tool is not delight, it is something to wait for.
  */
 
 .app {
-  display: grid;
-  grid-template-rows:
-    var(--titlebar-height)
-    minmax(0, 1fr)
-    minmax(0, auto)
-    var(--statusbar-height);
   height: 100%;
-  background: var(--surface-base);
+  background: var(--surface-sunken);
 }
 
-.app__body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 34%);
-  min-height: 0;
-  overflow: hidden;
-}
-
-/* ==========================================================================================
-   Title bar
-   ========================================================================================== */
-
-.titlebar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: 0 var(--space-4);
-  background: var(--surface-raised);
-  border-bottom: 1px solid var(--line-subtle);
-}
-
-/*
- * One glyph in the figure face, on a faint wash of the accent. No logo file, no icon font, and it is
- * the only place the accent appears in the chrome.
- */
-.titlebar__mark {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-sm);
-  background: var(--accent-subtle);
-  color: var(--accent);
-  font-family: var(--font-figure);
-  font-size: var(--text-sm);
-  line-height: 1;
-}
-
-.titlebar__identity {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
-.titlebar__product {
-  font-size: var(--text-base);
-  font-weight: var(--weight-semibold);
-  letter-spacing: -0.005em;
-}
-
-/*
- * The tagline is the product's claim. It shares a line with the name, small and quiet, because a
- * person reads it once and after that it is the thing that must not take a row of its own.
- */
-.titlebar__tagline {
-  font-size: var(--text-2xs);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-/* ==========================================================================================
-   The trim panel
-   ========================================================================================== */
-
-/*
- * The default column pair, and a cap on how wide a field is allowed to grow.
- *
- * A timecode is eleven characters. In a 1280 px column a `1fr` pair gives each field 620 px, which is
- * a 600 px empty box around a 90 px number — that is the empty space this layout exists to remove, and
- * it is created by the fields stretching rather than by a missing panel. The columns are capped at a
- * width that holds the number, the tracking and the padding comfortably, and the spare width goes to
- * the *page* rather than to the boxes.
- */
-.app__main {
-  --field-max: 320px;
-  --field-pair: 320px;
-
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
+.app__scroll {
+  height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
-.trim {
+.app__column {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-4) var(--space-5) var(--space-5);
-}
-
-.trim--empty {
-  flex: 1 1 auto;
-  align-items: center;
-  justify-content: center;
-}
-
-/* ---- the master: one line, then one line of facts --------------------------------------- */
-
-.trim__master {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.trim__master-row {
-  display: flex;
-  align-items: center;
   gap: var(--space-3);
-  min-width: 0;
+  width: min(940px, calc(100% - var(--space-6)));
+  margin: 0 auto;
+  padding: var(--space-5) 0 var(--space-6);
 }
 
-.trim__master-name {
-  font-size: var(--text-lg);
-  font-weight: var(--weight-medium);
-  letter-spacing: -0.01em;
-  color: var(--text-primary);
+/* ==========================================================================================
+   The masthead
+   ========================================================================================== */
+
+.masthead {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding-bottom: var(--space-1);
 }
 
-.trim__master-pick {
-  width: auto;
-  max-width: 42ch;
-  font-size: var(--text-base);
+/*
+ * The product name is the largest type in the window, which is the one place that is right: this is the
+ * title of a document rather than a control, and a person reads it once.
+ */
+.masthead__product {
+  font-size: 1.5rem;
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.015em;
+  line-height: 1.2;
 }
 
-.trim__master-facts {
+.masthead__tagline {
+  margin-top: 2px;
   font-size: var(--text-xs);
   color: var(--text-muted);
 }
 
-/*
- * ---- the form: marks on one row, settings on the next ------------------------------------
- *
- * A hairline above, not a box around. That is the whole of the grouping.
- */
-.trim__form {
+/* ==========================================================================================
+   The card
+   ========================================================================================== */
+
+.card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--line-subtle);
+  background: var(--surface-raised);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
 }
 
-/*
- * The marks: two fields and the sentence under each, on one row.
- *
- * `gap` is small and the fields are capped, so the two of them sit together as a *pair* that is read
- * against itself rather than as two things at opposite ends of the window. An in point 1100 px from its
- * out point is an in point you cannot compare without moving your head.
- */
-.trim__marks {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, var(--field-pair)));
-  gap: var(--space-4);
-  justify-content: start;
-}
-
-.trim__mark {
+.card__head {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) 0;
 }
 
-/*
- * The timecode field is the field the whole product turns on: eleven characters of `HH:MM:SS:FF`,
- * legible at a glance, in the figure face, wide-tracked. It is the largest type on the main window and
- * larger than the product's own name, which is the correct hierarchy for a tool whose job is that
- * number.
- */
-.trim__mark input.timecode-field {
-  height: 40px;
-  padding: 0 var(--space-3);
-  font-size: 1.0625rem;
-  letter-spacing: 0.06em;
-  text-align: center;
-}
-
-/*
- * The settings: label above value, three across, each sized to what it holds rather than to an equal
- * fraction — a handles box does not need the width of a preset list. The row is left-aligned under the
- * marks so all three columns start on the same left edge as the in point.
- */
-.trim__settings {
-  display: grid;
-  grid-template-columns: minmax(0, var(--field-pair)) 96px minmax(0, 340px);
-  gap: var(--space-4);
-  align-items: end;
-  justify-content: start;
-}
-
-/* ---- what it will do, and the buttons --------------------------------------------------- */
-
-/*
- * The length line and the two buttons, on one row under the settings.
- *
- * The line does not stretch: it holds its content and the buttons follow it, so the primary action sits
- * under the settings it acts on rather than pushed to the far right of the window. The row keeps a
- * minimum height whether or not there is a length to show, so the buttons do not move when the marks
- * become valid — a button that shifts under the pointer as a field is filled in gets mis-clicked.
- */
-.trim__go {
+.card__title {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--space-3);
-  min-height: 34px;
-}
-
-.trim__length {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-  font-size: var(--text-base);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
   color: var(--text-secondary);
 }
 
-.trim__length .ok {
-  color: var(--signal-ok);
+.card__note {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-regular);
+  color: var(--text-faint);
 }
 
-.trim__length .warn {
-  color: var(--signal-warn);
-}
-
-.trim__length .danger {
-  color: var(--signal-danger);
-}
-
-.trim__dot {
-  width: 3px;
-  height: 3px;
-  border-radius: var(--radius-pill);
-  background: var(--line-strong);
-}
-
-.trim__hint {
-  font-size: var(--text-sm);
-  color: var(--text-muted);
-}
-
-/* ==========================================================================================
-   The queue
-   ========================================================================================== */
-
-.app__side {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  background: var(--surface-sunken);
-  border-left: 1px solid var(--line-subtle);
-}
-
-.side__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: var(--head-height);
-  padding: 0 var(--space-3);
-  border-bottom: 1px solid var(--line-subtle);
-}
-
-.side__count {
+.card__count {
   min-width: 17px;
   padding: 0 5px;
   border-radius: var(--radius-sm);
@@ -345,30 +136,177 @@
   text-align: center;
 }
 
-.side__hint {
-  font-size: var(--text-2xs);
+.card__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+/* A body whose child brings its own padding — the queue table, which is full-bleed. */
+.card__body--flush {
+  padding: 0;
+  gap: 0;
+}
+
+/* One line of facts under a field: the probed rate, the caption count, the plan. */
+.card__facts {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* ==========================================================================================
+   Rows: a label, a field, and a trailing note
+   ========================================================================================== */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.path-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  font-family: var(--font-figure);
+  font-size: var(--text-sm);
+}
+
+.path-field:read-only {
+  color: var(--text-muted);
+}
+
+.row > .btn {
+  flex: none;
+}
+
+/*
+ * The range rows: label, field, and the sentence that says what the field currently means. The help text
+ * is in a fixed-width column so the two rows line up, which is what makes them comparable at a glance.
+ */
+.range {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.range__row {
+  display: grid;
+  grid-template-columns: 9ch minmax(0, 320px) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.range__label {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.range__help {
+  font-size: var(--text-xs);
   color: var(--text-faint);
 }
 
-.side__body {
-  flex: 1 1 auto;
-  min-height: 0;
+/*
+ * The timecode field: eleven characters of `HH:MM:SS:FF`, in the figure face, wide-tracked, at the one
+ * size in the window that is larger than the body. This is the field the product turns on.
+ */
+input.timecode-field {
+  height: 38px;
+  padding: 0 var(--space-3);
+  font-family: var(--font-figure);
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
 }
 
-.side__empty {
-  padding: var(--space-4) var(--space-3);
+/*
+ * The plan line under the marks. Monospace and quiet, like the original's, because it is a line of data
+ * that changes as you type and a proportional face makes it jump.
+ */
+.range__plan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  font-family: var(--font-figure);
   font-size: var(--text-xs);
   color: var(--text-muted);
-  line-height: 1.65;
 }
 
-.side__proof {
-  flex: 0 1 auto;
-  max-height: 55%;
-  overflow-y: auto;
-  padding: var(--space-3);
-  border-top: 1px solid var(--line);
-  background: var(--surface-base);
+.range__plan .ok {
+  color: var(--signal-ok);
+}
+
+.range__plan .warn {
+  color: var(--signal-warn);
+}
+
+.range__plan .danger {
+  color: var(--signal-danger);
+}
+
+.range__sep {
+  width: 3px;
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--line-strong);
+}
+
+/* ==========================================================================================
+   Options
+   ========================================================================================== */
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/*
+ * The same label column as the range rows, so `Delivery`, `Handles` and `Verify` all start on the same
+ * left edge as `In point` and `Out point` above them. One label column for the whole form is what makes
+ * it scannable; a second alignment breaks the run.
+ */
+.options__row {
+  display: grid;
+  grid-template-columns: 9ch auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.options__label {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.options__wide {
+  width: min(100%, 520px);
+}
+
+.options__narrow {
+  width: 72px;
+  text-align: center;
+}
+
+.options__note {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+/* ==========================================================================================
+   Actions
+   ========================================================================================== */
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
 }
 
 /* ==========================================================================================
@@ -381,34 +319,31 @@
 }
 
 /*
- * One grid template, used by the header row and by every body row. This is what makes column *n* the
- * same width in both; a flex row per row aligns only by luck and stops aligning the moment one cell's
- * content is wider than the rest.
+ * One grid template, used by the header row and by every body row: column *n* is the same width in both.
+ * A flex row per row aligns only by luck and stops aligning the moment one cell is wider than the rest.
  */
 .cut-table__head,
 .cut-table__row {
   display: grid;
   grid-template-columns:
-    24px
-    22px
-    minmax(74px, 1fr)
-    92px
-    92px
-    56px
-    74px
-    24px;
+    26px
+    26px
+    minmax(120px, 1fr)
+    104px
+    104px
+    68px
+    96px
+    28px;
   align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-3);
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
   min-width: 0;
 }
 
 .cut-table__head {
-  position: sticky;
-  top: 0;
   height: var(--head-height);
-  background: var(--surface-raised);
-  border-bottom: 1px solid var(--line);
+  background: var(--surface-inset);
+  border-bottom: 1px solid var(--line-subtle);
   font-size: var(--text-2xs);
   font-weight: var(--weight-semibold);
   letter-spacing: 0.07em;
@@ -423,14 +358,17 @@
   transition: background var(--motion-fast) var(--easing);
 }
 
+.cut-table__row:last-child {
+  border-bottom: none;
+}
+
 .cut-table__row:hover {
   background: var(--surface-hover);
 }
 
 /*
- * The selection is a 2 px inset bar in the accent plus a faint wash — not a filled row. A filled row in
- * a table of timecodes makes the figures harder to read exactly when you are looking at them, and it
- * competes with the status colour in the Plan column.
+ * The selection is a 2 px inset bar in the accent plus a faint wash — not a filled row. A filled row in a
+ * table of timecodes makes the figures harder to read exactly when you are looking at them.
  */
 .cut-table__row--selected {
   background: var(--accent-subtle);
@@ -447,7 +385,7 @@
 
 .cut-table__cell {
   min-width: 0;
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
 }
 
 .cut-table__cell--check,
@@ -466,6 +404,7 @@
 
 .cut-table__cell--index {
   color: var(--text-faint);
+  font-size: var(--text-xs);
 }
 
 .cut-table__cell--tc {
@@ -474,6 +413,7 @@
 
 .cut-table__cell--num {
   color: var(--text-secondary);
+  font-size: var(--text-xs);
 }
 
 .cut-table__cell--name {
@@ -495,81 +435,184 @@
   text-align: right;
 }
 
-/* ==========================================================================================
-   The transcript strip
-   ========================================================================================== */
-
-.transcript-strip {
-  flex: none;
-  padding: 0 var(--space-5) var(--space-4);
-  border-top: 1px solid var(--line-subtle);
-}
-
-.transcript {
-  display: grid;
-  grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
-  gap: var(--space-4);
-  align-items: start;
-  padding-top: var(--space-3);
-}
-
-.transcript__list {
-  min-width: 0;
+.side__empty {
+  padding: var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: 1.6;
 }
 
 /* ==========================================================================================
-   Fields
+   Progress and the log
    ========================================================================================== */
 
-.field {
+.card--log .card__body {
+  gap: var(--space-3);
+}
+
+.progress-strip {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.field--narrow input {
-  text-align: right;
+  gap: var(--space-2);
 }
 
 /*
- * The label sits above the field, always, at 11 px uppercase. Next to a 40 px timecode field a
- * sentence-case 13 px label competes with the value; uppercase at 11 px reads as a column head.
+ * Indeterminate: a 3 px track with a bright segment travelling along it. The engine reports per-step
+ * timing but not a fraction of the whole, and a bar that filled to 40 % and stopped would be inventing a
+ * number. A travelling segment says "something is happening" and claims nothing more.
  */
-.field__label {
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+.progress-bar {
+  height: 3px;
+  background: var(--line);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.progress-bar--running::after {
+  content: "";
+  display: block;
+  width: 28%;
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  animation: sweep 1.4s var(--easing) infinite;
+}
+
+@keyframes sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(360%);
+  }
+}
+
+.progress-status {
+  font-family: var(--font-figure);
+  font-size: var(--text-xs);
   color: var(--text-muted);
-  white-space: nowrap;
 }
 
-.field__help {
+.log {
+  height: 150px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-inset);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-md);
+  font-family: var(--font-figure);
   font-size: var(--text-2xs);
-  color: var(--text-faint);
-  line-height: 1.55;
+  line-height: 1.6;
+  overflow-y: auto;
+  user-select: text;
 }
 
-.row {
+.log__empty {
+  color: var(--text-faint);
+}
+
+.log__line {
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-secondary);
+}
+
+.log__line--step {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}
+
+/* The exact command line, dimmed: it is there to be read when something is slow or wrong. */
+.log__line--command {
+  color: var(--text-faint);
+}
+
+.log__line--error {
+  color: var(--signal-danger);
+}
+
+/* ==========================================================================================
+   The footer line
+   ========================================================================================== */
+
+.footerline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 24px;
+  padding: 0 var(--space-1);
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+  overflow: hidden;
+}
+
+.footerline__notice {
+  max-width: 56ch;
+  color: var(--text-secondary);
+}
+
+.footerline__item {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
+  white-space: nowrap;
 }
 
-.row > input {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.row > .btn {
-  flex: none;
+.footerline__detail {
+  max-width: 46ch;
+  color: var(--text-faint);
 }
 
 /* ==========================================================================================
-   Facts, notes, empty states
+   Proof
    ========================================================================================== */
+
+.proof {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.proof__item {
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  overflow: hidden;
+}
+
+.proof__head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  font-size: var(--text-sm);
+}
+
+.proof__head:hover {
+  background: var(--surface-hover);
+}
+
+.proof__name {
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+.proof__summary {
+  grid-column: 2 / -1;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+
+.proof__detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border-top: 1px solid var(--line-subtle);
+}
 
 .facts {
   display: grid;
@@ -601,180 +644,8 @@
 }
 
 /*
- * A note is a paragraph with a coloured left edge, not a filled alert box. The tint is 10–14 % of the
- * signal colour: enough to group the lines, not enough to shout over the text.
- */
-.note {
-  margin-top: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  border-left: 2px solid var(--line-strong);
-  background: var(--surface-inset);
-  font-size: var(--text-xs);
-  line-height: 1.6;
-  color: var(--text-secondary);
-}
-
-.note--ok {
-  border-left-color: var(--signal-ok);
-  background: var(--signal-ok-subtle);
-}
-
-.note--warn {
-  border-left-color: var(--signal-warn);
-  background: var(--signal-warn-subtle);
-}
-
-.note--danger {
-  border-left-color: var(--signal-danger);
-  background: var(--signal-danger-subtle);
-}
-
-.note__list {
-  margin: var(--space-1) 0 0;
-  padding-left: var(--space-4);
-}
-
-.empty {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
-  max-width: 56ch;
-  font-size: var(--text-sm);
-  color: var(--text-muted);
-  line-height: 1.65;
-}
-
-.empty__title {
-  font-size: var(--text-lg);
-  font-weight: var(--weight-medium);
-  color: var(--text-secondary);
-}
-
-.empty .btn {
-  margin-top: var(--space-2);
-}
-
-/* ==========================================================================================
-   Transcript hits
-   ========================================================================================== */
-
-.hits {
-  position: relative;
-  border-radius: var(--radius-sm);
-  background: var(--surface-inset);
-}
-
-.hit {
-  position: absolute;
-  left: 0;
-  right: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-2);
-  text-align: left;
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-}
-
-.hit:hover {
-  background: var(--surface-hover);
-}
-
-.hit--selected {
-  background: var(--accent-subtle);
-  box-shadow: inset 2px 0 0 var(--accent);
-  color: var(--text-primary);
-}
-
-.hit__time {
-  flex: none;
-  width: 7ch;
-  color: var(--text-faint);
-  font-size: var(--text-2xs);
-}
-
-.hit__text {
-  min-width: 0;
-}
-
-.hits__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding-top: var(--space-2);
-  margin-top: var(--space-2);
-  border-top: 1px solid var(--line-subtle);
-}
-
-.hits__preview {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-}
-
-.panel-body__count {
-  font-size: var(--text-xs);
-  color: var(--text-muted);
-}
-
-/* ==========================================================================================
-   Proof
-   ========================================================================================== */
-
-.proof {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.proof__item {
-  border-radius: var(--radius-sm);
-  background: var(--surface-inset);
-  overflow: hidden;
-}
-
-.proof__head {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-2) var(--space-3);
-  text-align: left;
-  font-size: var(--text-xs);
-}
-
-.proof__head:hover {
-  background: var(--surface-hover);
-}
-
-.proof__name {
-  font-weight: var(--weight-medium);
-  color: var(--text-primary);
-}
-
-.proof__summary {
-  grid-column: 2 / -1;
-  color: var(--text-muted);
-  font-size: var(--text-2xs);
-}
-
-.proof__detail {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3) var(--space-3);
-  border-top: 1px solid var(--line-subtle);
-}
-
-/*
- * The checks table. No vertical rules and no box: a horizontal hairline between rows is enough, and it
- * keeps the measured column next to the expected one so the eye can compare them.
+ * The checks table: no vertical rules and no box. A hairline between rows is enough, and it keeps the
+ * measured column next to the expected one so the eye can compare them.
  */
 .checks {
   width: 100%;
@@ -802,7 +673,7 @@
 }
 
 .checks td:not(:first-child) {
-  padding-left: var(--space-2);
+  padding-left: var(--space-3);
 }
 
 .checks__name {
@@ -842,93 +713,129 @@
 }
 
 /* ==========================================================================================
-   Status bar
+   Notes, empty states
    ========================================================================================== */
 
-.statusbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: 0 var(--space-4);
-  background: var(--surface-raised);
-  border-top: 1px solid var(--line-subtle);
-  font-size: var(--text-2xs);
-  color: var(--text-muted);
-  overflow: hidden;
-}
-
-.statusbar__item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  white-space: nowrap;
-}
-
-.statusbar__detail {
-  max-width: 46ch;
-  color: var(--text-faint);
-}
-
-.statusbar__sep {
-  width: 1px;
-  height: 12px;
-  background: var(--line);
-}
-
-.statusbar__notice {
-  max-width: 54ch;
+.note {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid var(--line-strong);
+  background: var(--surface-inset);
+  font-size: var(--text-xs);
+  line-height: 1.6;
   color: var(--text-secondary);
 }
 
-.statusbar__spinner {
-  flex: none;
-  width: 9px;
-  height: 9px;
-  border: 1.5px solid var(--line-strong);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 700ms linear infinite;
+.note--ok {
+  border-left-color: var(--signal-ok);
+  background: var(--signal-ok-subtle);
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+.note--warn {
+  border-left-color: var(--signal-warn);
+  background: var(--signal-warn-subtle);
 }
 
-/*
- * Only present while a batch runs, so it appears rather than sitting permanently empty: a progress bar
- * at zero is a promise the interface is not keeping. A travelling segment rather than a rotating
- * circle, because a line in a bar reads as "this is the thing that is happening".
- */
-.progress {
+.note--danger {
+  border-left-color: var(--signal-danger);
+  background: var(--signal-danger-subtle);
+}
+
+.note__list {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  max-width: 62ch;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.empty__title {
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+}
+
+.empty .btn {
+  margin-top: var(--space-1);
+}
+
+/* ==========================================================================================
+   Transcript
+   ========================================================================================== */
+
+.transcript {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.hits {
   position: relative;
-  flex: none;
-  width: 110px;
-  height: 2px;
-  overflow: hidden;
-  background: var(--line);
-  border-radius: var(--radius-pill);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
 }
 
-.progress::after {
-  content: "";
+.hit {
   position: absolute;
-  inset: 0 auto 0 0;
-  width: 34%;
-  background: var(--accent);
-  border-radius: var(--radius-pill);
-  animation: sweep 1.4s var(--easing) infinite;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  text-align: left;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
 }
 
-@keyframes sweep {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(340%);
-  }
+.hit:hover {
+  background: var(--surface-hover);
+}
+
+.hit--selected {
+  background: var(--accent-subtle);
+  box-shadow: inset 2px 0 0 var(--accent);
+  color: var(--text-primary);
+}
+
+.hit__time {
+  flex: none;
+  width: 8ch;
+  color: var(--text-faint);
+  font-size: var(--text-2xs);
+}
+
+.hit__text {
+  min-width: 0;
+}
+
+.hits__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line-subtle);
+}
+
+.hits__preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.panel-body__count {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
 }
 
 /* ==========================================================================================
@@ -947,8 +854,7 @@
 
 /*
  * The one place a shadow is earned: a dialog genuinely floats above the application, and the shadow is
- * what says so. Tinted to the background hue rather than black, which is what stops it reading as a
- * grey smudge on a dark surface.
+ * what says so. Tinted to the background hue rather than black, which stops it reading as a grey smudge.
  */
 .dialog {
   display: flex;
@@ -956,7 +862,7 @@
   gap: var(--space-4);
   width: min(520px, calc(100vw - var(--space-7)));
   max-height: calc(100vh - var(--space-7));
-  padding: var(--space-5) var(--space-5) var(--space-4);
+  padding: var(--space-5);
   overflow-y: auto;
   background: var(--surface-overlay);
   border: 1px solid var(--line);
@@ -1003,11 +909,6 @@
    The export format choice
    ========================================================================================== */
 
-/*
- * Radio options as rows rather than as a column of little circles with labels beside them: the whole
- * row is the target, the label and the note are one line each, and the chosen row is marked by the
- * accent edge. This is a list you read to decide, so it is laid out like a list.
- */
 .choice {
   display: flex;
   flex-direction: column;
@@ -1062,6 +963,27 @@
   line-height: 1.5;
 }
 
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.field__label {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.field__help {
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+  line-height: 1.55;
+}
+
 /* ==========================================================================================
    Crash screen
    ========================================================================================== */
@@ -1106,34 +1028,25 @@
    Narrow windows
    ========================================================================================== */
 
-/*
- * The window opens fullscreen, so these are for a user who has un-maximised it on a small monitor. The
- * side column gives up width first, then moves under the panel, because the marks are what is being
- * worked in.
- */
-@media (max-width: 1180px) {
-  .app__body {
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 38%);
-  }
-}
-
-@media (max-width: 980px) {
-  .app__body {
+@media (max-width: 720px) {
+  .range__row,
+  .options__row {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, auto) minmax(160px, 1fr);
-    overflow-y: auto;
+    gap: var(--space-1);
   }
 
-  .app__side {
-    border-left: none;
-    border-top: 1px solid var(--line-subtle);
+  /*
+   * The index, the frame count and the plan column go; the name and the two timecodes stay. A table that
+   * scrolls sideways on a narrow window is worse than a table that shows less.
+   */
+  .cut-table__head,
+  .cut-table__row {
+    grid-template-columns: 26px minmax(80px, 1fr) 92px 92px 26px;
   }
 
-  .transcript {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .titlebar__tagline {
+  .cut-table__cell--index,
+  .cut-table__cell--num,
+  .cut-table__cell--mode {
     display: none;
   }
 }
@@ -1142,10 +1055,6 @@
    Forced colours
    ========================================================================================== */
 
-/*
- * In forced-colours mode the operating system replaces the palette, so a selected row needs a cue that
- * survives the replacement: an outline rather than a tint, in a system colour rather than ours.
- */
 @media (forced-colors: active) {
   .cut-table__row--selected,
   .hit--selected,
@@ -1154,9 +1063,7 @@
     outline-offset: -2px;
   }
 
-  .progress::after,
-  .statusbar__spinner {
-    border-color: CanvasText;
+  .progress-bar--running::after {
     background: Highlight;
   }
 }
