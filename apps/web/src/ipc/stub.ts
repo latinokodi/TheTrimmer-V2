@@ -141,7 +141,20 @@ function refuse(message: string): never {
 
 let state = freshState();
 
-/** Reset between tests, and between a developer's experiments. */
+/** The fixture project's path and name, for a test that wants to type or find them. */
+export const FIXTURE = {
+  path: FIXTURE_PATH,
+  name: FIXTURE_NAME,
+} as const;
+
+/**
+ * Reset the fixture project to empty.
+ *
+ * Exported for a test that drives two workflows in one page without a reload. Nothing in this
+ * repository calls it yet, and it is kept deliberately: an export with no call site is a warning
+ * sign, and this one has a specific one — the moment a test needs two scenarios in one `page.goto`,
+ * the alternative is a reload, which is slower and hides state bugs.
+ */
 export function resetStub(): void {
   state = freshState();
 }
@@ -756,8 +769,3 @@ export function installStub(): boolean {
   return true;
 }
 
-/** The fixture's path, for a test that wants to type it. */
-export const FIXTURE_SOURCE_PATH = FIXTURE_PATH;
-
-/** The fixture's name, for a test that wants to find it on screen. */
-export const FIXTURE_SOURCE_NAME = FIXTURE_NAME;
