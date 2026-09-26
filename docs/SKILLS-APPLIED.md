@@ -32,7 +32,7 @@ Thirteen were loaded for the migration from the Rust/Tauri tree to the Python/El
 |---|---|
 | **design-taste-frontend** | The window's single action is the highest-contrast object on the panel. Disabled is a state and has to be legible as one — a disabled control keeps its edge and its fill and loses only its contrast, so "not pressable" and "not a button" stop looking the same |
 | **typography-and-spacing-scale** | A 4 px baseline grid for every structural padding and margin, and a fixed type scale from a 10 px floor to a 27 px product name. Timecodes are the one control above body size, because eleven characters of `HH:MM:SS:FF` are what the product turns on |
-| **dark-mode-color-systems** | Both themes from one token set, chosen by `data-theme`, with the light values re-derived rather than inverted — and every text level measured against the panel it actually sits on (`--phosphor-faint` is 4.8:1 on dark and 4.6:1 on light) rather than against the page background |
+| **dark-mode-color-systems** | One dark palette with every text level measured against the panel it actually sits on (`--phosphor-faint` is 4.8:1 on `--substrate-200`) rather than against the page background, and `color-scheme: dark` so native controls — the `<select>` popups and the scrollbars — are dark too and do not flash white. The light value set this skill first produced was removed at the operator's decision: a bright surface beside a video monitor defeats the operator's adaptation to the picture, so a light theme is a way to judge the picture wrong rather than a preference. `forced-colors: active` remains, because that is the operating system taking the palette away and it must be honoured |
 
 ## Process
 

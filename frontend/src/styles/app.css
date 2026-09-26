@@ -33,7 +33,7 @@
  * ├───────────────────────────────────────────────────────────────────────────────────────┤
  * │ PROGRESS: bar, status, log (scrolls internally)                         min 140, 0.26fr│
  * ├───────────────────────────────────────────────────────────────────────────────────────┤
- * │ ffmpeg lamp · queue counts · notice · theme                                            │ 26
+ * │ ffmpeg lamp · segment length · source summary                                          │ 26
  * └───────────────────────────────────────────────────────────────────────────────────────┘
  * ```
  *
@@ -135,7 +135,7 @@
 
 .titlebar__tagline {
   /* The one arbitrary-length string in the bar. It shrinks and ellipsises; it never runs under the
-     theme switch. */
+     Fullscreen control at the right-hand end. */
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;

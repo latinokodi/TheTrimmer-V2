@@ -248,62 +248,22 @@
 }
 
 /* ==========================================================================================
-   A light mode exists and is not the point
+   There is one theme, and it is dark
    ========================================================================================== */
 
 /*
- * Somebody will open this on a machine with a light desktop theme and a bright room, and a window that
- * ignores that is a window they invert with a system tool that produces worse results than this. It is
- * a second value set — the same semantic names, different values — so no component knows it exists.
+ * A light value set used to live here, reachable from a switch in the title bar. It is gone.
  *
- * It is not the design. The design is the dark one: a grading suite is dim, and a bright surface beside
- * a video monitor destroys the operator's adaptation to the picture.
+ * A grading suite is dim, and a bright surface beside a video monitor destroys the operator's
+ * adaptation to the picture — which makes the light theme not a preference but a way to get the
+ * picture judged wrong. It also meant every semantic colour had to be argued twice: the same
+ * *name* needs a different *value* on a light panel, because contrast is not symmetric, so each
+ * of the four status hues carried two justifications and two sets of contrast figures.
+ *
+ * What remains below is `forced-colors`, which is not a theme. It is the operating system
+ * taking the palette away from the application, and honouring that is how a selected row stays
+ * visible for someone who needs high contrast.
  */
-:root[data-theme="light"] {
-  color-scheme: light;
-
-  --substrate-000: #eceef0;
-  --substrate-100: #f5f6f8;
-  --substrate-200: #fdfdfe;
-  --substrate-300: #f1f3f5;
-  --substrate-400: #e6e9ed;
-  --substrate-500: #d8dde3;
-
-  --rule-hair: #e2e5e9;
-  --rule: #ccd2d8;
-  --rule-strong: #aeb6bf;
-
-  /*
-   * Measured against `--substrate-200` (`#fdfdfe`), the panel the text actually sits on. A light theme
-   * is where a dark-first palette goes wrong: the same *name* needs a different *value*, because
-   * contrast is not symmetric — a grey that reads as quiet on `#171c21` is nearly invisible on
-   * `#fdfdfe`. `--phosphor-faint` was 4.17:1 here until `layout.spec.ts` started measuring.
-   */
-  --phosphor-bright: #0f1317; /* 18.4:1 */
-  --phosphor: #343b43; /* 11.2:1 */
-  --phosphor-dim: #5a626b; /* 6.1:1 */
-  --phosphor-faint: #636c74; /* 4.6:1 on the floor, 5.3:1 on a panel */
-  --phosphor-inverse: #ffffff;
-
-  --select: #1f66ab;
-  --focus: #1f66ab;
-  --select-wash: rgb(31 102 171 / 10%);
-  --select-edge: rgb(31 102 171 / 50%);
-
-  --primary: #1b2229;
-  --primary-hover: #000000;
-  --primary-ink: #ffffff;
-
-  --verified: #1c7147; /* 5.9:1 */
-  --verified-wash: rgb(28 113 71 / 10%);
-  --caution: #8a6308; /* 5.3:1 */
-  --caution-wash: rgb(138 99 8 / 10%);
-  --hazard: #b3231c; /* 6.5:1 */
-  --hazard-wash: rgb(179 35 28 / 9%);
-  --hazard-edge: rgb(179 35 28 / 45%);
-
-  --scrim: rgb(30 36 42 / 34%);
-}
 
 /* ==========================================================================================
    Reduced motion

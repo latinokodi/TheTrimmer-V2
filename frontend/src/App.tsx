@@ -56,7 +56,6 @@ import {
   type PlanView,
 } from "./api";
 import { useRunLog } from "./state/useRunLog";
-import { useTheme } from "./state/useTheme";
 
 /** CRF and preset are the encoder's, so they are named after it rather than invented. */
 const QUALITY = [
@@ -69,7 +68,6 @@ const QUALITY = [
 const PRESETS = ["ultrafast", "veryfast", "fast", "medium", "slow"] as const;
 
 export function App(): JSX.Element {
-  const { theme, toggle: toggleTheme } = useTheme();
   const log = useRunLog();
 
   const [health, setHealth] = useState<Health | null>(null);
@@ -153,7 +151,24 @@ export function App(): JSX.Element {
     [log],
   );
 
-  useEffect(() => listen(onEvent), [onEvent]);
+  /**
+   * Subscribe to the run exactly once.
+   *
+   * `onEvent` is rebuilt whenever the run's state changes, which during a cut is several times
+   * a second. Depending on it closed and reopened the stream on every one of those changes —
+   * and because the backend replays its recent history to a new subscriber, each reconnection
+   * delivered progress readings, which changed the state, which reconnected again. A feedback
+   * loop, and the backend's log was a wall of connection resets.
+   *
+   * So the subscription is created once and the handler is reached through a ref, which is
+   * always the newest one. The stream's lifetime is not the handler's lifetime.
+   */
+  const handler = useRef(onEvent);
+  useEffect(() => {
+    handler.current = onEvent;
+  }, [onEvent]);
+
+  useEffect(() => listen((event) => handler.current(event)), []);
 
   // ---- loading a file ---------------------------------------------------------------------
   const load = useCallback(async (candidate: string) => {
@@ -369,15 +384,6 @@ export function App(): JSX.Element {
           title={fullscreen ? "Leave fullscreen (F11)" : "Hide the titlebar and the taskbar (F11)"}
         >
           {fullscreen ? "Restore" : "Fullscreen"}
-        </button>
-        <button
-          type="button"
-          className="btn btn--ghost btn--small"
-          onClick={toggleTheme}
-          disabled={running}
-          title={`Switch to the ${theme === "dark" ? "light" : "dark"} theme`}
-        >
-          {theme === "dark" ? "Light" : "Dark"}
         </button>
       </header>
 
@@ -707,8 +713,6 @@ export function App(): JSX.Element {
         </span>
         <span className="spacer" />
         {summary !== "" ? <span className="footerline__notice">{summary}</span> : null}
-        <span className="footerline__sep" aria-hidden="true" />
-        <span className="footerline__item">{theme}</span>
       </footer>
 
       {/* The path field's own label, for the tests and for a screen reader. */}

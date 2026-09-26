@@ -449,7 +449,17 @@ async def cancel(_request: web.Request) -> web.Response:
 
 
 async def events(request: web.Request) -> web.StreamResponse:
-    """The stream: everything a run says, as it says it."""
+    """The stream: everything a run says, as it says it.
+
+    ## A client that goes away is not an error
+
+    Windows reports a closed loopback connection as `ConnectionResetError` — and on a socket
+    that is being written to, `ClientConnectionResetError` — from `prepare` as well as from
+    `write`. None of that is a fault: the window was reloaded, or closed, or a subscriber
+    simply finished. Letting it reach aiohttp's handler produces a full traceback per event,
+    which buries whatever the engine was actually saying. So every one of them is caught, and
+    the only thing that happens is the subscriber leaving the list.
+    """
     response = web.StreamResponse(
         status=200,
         headers={
@@ -459,9 +469,10 @@ async def events(request: web.Request) -> web.StreamResponse:
             "X-Accel-Buffering": "no",
         },
     )
-    await response.prepare(request)
-    channel = HUB.subscribe()
+    channel: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=2048)
     try:
+        await response.prepare(request)
+        channel = HUB.subscribe()
         while True:
             try:
                 event = await asyncio.to_thread(channel.get, True, 0.5)
@@ -472,7 +483,7 @@ async def events(request: web.Request) -> web.StreamResponse:
                 continue
             payload = json.dumps(event, default=str)
             await response.write(f"data: {payload}\n\n".encode())
-    except (ConnectionResetError, asyncio.CancelledError):
+    except (ConnectionResetError, ConnectionError, asyncio.CancelledError):
         pass
     finally:
         HUB.unsubscribe(channel)
@@ -549,4 +560,6 @@ def build_app() -> web.Application:
 
 if __name__ == "__main__":
     print(f"TheTrimmer backend {VERSION} on http://127.0.0.1:{PORT}", flush=True)
-    web.run_app(build_app(), host="127.0.0.1", port=PORT, print=None)
+    # No access log: every event-stream reconnect would be a line, and the console belongs to
+    # what the engine is saying about the work, not to a list of requests from one window.
+    web.run_app(build_app(), host="127.0.0.1", port=PORT, print=None, access_log=None)

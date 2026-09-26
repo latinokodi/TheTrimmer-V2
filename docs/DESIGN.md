@@ -108,6 +108,17 @@ fonts installed. No viewport media queries: this is a desktop application with a
 not a responsive page. The frame never scrolls; only the log and the proof panel do, because only
 those hold an unbounded number of rows.
 
+**One theme, and it is dark.** A light value set was built, with every semantic colour re-derived
+rather than inverted, and reachable from a switch in the title bar. It was removed. A grading suite is
+dim, and a bright surface beside a video monitor destroys the operator's adaptation to the picture —
+so a light theme is not a preference, it is a way to judge the picture wrong. It also doubled the
+argument for every one of the four status hues, because contrast is not symmetric and each colour
+needed a second value and a second set of figures.
+
+**`color-scheme: dark` is part of the palette.** Without it the native `<select>` popups and the
+scrollbars render light against a dark window, and the dropdown is the one control that leaves the
+page's own styling behind.
+
 ## 11. A length token and a colour token must never share a name
 
 This is the most instructive failure in the migration, because nothing reported it and no test
