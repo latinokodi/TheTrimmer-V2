@@ -4,43 +4,43 @@
  * ## The whole window
  *
  * ```
- * ┌────────────────────────────────────────────────────────────────────────────────┐
- * │ ▸ TheTrimmer  Frame-exact, lossless segment cutting        [project] [theme]   │
- * ├────────────────────────────────────────────────────────────────────────────────┤
- * │  VIDEO   Master.mp4 — 640×360, 25 fps, 125 frames, 3 caption cues              │
- * │                                                                                │
- * │  IN      [ 00:00:01:00 ]        OUT     [ 00:00:02:00 ]                        │
- * │          frame 25                       frame 50, the last one kept            │
- * │                                                                                │
- * │  26 frames · 1.04 s · lossless copy        [ Queue it ] [ Trim this segment ]  │
- * ├────────────────────────────────────────────────────────────────────────────────┤
- * │  ▸ Queued (2)   ▸ What happens when you trim   ▸ Transcript                    │
- * ├────────────────────────────────────────────────────────────────────────────────┤
- * │ ● ffmpeg ready · 2 of 2 ready · Master.mp4 640×360 …                 dark      │
- * └────────────────────────────────────────────────────────────────────────────────┘
+ * ┌ TheTrimmer ────────────────────────── frame-exact, lossless ──── ● ffmpeg ready ─┐
+ * ├──────────────────────────────────────────────┬──────────────────────────────────┤
+ * │ VIDEO  A007C012_250312_R1QK.mov     [Change…]│ QUEUE                             │
+ * │ 3840×2160 · prores · 25 fps · 3,101 frames   │ #  NAME  IN  OUT  FRAMES  PLAN    │
+ * ├──────────────────────────────────────────────┤ 1  cold open  00:00:01:00 …       │
+ * │ IN [00:00:01:00]           OUT [00:00:02:00] │                                   │
+ * │    frame 25                  frame 50         │                                   │
+ * │ DELIVERY [master ▾]  HANDLES [0]  VERIFY [▾] │                                   │
+ * │ 26 frames · 1.04 s · lossless copy   [Trim]  │                                   │
+ * ├──────────────────────────────────────────────┴───────────────────────────────────┤
+ * │ TRANSCRIPT [ search… ]  3 hits   │  the first cue, and the next two                │
+ * ├──────────────────────────────────────────────────────────────────────────────────┤
+ * │ ● ffmpeg ready · 0 of 2 runnable · what just happened                     dark    │
+ * └──────────────────────────────────────────────────────────────────────────────────┘
  * ```
  *
- * One column. The thing the product does — cut a range out of a video — is at the top, always
- * visible, and everything a person needs in order to do it is on that one line of sight: which file,
- * where it starts, where it ends, how long that is, and the button.
+ * There is no project step, no rail of masters, no inspector tabs and nothing folded away. A
+ * session *is* the project: the window keeps one, names it after the day, and opens it on launch —
+ * so the first thing on screen is a video to choose and two boxes to type a range into, rather than a
+ * dialog asking the user to name something before they are allowed to do anything.
  *
- * ## What changed, and why
+ * The store is still there, and that is deliberate. A batch of nine marked segments that a restart
+ * forgets is a worse defect than the dialog it replaced, and the audit trail, the export and the
+ * `watch` folder all read the same project. What was removed is the *ceremony*, not the record.
  *
- * The first version of this shell was a three-column dashboard: a rail of masters, a table of
- * segments, and an inspector with three tabs, with the marks themselves hidden inside a modal. It was
- * defensible as an information architecture and it was the wrong answer, because it made a *simple
- * tool* look like a *complicated one*. An editor opening a trimming application wants to trim
- * something, and every panel that is not about the trim in front of them is a thing to read first.
+ * ## Density
  *
- * So the queue, the explanation of the method and the transcript are below the fold in three
- * collapsed sections, and none of them has to be opened to trim a segment. They are still there —
- * trimming nine segments by hand is a worse workflow than queueing nine and pressing once — but they
- * are answers to a question a person asks *after* the first cut, not before it.
+ * The earlier shell was three columns with a rail, a table and a tabbed inspector, and on a 1440 px
+ * window it left a column of empty space down the middle while five settings sat behind three
+ * collapsed sections. Everything is now on the main window: the marks, the delivery preset, the
+ * handles and the verification policy on one row each, with their current values visible. Empty space
+ * in a tool is not calm, it is something to scroll past.
  *
  * ## Keyboard
  *
- * `Ctrl+Enter` trims, `Ctrl+Q` queues the marked range, `Ctrl+O` opens a project, `Ctrl+M` chooses a
- * video, `Ctrl+E` exports, `Ctrl+F` finds in the transcript. One listener, one map.
+ * `Ctrl+Enter` trims, `Ctrl+Q` queues the marked range, `Ctrl+O` chooses a video, `Ctrl+E` exports,
+ * `Ctrl+F` finds in the transcript, `Ctrl+D` opens the delivery settings.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -49,7 +49,7 @@ import { CutTable } from "./components/CutTable";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ExportDialog } from "./components/ExportDialog";
 import { ProofPanel } from "./components/ProofPanel";
-import { ProjectsDialog } from "./components/ProjectsDialog";
+import { SourceDialog } from "./components/SourceDialog";
 import { StatusBar } from "./components/StatusBar";
 import { Toolbar } from "./components/Toolbar";
 import { TranscriptPanel } from "./components/TranscriptPanel";
@@ -62,18 +62,20 @@ export function App(): JSX.Element {
   const model = useAppModel();
   const { theme, toggle: toggleTheme } = useTheme();
   const draft = useSegmentDraft(model.sources);
-  const [projectsOpen, setProjectsOpen] = useState(false);
+  const [sourceOpen, setSourceOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  const [details, setDetails] = useState<"none" | "queue" | "method" | "transcript">("none");
   const [searchFocusToken, setSearchFocusToken] = useState(0);
-  const [trimmedSomething, setTrimmedSomething] = useState(false);
+  const [ran, setRan] = useState(false);
 
-  const projectName =
-    model.projects.find((project) => project.id === model.openProjectId)?.name ?? "TheTrimmer";
-  const runnable = model.summary?.runnable ?? 0;
   const queued = model.segments.length;
+  const runnable = model.summary?.runnable ?? 0;
 
-  /** What the plan says about the range currently marked, if it has been planned. */
+  /**
+   * What the plan says about the range currently marked.
+   *
+   * Matched on the frame numbers rather than on an id, because a range that has been marked but not
+   * queued has no id — `preview_all` reports it as an entry whose start and end are the real ones.
+   */
   const markedPlan = useMemo(() => {
     if (draft.inFrame === null || draft.endFrame === null) {
       return null;
@@ -91,17 +93,13 @@ export function App(): JSX.Element {
    *
    * The product's one claim is that only the frames a cut cannot avoid are re-encoded, and the
    * difference between a lossless copy and a full re-encode is a decision the length line makes for
-   * you. Behind a button, that answer arrives after the decision has been made; asked here, on a
-   * delay that keeps it to about one call per pause in typing, it arrives while the marks are still
-   * being changed.
+   * you. Behind a button, that answer arrives after the decision has been made; asked here, on a delay
+   * that keeps it to about one call per pause in typing, it arrives while the marks are still being
+   * changed.
    *
-   * ## Why the function is held in a ref
-   *
-   * The model object is rebuilt on every render — deliberately, because it is a cache of the last
-   * answer and not a store. Naming it in the dependency list would therefore re-run this effect on
-   * every render; the effect sets previews, previews re-render, and the page spins. The ref carries
-   * the current function without making the effect depend on the object that holds it, and the only
-   * things this effect actually cares about are the two frame numbers and the delivery settings.
+   * The function is held in a ref because the model object is rebuilt on every render — deliberately,
+   * since it is a cache of the last answer and not a store. Naming it in the dependency list would
+   * re-run this on every render; the effect sets previews, previews re-render, and the page spins.
    */
   const planRef = useRef(model.planQuietly);
   planRef.current = model.planQuietly;
@@ -122,8 +120,6 @@ export function App(): JSX.Element {
     return () => clearTimeout(timer);
   }, [draft.endFrame, draft.handles, draft.inFrame, draft.preset, draft.ready]);
 
-  const chooseMaster = useCallback(() => setProjectsOpen(true), []);
-
   const queue = useCallback(async () => {
     const request = draft.request();
     if (request === null) {
@@ -131,34 +127,26 @@ export function App(): JSX.Element {
     }
     await model.addSegment(request);
     draft.reset();
-    setDetails("queue");
   }, [draft, model]);
 
   const trimNow = useCallback(async () => {
-    // A marked range that is not queued yet is what the button means: "cut this". Queueing it first
-    // and then running the batch is one code path rather than two, so a single trim and a batch of
-    // nine go through exactly the same queue.
-    const request = draft.request();
+    // A marked range that is not queued yet is what the plain "Trim" means: "cut this". Queueing it
+    // first and then running the batch is one code path rather than two, so a single trim and a batch
+    // of nine go through exactly the same queue. When something is already queued the button says
+    // `Trim n` and this leaves the marks alone — the fields are for the *next* range, and a person who
+    // has typed one and not queued it should not have it swept into the run by accident.
+    const request = queued === 0 ? draft.request() : null;
     if (request !== null) {
       await model.addSegment(request);
       draft.reset();
     }
     await model.runBatch({ stopOnError: false, skipVerification: false, label: "trim" });
-    setTrimmedSomething(true);
-    setDetails("queue");
-  }, [draft, model]);
+    setRan(true);
+  }, [draft, model, queued]);
 
-  const clearQueue = useCallback(async () => {
-    for (const segment of model.segments) {
-      await model.removeSegment(segment.id);
-    }
-  }, [model]);
-
-  // The shortcuts. One listener, one map, so the tooltips and the behaviour cannot disagree.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const modifier = event.ctrlKey || event.metaKey;
-      if (!modifier) {
+      if (!event.ctrlKey && !event.metaKey) {
         return;
       }
       switch (event.key.toLowerCase()) {
@@ -171,20 +159,20 @@ export function App(): JSX.Element {
           void queue();
           break;
         case "o":
-          event.preventDefault();
-          setProjectsOpen(true);
-          break;
         case "m":
           event.preventDefault();
-          setProjectsOpen(true);
+          setSourceOpen(true);
           break;
         case "e":
           event.preventDefault();
           setExportOpen(true);
           break;
+        case "d":
+          event.preventDefault();
+          document.getElementById("trim-preset")?.focus();
+          break;
         case "f":
           event.preventDefault();
-          setDetails("transcript");
           setSearchFocusToken((token) => token + 1);
           break;
         default:
@@ -202,107 +190,25 @@ export function App(): JSX.Element {
           Skip to the In point
         </a>
 
-        <Toolbar
-          projectName={projectName}
-          projectOpen={model.openProjectId !== null}
-          theme={theme}
-          busy={model.busy !== null}
-          onToggleTheme={toggleTheme}
-          onOpenProjects={() => setProjectsOpen(true)}
-        />
+        <Toolbar theme={theme} busy={model.busy !== null} onToggleTheme={toggleTheme} />
 
-        <main className="app__main">
-          <TrimPanel
-            draft={draft}
-            sources={model.sources}
-            presets={model.presets}
-            preview={markedPlan}
-            queued={queued}
-            busy={model.busy !== null}
-            onQueue={() => void queue()}
-            onTrimNow={() => void trimNow()}
-            onClearQueue={() => void clearQueue()}
-            onAddMaster={chooseMaster}
-            showQueueHint={queued > 0}
-          />
+        <div className="app__body">
+          <main className="app__main">
+            <TrimPanel
+              draft={draft}
+              sources={model.sources}
+              presets={model.presets}
+              preview={markedPlan}
+              policy={model.verifyPolicy}
+              queued={queued}
+              busy={model.busy !== null}
+              onQueue={() => void queue()}
+              onTrimNow={() => void trimNow()}
+              onChooseMaster={() => setSourceOpen(true)}
+              onPolicy={(value) => void model.setVerifyPolicy(value)}
+            />
 
-          <div className="details">
-            <Section
-              id="queue"
-              title="Queued"
-              count={queued}
-              open={details === "queue"}
-              onToggle={(open) => setDetails(open ? "queue" : "none")}
-              hint={
-                queued === 0
-                  ? "nothing queued yet"
-                  : `${runnable} of ${queued} ready to trim`
-              }
-            >
-              <CutTable
-                segments={model.segments}
-                selected={model.selectedSegment}
-                onSelect={model.selectSegment}
-                onToggleEnabled={(id, enabled) => void model.updateSegment({ id, enabled })}
-                onRemove={(id) => void model.removeSegment(id)}
-                previews={model.previews}
-                projectOpen={model.openProjectId !== null}
-                hasSource={model.sources.length > 0}
-                busy={model.busy !== null}
-              />
-              {trimmedSomething ? (
-                <ProofPanel outcome={model.lastOutcome} model={model} />
-              ) : (
-                <p className="details__note">
-                  Press <strong>Trim this segment</strong> and the finished file is measured against
-                  the source: frame count, duration, audio alignment, and — at the stricter policies —
-                  the decoded frames themselves. The verdict appears here.
-                </p>
-              )}
-            </Section>
-
-            <Section
-              id="method"
-              title="What it does"
-              open={details === "method"}
-              onToggle={(open) => setDetails(open ? "method" : "none")}
-              hint="the head patch, in four lines"
-            >
-              <ol className="method">
-                <li>
-                  The frames before the first keyframe at or after the in point are re-encoded. That is
-                  the smallest number of frames a cut can avoid re-encoding.
-                </li>
-                <li>
-                  Every frame after that keyframe is the original packet, copied — which is what makes
-                  the result lossless rather than nearly lossless.
-                </li>
-                <li>
-                  The two are joined at the source&rsquo;s own timescale, so the clip cannot come out
-                  in slow motion.
-                </li>
-                <li>
-                  The finished file is measured and checked. A file that is short, misaligned or at the
-                  wrong timescale is reported rather than delivered quietly.
-                </li>
-              </ol>
-              <p className="details__note">
-                A range that starts on a keyframe needs no re-encoding at all, and the button says so
-                before you press it.
-              </p>
-            </Section>
-
-            <Section
-              id="transcript"
-              title="Transcript"
-              open={details === "transcript"}
-              onToggle={(open) => setDetails(open ? "transcript" : "none")}
-              hint={
-                model.sources.some((source) => source.transcript !== null)
-                  ? "search a caption file and mark a range from it"
-                  : "no caption file beside the video"
-              }
-            >
+            <section className="transcript-strip" aria-label="Transcript">
               <TranscriptPanel
                 sources={model.sources}
                 focusToken={searchFocusToken}
@@ -310,78 +216,62 @@ export function App(): JSX.Element {
                   await model.addSegment(input);
                 }}
               />
-            </Section>
-          </div>
-        </main>
+            </section>
+          </main>
+
+          <aside className="app__side" aria-label="Queue">
+            <div className="side__head">
+              <span className="field__label">Queue</span>
+              <span className="side__count figures">{queued > 0 ? queued : ""}</span>
+              <span className="spacer" />
+              <span className="side__hint figures">
+                {queued === 0 ? "nothing marked yet" : `${runnable} of ${queued} ready`}
+              </span>
+            </div>
+
+            <div className="side__body scroll">
+              <CutTable
+                segments={model.segments}
+                selected={model.selectedSegment}
+                onSelect={model.selectSegment}
+                onToggleEnabled={(id, enabled) => void model.updateSegment({ id, enabled })}
+                onRemove={(id) => void model.removeSegment(id)}
+                previews={model.previews}
+                busy={model.busy !== null}
+              />
+            </div>
+
+            {/*
+              The proof appears where the queue was, once there is one. A finished run is the answer to
+              the question the queue was asking, so it belongs in the same place rather than behind a
+              tab — and a panel that is empty until it has something to say is a panel that never
+              wastes a pixel.
+            */}
+            {ran || model.lastOutcome !== null ? (
+              <div className="side__proof">
+                <ProofPanel outcome={model.lastOutcome} model={model} />
+              </div>
+            ) : null}
+          </aside>
+        </div>
 
         <StatusBar model={model} theme={theme} />
 
-        {projectsOpen ? (
-          <ProjectsDialog model={model} onClose={() => setProjectsOpen(false)} />
+        {sourceOpen ? (
+          <SourceDialog
+            sources={model.sources}
+            onClose={() => setSourceOpen(false)}
+            onAdd={(path) => model.addSource(path)}
+          />
         ) : null}
         {exportOpen ? (
           <ExportDialog
-            projectName={projectName}
+            projectName={model.sessionName}
             onClose={() => setExportOpen(false)}
             onExport={(input) => model.exportTimeline(input)}
           />
         ) : null}
       </div>
     </ErrorBoundary>
-  );
-}
-
-/**
- * A collapsed section.
- *
- * `details`/`summary` rather than a hand-rolled disclosure: the element already has the keyboard
- * behaviour, the expanded state and the announcement, and reimplementing three things that work is
- * how an interface ends up with a disclosure a screen reader cannot open.
- *
- * It is deliberately **uncontrolled** — `open` is the initial state and the browser owns it from
- * there. Binding `open` to React state as well means a click on the summary fights the element's own
- * toggle, and the section ends up needing two clicks to open. The parent is *told* what happened
- * instead of deciding it, and uses that to close whichever section was open before.
- */
-function Section({
-  id,
-  title,
-  count,
-  hint,
-  open,
-  onToggle,
-  children,
-}: {
-  readonly id: string;
-  readonly title: string;
-  readonly count?: number;
-  readonly hint: string;
-  readonly open: boolean;
-  readonly onToggle: (open: boolean) => void;
-  readonly children: React.ReactNode;
-}): JSX.Element {
-  return (
-    <details className="section" open={open} id={`section-${id}`}>
-      <summary
-        className="section__head"
-        onClick={(event) => {
-          // Stop the element toggling itself, then let the parent decide: it has to close the other
-          // section, which is a decision this element cannot make.
-          event.preventDefault();
-          onToggle(!open);
-        }}
-      >
-        <span className="section__chevron" aria-hidden="true">
-          {open ? "▾" : "▸"}
-        </span>
-        <span className="section__title">{title}</span>
-        {count !== undefined && count > 0 ? (
-          <span className="section__count figures">{count}</span>
-        ) : null}
-        <span className="spacer" />
-        <span className="section__hint">{hint}</span>
-      </summary>
-      <div className="section__body">{children}</div>
-    </details>
   );
 }

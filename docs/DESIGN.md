@@ -24,4 +24,4 @@ decision no longer applies, it is *superseded* and the reason is stated — neve
 - [ADR-014 — Overshoot is a warning; a missing frame is a failure](adr/014-overshoot-verdict.md) *(new in V2)*
 - [ADR-015 — This build ships without a licensing feature](adr/015-licensing.md) *(new in V2)*
 - [ADR-016 — The interface is developed in a browser, not in the window](adr/016-dev-loop.md) *(new in V2)*
-- [ADR-017 — Two installers, and what was actually run to believe them](adr/017-installers.md) *(new in V2)*
+- [ADR-017 — The product is four executables, and the window is checked by starting it](adr/017-shipping.md) *(new in V2)*

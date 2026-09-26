@@ -172,15 +172,23 @@ jobs:
         working-directory: apps/web
         run: npm run build
 
-  # The packaging job is separate and manual: a signed installer needs a certificate, and a
-  # certificate needs a secret this repository does not hold. It runs on a tag, and it will fail
-  # with a clear message about the missing signing material rather than producing an unsigned
-  # installer that a user's SmartScreen will refuse.
-  bundle:
-    name: bundle
-    if: startsWith(github.ref, 'refs/tags/v')
+  # The window itself, built and started.
+  #
+  # This job exists because of a class of defect no other job can see. Three separate faults once
+  # produced the same symptom — a window that opened, could not load the interface, and showed
+  # `ERR_CONNECTION_REFUSED`: a missing `custom-protocol` feature, a `frontendDist` one directory
+  # short, and a missing `withGlobalTauri`. All three would have shipped green through 404 Rust tests,
+  # a browser suite and a real media cut, because every one of those tests the *interface* or the
+  # *engine* and none of them starts the application.
+  #
+  # `tools/smoke-window.ps1` starts it, waits for the interface to render, and asserts that the status
+  # bar reports what the `doctor` command returned. That last assertion is a full round trip through
+  # `invoke` to Rust and back, so it cannot pass with the assets missing, the bridge absent, or a
+  # command unregistered.
+  desktop:
+    name: desktop
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     needs: [rust, web]
 
     steps:
@@ -198,34 +206,40 @@ jobs:
         run: choco install ffmpeg --no-progress -y
         shell: pwsh
 
+      - name: Cache the build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
       - name: Build the interface
         working-directory: apps/web
         run: |
           npm ci --no-audit --no-fund
           npm run build
 
-      - name: Check the signing material is present
-        run: |
-          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
-            Write-Error "TAURI_SIGNING_PRIVATE_KEY is not set. An unsigned installer is refused by SmartScreen, so this job stops rather than producing one."
-            exit 1
-          }
+      - name: Build the window
+        run: cargo build --release -p thetrimmer-desktop
+
+      # WebView2 is on Windows 11 and on patched Windows 10; the runner image has it.
+      - name: Start the window and check it
+        run: pwsh -File tools/smoke-window.ps1
         shell: pwsh
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
-      - name: Build the installers
-        run: npx --yes @tauri-apps/cli@^2 build --config apps/desktop/src-tauri/tauri.conf.json
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
-      # The bundle output follows the workspace: there is one `target/` at the repository root, not
-      # one per crate, and a path that assumed otherwise is why this job had never been run.
+      # The four binaries are the product. There is no installer: the window embeds its interface and
+      # resolves ffmpeg from PATH, so it is one file that runs from anywhere, and `start.bat` in the
+      # repository root builds and starts it.
       - uses: actions/upload-artifact@v4
         with:
-          name: thetrimmer-installers
+          name: thetrimmer-windows
           path: |
-            target/release/bundle/msi/*.msi
-            target/release/bundle/nsis/*.exe
+            target/release/thetrimmer-desktop.exe
+            target/release/thetrimmer.exe
+            target/release/ttrim.exe
+            target/release/trimmer-daemon.exe
           if-no-files-found: error
+

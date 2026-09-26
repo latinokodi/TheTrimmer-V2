@@ -39,39 +39,47 @@ before the cut is made and again after it.
 
 ## Install and first run
 
-Both installers are built and **have been installed, run and uninstalled** on a real machine — the
-record of exactly what was run and what it showed is [ADR-017](docs/adr/017-installers.md).
+There is **no installer**. The product is four executables that run from anywhere, and copying them
+is the install — no elevation, no registry entry, no uninstaller, nothing to sign before Windows will
+let them run.
+
+| Binary | What it is |
+|---|---|
+| `thetrimmer-desktop.exe` | the window. Its interface is compiled into it, so it needs no asset folder beside it. |
+| `thetrimmer.exe` | the command line: `doctor`, `probe`, `cut`, `batch`, `project`, `export`, `verify`, `watch` |
+| `ttrim.exe` | the same command line under a short name |
+| `trimmer-daemon.exe` | the loopback HTTP/JSON API |
 
 ```powershell
-npx --yes @tauri-apps/cli@^2 build --config apps/desktop/src-tauri/tauri.conf.json
+cargo build --release            # all four, into target\release
+.\target\release\thetrimmer-desktop.exe
 ```
 
-| Artifact | Size | Installs to | Elevation |
-|---|---|---|---|
-| `target/release/bundle/nsis/TheTrimmer_2.0.0_x64-setup.exe` | 2.6 MB | `C:\Program Files\TheTrimmer` | asks for it through UAC |
-| `target/release/bundle/msi/TheTrimmer_2.0.0_x64_en-US.msi` | 4.5 MB | per-machine, or `%LOCALAPPDATA%\Programs` with `MSIINSTALLPERUSER=1` | required for per-machine |
+`start.bat` does the same thing from a double-click: it builds the interface if `dist` is missing,
+builds the window, and starts it.
 
-The MSI is per-machine on purpose: a studio workstation may be shared, and per-machine means one
-install for every editor who logs in rather than a copy per account. Windows requires elevation for
-that, so `msiexec /i … /qn` from a non-elevated shell correctly refuses with error 1925 — the same
-package installs per-user when asked, which is what an editor without admin rights gets.
-
-* **Uninstalling leaves your projects alone.** The program goes; `%APPDATA%\TheTrimmer\projects.db`
-  stays. A project is the work, and an installer that deletes it on the way out loses somebody's
-  afternoon.
-* **The installers are unsigned.** SmartScreen will warn on first run until a code-signing certificate
-  is bought and issued to a legal entity, which is a commercial decision rather than a code change.
-  The CI `bundle` job stops with a clear message rather than producing an unsigned installer silently.
-* **There is no auto-update feed.** The `UpgradeCode` is stable, so an upgrade installs over the
-  previous version rather than beside it; nothing publishes and nothing checks.
+* **Uninstalling is deleting the file.** Your projects live in `%APPDATA%\TheTrimmer\projects.db` and
+  are not part of the program, so removing one never touches the other. `project export` writes a
+  project out as a readable document if you want it somewhere else.
+* **ffmpeg is resolved, not bundled.** The engine finds ffmpeg and ffprobe on `PATH` and honours
+  `THE_TRIMMER_FFMPEG` / `THE_TRIMMER_FFPROBE`, which is what lets a studio point the app at a build it
+  has validated and what the `doctor` report is for. `doctor` names the prerequisite, exits 1 when it
+  is missing, and prints the command that fixes it.
+* **The executables are unsigned.** SmartScreen will warn on first run. That is what a code-signing
+  certificate buys, and it is a commercial decision rather than a code change.
+* **There is no auto-update.** Nothing publishes and nothing checks. An update feed is a server, a
+  signing key and a decision about who hosts it, and it will be designed when it is wanted rather
+  than left half-present — see [ADR-017](docs/adr/017-shipping.md), which also records the installers
+  that were built, verified and then removed on request.
 * **It works offline.** Nothing in the application does anything over a network. Every decision, every
   cut and every check is local: there is no activation call, no telemetry and no update check that
   blocks launch. This build has no licensing feature at all — see
   [ADR-015](docs/adr/015-licensing.md) for why, and for what was built and then removed.
-* **ffmpeg is resolved, not bundled.** The engine finds ffmpeg and ffprobe on `PATH` and honours
-  `THE_TRIMMER_FFMPEG` / `THE_TRIMMER_FFPROBE`, which is what lets a studio point the app at a build
-  it has validated and what the `doctor` report is for. The installer therefore has one prerequisite;
-  `doctor` names it, exits 1, and prints the command that fixes it.
+
+The window is checked by starting it, not by reading it: `tools/smoke-window.ps1` launches the built
+binary, waits for the interface to render **from the build that was just made**, and asserts that the
+status bar reports what the `doctor` command returned — a full round trip through `invoke` to Rust and
+back. It runs in CI as the `desktop` job.
 
 ## The workspace
 
@@ -409,12 +417,13 @@ The suites that run are `cargo test --workspace` over ten crates: 404 tests.
 
 ## Requirements
 
-* **Windows 10 version 1809 (build 17763) or later**, or Windows 11. Windows 10 earlier than 1809
-  is refused by the installer rather than installed and broken.
+* **Windows 10 version 1809 (build 17763) or later**, or Windows 11. There is no installer to refuse
+  an older build, so this is what the window is built and tested against.
 * **WebView2**, the rendering engine the desktop shell uses. It is present on Windows 11 and on
-  updated Windows 10; the installer fetches and installs it when it is absent, so an offline
-  machine needs the runtime bundled with the installer media.
-* **ffmpeg and ffprobe**, bundled with the installer. A studio that wants its own build can point
+  updated Windows 10, and Microsoft ships it as an evergreen runtime; a machine that has never had it
+  needs it once, from Microsoft, before the window will open. The command line and the daemon do not
+  use it and run without it.
+* **ffmpeg and ffprobe**, resolved from `PATH`. A studio that wants its own build can point
   `THE_TRIMMER_FFMPEG` and `THE_TRIMMER_FFPROBE` at it; `thetrimmer doctor` reports which build was
   found and which encoders it actually has. A codec pack's three-year-old ffmpeg with no libx265 is
   the case this override exists for.

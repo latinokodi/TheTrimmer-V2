@@ -1,24 +1,24 @@
 /**
- * The cut table: the workspace's centre.
+ * The queue: one row per marked range.
  *
- * ## Why a real table and not a list of divs
+ * ## Columns
  *
- * A screen reader announcing a cut needs to say which column it is in. `role="grid"` with real
- * `role="row"`, `role="columnheader"` and `role="gridcell"` is what makes "out timecode, 00:01:12;04"
- * comprehensible rather than a stream of numbers. It also gives the browser arrow-key semantics for
- * free, which is why this table needs no keyboard handler at all beyond the row's own selection.
+ * The four that decide anything, and nothing else. A name to recognise it by, where it starts and
+ * ends, how long it is, and what will happen to it — a copy, a head patch, or a full re-encode. The
+ * source column is gone because this window holds one video at a time and a column whose every cell
+ * says the same file name is a column that costs width and says nothing.
  *
- * ## Why the rows are a fixed height
+ * ## Fixed row height
  *
- * A plan arrives asynchronously and fills in a cost column. If a row grew when its plan landed, the
- * table would move under the pointer mid-click. Every row is `--row-height` tall and the cost is
- * rendered inside it.
+ * `--row-height` is fixed, and that is functional rather than stylistic: a plan arrives
+ * asynchronously and fills in the last column, and a row that grew when its plan landed would move
+ * the table under the pointer mid-click.
  *
  * ## The enabled checkbox
  *
- * A batch runs what is enabled, so the checkbox is the control that decides whether a segment is
- * part of the deliverable. It is a real checkbox with a real label, so it works by keyboard, by
- * screen reader and by click without any of the three being a special case.
+ * A batch runs what is enabled, so the checkbox is the control that decides whether a range is part
+ * of the deliverable. It is a real checkbox with a real label, so it works by keyboard, by screen
+ * reader and by click without any of the three being a special case.
  */
 
 import type { QueuePreview, SegmentView } from "../ipc/types";
@@ -31,8 +31,6 @@ export function CutTable({
   onToggleEnabled,
   onRemove,
   previews,
-  projectOpen,
-  hasSource,
   busy,
 }: {
   readonly segments: readonly SegmentView[];
@@ -41,43 +39,30 @@ export function CutTable({
   readonly onToggleEnabled: (id: string, enabled: boolean) => void;
   readonly onRemove: (id: string) => void;
   readonly previews: readonly QueuePreview[];
-  readonly projectOpen: boolean;
-  readonly hasSource: boolean;
   readonly busy: boolean;
 }): JSX.Element {
   const planned = new Map(previews.map((preview) => [preview.segment, preview]));
 
   if (segments.length === 0) {
-    /*
-     * The queue is empty, and this is inside a section that says so in its own heading — so the
-     * message is one sentence about how to fill it, not a second tutorial. The teaching happens
-     * under the trim panel, where the fields are.
-     */
     return (
-      <p className="details__note">
-        {!projectOpen
-          ? "No project is open. Open one to keep the videos, the segments and the record of what was cut."
-          : !hasSource
-            ? "No video yet. Choose one above, and its frame rate is read before anything is marked."
-            : "Mark a range above and press Queue it. Every segment you queue is trimmed in one run, and each finished file is checked."}
+      <p className="side__empty">
+        Type an in point and an out point, then press <strong>Queue it</strong>. Every range you queue
+        is trimmed in one run, and every finished file is measured against the source.
       </p>
     );
   }
 
   return (
-    <div className="cut-table" role="grid" aria-label="Segments" aria-rowcount={segments.length}>
+    <div className="cut-table" role="grid" aria-label="Queued segments" aria-rowcount={segments.length}>
       <div className="cut-table__head" role="row">
         <span className="cut-table__cell cut-table__cell--check" role="columnheader">
-          <span className="sr-only">Included in the batch</span>
+          <span className="sr-only">Included in the run</span>
         </span>
         <span className="cut-table__cell cut-table__cell--index" role="columnheader">
           <span className="sr-only">Position</span>
         </span>
         <span className="cut-table__cell cut-table__cell--name" role="columnheader">
           Segment
-        </span>
-        <span className="cut-table__cell cut-table__cell--source" role="columnheader">
-          Source
         </span>
         <span className="cut-table__cell cut-table__cell--tc" role="columnheader">
           In
@@ -88,14 +73,11 @@ export function CutTable({
         <span className="cut-table__cell cut-table__cell--num" role="columnheader">
           Frames
         </span>
-        <span className="cut-table__cell cut-table__cell--num" role="columnheader">
-          Length
-        </span>
         <span className="cut-table__cell cut-table__cell--mode" role="columnheader">
           Plan
         </span>
         <span className="cut-table__cell cut-table__cell--actions" role="columnheader">
-          <span className="sr-only">Actions</span>
+          <span className="sr-only">Remove</span>
         </span>
       </div>
 
@@ -127,7 +109,7 @@ export function CutTable({
                   type="checkbox"
                   checked={segment.enabled}
                   disabled={busy}
-                  aria-label={`Include ${segment.name} in the batch`}
+                  aria-label={`Include ${segment.name} in the run`}
                   onChange={(event) => onToggleEnabled(segment.id, event.target.checked)}
                   onClick={(event) => event.stopPropagation()}
                 />
@@ -152,10 +134,6 @@ export function CutTable({
                 ) : null}
               </span>
 
-              <span className="cut-table__cell cut-table__cell--source truncate" role="gridcell">
-                {segment.sourceName}
-              </span>
-
               <span className="cut-table__cell cut-table__cell--tc figures" role="gridcell">
                 {segment.inTimecode}
               </span>
@@ -164,12 +142,12 @@ export function CutTable({
                 {segment.outTimecode}
               </span>
 
-              <span className="cut-table__cell cut-table__cell--num figures" role="gridcell">
+              <span
+                className="cut-table__cell cut-table__cell--num figures"
+                role="gridcell"
+                title={segment.seconds === null ? undefined : formatDuration(segment.seconds)}
+              >
                 {segment.frames?.toLocaleString() ?? "—"}
-              </span>
-
-              <span className="cut-table__cell cut-table__cell--num figures" role="gridcell">
-                {segment.seconds === null ? "—" : formatDuration(segment.seconds)}
               </span>
 
               <span className="cut-table__cell cut-table__cell--mode" role="gridcell">
@@ -199,7 +177,7 @@ export function CutTable({
                   className="btn btn--ghost btn--icon"
                   disabled={busy}
                   aria-label={`Remove ${segment.name}`}
-                  title="Remove this segment from the project"
+                  title="Remove this range from the queue"
                   onClick={(event) => {
                     event.stopPropagation();
                     onRemove(segment.id);

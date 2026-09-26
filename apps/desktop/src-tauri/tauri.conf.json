@@ -13,12 +13,10 @@
     "windows": [
       {
         "title": "TheTrimmer",
-        "width": 1440,
-        "height": 900,
-        "minWidth": 1100,
-        "minHeight": 700,
+        "fullscreen": true,
         "resizable": true,
-        "fullscreen": false,
+        "minWidth": 1000,
+        "minHeight": 620,
         "center": true,
         "decorations": true,
         "theme": "Dark",
@@ -30,8 +28,8 @@
     }
   },
   "bundle": {
-    "active": true,
-    "targets": ["msi", "nsis"],
+    "active": false,
+    "targets": "all",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -41,15 +39,6 @@
     "category": "Video",
     "shortDescription": "Frame-exact, verified segment cutting for post-production",
     "longDescription": "Cut segments out of long masters by Premiere timecode, re-encoding only the frames a cut cannot avoid, and prove the result frame for frame.",
-    "windows": {
-      "wix": {
-        "language": "en-US"
-      },
-      "nsis": {
-        "installMode": "perMachine",
-        "languages": ["English"]
-      }
-    },
     "resources": []
   }
 }

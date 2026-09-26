@@ -91,18 +91,14 @@
 
   /* ---- Layout ------------------------------------------------------------------------ */
   /*
-   * Widths are the three columns of the shell; heights are the four strips. `--row-height` is a
-   * *fixed* row height, and that is a functional decision rather than a stylistic one: a plan arrives
-   * asynchronously and fills in a column, and a row that grew when its plan landed would move the
-   * table under the pointer mid-click.
+   * The three strips of the shell, and the two heights a row can be. `--row-height` is *fixed*, which
+   * is a functional decision rather than a stylistic one: a plan arrives asynchronously and fills in a
+   * column, and a row that grew when its plan landed would move the table under the pointer mid-click.
    */
-  --rail-width: 248px;
-  --panel-width: 332px;
-  --row-height: 32px;
-  --head-height: 30px;
-  --titlebar-height: 52px;
-  --actionbar-height: 48px;
-  --statusbar-height: 26px;
+  --row-height: 30px;
+  --head-height: 28px;
+  --titlebar-height: 44px;
+  --statusbar-height: 24px;
 }
 
 /* ==========================================================================================

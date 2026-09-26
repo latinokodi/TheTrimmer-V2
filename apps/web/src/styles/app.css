@@ -1,104 +1,62 @@
 /*
  * The application layout.
  *
- * `global.css` holds the reset and the primitives; this file holds the composition — the shell grid,
- * the title bar, the action bar, the cut table grid, the inspector, the dialogs and the status bar.
- * Every value comes from a token.
- *
  * ============================================================================================
- * The design decisions, and what they are arguing against
- * ============================================================================================
- *
- * ## 1. This is a cockpit, not a landing page
- *
- * The audience is an editor who has this window open for six hours next to Premiere, with the client
- * on a call. Three consequences run through everything below:
- *
- * * **Density is a feature.** Rows are 32 px, the body size is 13 px, and the cut table fits eleven
- *   segments in the space a "comfortable" layout would spend on four. Whitespace costs a scroll, and
- *   a scroll loses the row you were comparing against.
- * * **Nothing moves on its own.** There is no entry animation, no parallax, no perpetual shimmer, no
- *   animated gradient. The only motion is feedback for something the user just did, it is 90–140 ms,
- *   and it is `transform` and `opacity` only so it cannot cause a reflow mid-drag. Movement in a
- *   tool is not delight; it is something to wait for.
- * * **The picture is the only colourful thing.** The palette is a neutral ramp with one desaturated
- *   accent. Status colours are semantic and always carry a word, so a red badge is a reinforcement
- *   rather than the message — which is also what makes the interface usable for the roughly one in
- *   twelve men who cannot separate red from green.
- *
- * ## 2. Deliberately not the house style
- *
- * The default output of a model asked to design a dark dashboard is now so recognisable that it has
- * become a defect. Specifically, and on purpose, this file has none of:
- *
- * * a purple or indigo accent, or any accent used as a *glow* (`box-shadow` spread in the accent);
- * * gradient text, gradient fills on controls, or gradient buttons;
- * * pure black, or a pure-white text colour;
- * * `border: 1px solid` a mid grey around every element — separation here is a hairline almost the
- *   same value as the surface it sits on, or a change of surface tone, or a 4 px inset marker;
- * * emoji as iconography, or an icon font;
- * * evenly-boxed cards for everything: the action bar is a *bar*, the status bar is a bar, the rail
- *   is a column, and the inspector is a panel. Only the dialogs are boxes, because only they float;
- * * a centred hero of any kind.
- *
- * Control hierarchy comes from weight, tone and position — not from scale. The largest type in the
- * application is 17 px, in a dialog title.
- *
- * ## 3. Alignment is the craft
- *
- * In a tool whose whole job is timecodes, a column of figures that does not line up is a bug. So:
- * every figure is in the monospace stack at `tabular-nums`; the cut table is a CSS grid with a fixed
- * template, so column *n* is the same width in the header as in every row; numbers are right-aligned
- * and text is left-aligned; and rows are a fixed height, so a plan arriving cannot resize the row
- * under the pointer mid-click.
- *
- * ## 4. The shell
- *
- * ```
- * ┌────────────────────────────── title bar ───────────────────────────────┐
- * ├──────────────┬──────────────────────────────┬──────────────────────────┤
- * │ masters      │ the cut table                │ inspector                │
- * ├──────────────┴──────────────────────────────┴──────────────────────────┤
- * │ action bar                          n ready                  [ Trim ]  │
- * ├────────────────────────────────────────────────────────────────────────┤
- * │ status bar: ffmpeg · counts · what just happened · theme               │
- * └────────────────────────────────────────────────────────────────────────┘
- * ```
- *
- * The action bar is *below* the workspace. That is the opposite of the first version of this shell
- * and it is the change that matters most: the actions are the end of a reading order that starts in
- * the masters rail and passes through the table, so the button that cuts what you just marked is
- * underneath what you just marked. Above the fold, it was competing with the title for the first
- * thing you look at.
- *
- * `.app__body` and `.chrome` are `display: contents`, so their children land on the shell's grid
- * areas directly. They exist because a component with more than one thing to return needs a wrapper,
- * and a wrapper that became a box would have to be sized and positioned for no reason.
- */
-
-/*
- * ============================================================================================
- * The shell
+ * The shape
  * ============================================================================================
  *
  * ```
- * ┌────────────────────────────── title bar ───────────────────────────────┐
- * │ ▸ TheTrimmer   tagline                          project        theme   │
- * ├────────────────────────────────────────────────────────────────────────┤
- * │  the trim panel: video, in, out, the length, the button                │  ← always visible
- * ├────────────────────────────────────────────────────────────────────────┤
- * │  ▸ Queued   ▸ What it does   ▸ Transcript                              │  ← collapsed
- * ├────────────────────────────────────────────────────────────────────────┤
- * │ ● ffmpeg ready · 2 of 2 ready · what just happened            dark     │
- * └────────────────────────────────────────────────────────────────────────┘
+ * ┌ title bar ───────────────────────────────────────────────────────────────────┐
+ * ├──────────────────────────────────────────┬───────────────────────────────────┤
+ * │ the trim panel: video, marks, settings,  │ the queue: one row per marked     │
+ * │ the length line, the two buttons         │ range, then the proof underneath  │
+ * ├──────────────────────────────────────────┴───────────────────────────────────┤
+ * │ transcript: search on the left, hits on the right                            │
+ * ├──────────────────────────────────────────────────────────────────────────────┤
+ * │ status bar                                                                   │
+ * └──────────────────────────────────────────────────────────────────────────────┘
  * ```
  *
- * One column, because the product is one thing: cut a range out of a video. The trim panel is the
- * first thing on the screen and it never moves; the queue, the explanation and the transcript are
- * collapsed sections underneath it, because they are answers to questions a person asks *after* the
- * first cut rather than before it.
+ * Two columns and three strips, every row of the grid doing work. An earlier version was three columns
+ * with a rail, a table and a tabbed inspector, and on a 1440 px window it left a column of empty space
+ * down the middle while five settings sat behind three collapsed sections. Empty space in a tool is
+ * not calm; it is area that could have been showing you the thing you were about to decide.
  *
- * The whole window is a four-row grid, and only the middle row scrolls.
+ * ============================================================================================
+ * The design decisions
+ * ============================================================================================
+ *
+ * ## Density is the feature
+ *
+ * 13 px body, 32 px rows, a 4 px rhythm, one fact per line. The audience is an editor with this window
+ * open for six hours beside Premiere, comparing timecodes; whitespace costs a scroll, and a scroll
+ * loses the row you were looking at.
+ *
+ * ## Nothing is folded away
+ *
+ * Every setting is on the main window with its current value visible: the delivery preset, the
+ * handles, the verification policy. A disclosure whose heading carries its value is better than one
+ * that does not; not needing a disclosure at all is better than both.
+ *
+ * ## Separation without boxes
+ *
+ * No `border: 1px solid` around anything on the main window. Grouping is a change of surface tone, a
+ * hairline nearly the same value as the surface it sits on, or a 2 px marker on the left edge of the
+ * selected row. A box around a two-field form is a border that says nothing the label did not, and
+ * eight of them in one window is a filing cabinet.
+ *
+ * ## One accent, and motion only as feedback
+ *
+ * A neutral ramp with one desaturated accent. No gradient anywhere, no glow, no purple, no pure black.
+ * The only motion is feedback for something the user just did — 90–140 ms, `transform` and `opacity`
+ * only, so it cannot reflow a row mid-click. There is no entry animation and nothing that moves on its
+ * own: movement in a tool is not delight, it is something to wait for.
+ *
+ * ## Alignment is the craft
+ *
+ * Every figure is monospace with `tabular-nums`, so a column of timecodes lines up digit for digit. The
+ * cut table is a CSS grid with one template, so column *n* is the same width in the header as in every
+ * row. Rows are a fixed height so a plan landing cannot resize the row under the pointer.
  */
 
 .app {
@@ -106,9 +64,17 @@
   grid-template-rows:
     var(--titlebar-height)
     minmax(0, 1fr)
+    minmax(0, auto)
     var(--statusbar-height);
   height: 100%;
   background: var(--surface-base);
+}
+
+.app__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 34%);
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* ==========================================================================================
@@ -119,35 +85,34 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: 0 var(--space-5);
+  padding: 0 var(--space-4);
   background: var(--surface-raised);
   border-bottom: 1px solid var(--line-subtle);
 }
 
 /*
- * The mark is one glyph in the figure face, in the accent, on a faint wash of it. No logo file, no
- * icon font, and it is the only place the accent appears in the chrome.
+ * One glyph in the figure face, on a faint wash of the accent. No logo file, no icon font, and it is
+ * the only place the accent appears in the chrome.
  */
 .titlebar__mark {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border-radius: var(--radius-sm);
   background: var(--accent-subtle);
   color: var(--accent);
   font-family: var(--font-figure);
-  font-size: var(--text-base);
+  font-size: var(--text-sm);
   line-height: 1;
 }
 
 .titlebar__identity {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
+  align-items: baseline;
+  gap: var(--space-3);
   min-width: 0;
-  line-height: 1.3;
 }
 
 .titlebar__product {
@@ -157,8 +122,8 @@
 }
 
 /*
- * The tagline is the product's claim. It is set small and quiet rather than as a headline: a person
- * reads it once, and after that it is the thing that must not get in the way.
+ * The tagline is the product's claim. It shares a line with the name, small and quiet, because a
+ * person reads it once and after that it is the thing that must not take a row of its own.
  */
 .titlebar__tagline {
   font-size: var(--text-2xs);
@@ -166,18 +131,26 @@
   white-space: nowrap;
 }
 
-.titlebar__project {
-  max-width: 34ch;
-  height: 24px;
-}
-
 /* ==========================================================================================
-   The trim panel: the whole product on one screen
+   The trim panel
    ========================================================================================== */
 
+/*
+ * The default column pair, and a cap on how wide a field is allowed to grow.
+ *
+ * A timecode is eleven characters. In a 1280 px column a `1fr` pair gives each field 620 px, which is
+ * a 600 px empty box around a 90 px number — that is the empty space this layout exists to remove, and
+ * it is created by the fields stretching rather than by a missing panel. The columns are capped at a
+ * width that holds the number, the tracking and the padding comfortably, and the spare width goes to
+ * the *page* rather than to the boxes.
+ */
 .app__main {
+  --field-max: 320px;
+  --field-pair: 320px;
+
   display: flex;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -186,28 +159,29 @@
 .trim {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: var(--space-6) var(--space-5) var(--space-5);
-  border-bottom: 1px solid var(--line-subtle);
-  background: var(--surface-base);
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5) var(--space-5);
 }
 
-/*
- * A single column, capped at 720 px and centred. This is the one place a centred measure is right:
- * the marks are a two-field form, and a form that spans a 1900 px window puts the in point and the
- * out point far enough apart that comparing them costs a head movement. 720 px holds both timecodes
- * and the sentence under each without crowding.
- */
-.trim > * {
-  width: 100%;
-  max-width: 720px;
+.trim--empty {
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
 }
+
+/* ---- the master: one line, then one line of facts --------------------------------------- */
 
 .trim__master {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin-bottom: var(--space-5);
+}
+
+.trim__master-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
 }
 
 .trim__master-name {
@@ -217,57 +191,100 @@
   color: var(--text-primary);
 }
 
+.trim__master-pick {
+  width: auto;
+  max-width: 42ch;
+  font-size: var(--text-base);
+}
+
 .trim__master-facts {
   font-size: var(--text-xs);
   color: var(--text-muted);
 }
 
 /*
- * The two marks sit side by side and are the same width, so the eye can compare an in point with an
- * out point without moving. On a narrow window they stack.
+ * ---- the form: marks on one row, settings on the next ------------------------------------
+ *
+ * A hairline above, not a box around. That is the whole of the grouping.
+ */
+.trim__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line-subtle);
+}
+
+/*
+ * The marks: two fields and the sentence under each, on one row.
+ *
+ * `gap` is small and the fields are capped, so the two of them sit together as a *pair* that is read
+ * against itself rather than as two things at opposite ends of the window. An in point 1100 px from its
+ * out point is an in point you cannot compare without moving your head.
  */
 .trim__marks {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-5);
+  grid-template-columns: repeat(2, minmax(0, var(--field-pair)));
+  gap: var(--space-4);
+  justify-content: start;
 }
 
 .trim__mark {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 2px;
 }
 
 /*
  * The timecode field is the field the whole product turns on: eleven characters of `HH:MM:SS:FF`,
- * legible at a glance, in the figure face, at 16 px with wide tracking. It is larger than any other
- * input in the application and larger than the product's own name, which is the correct hierarchy
- * for a tool whose job is that number.
+ * legible at a glance, in the figure face, wide-tracked. It is the largest type on the main window and
+ * larger than the product's own name, which is the correct hierarchy for a tool whose job is that
+ * number.
  */
 .trim__mark input.timecode-field {
-  height: 46px;
+  height: 40px;
   padding: 0 var(--space-3);
   font-size: 1.0625rem;
   letter-spacing: 0.06em;
   text-align: center;
 }
 
-.trim__summary {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  margin-top: var(--space-5);
+/*
+ * The settings: label above value, three across, each sized to what it holds rather than to an equal
+ * fraction — a handles box does not need the width of a preset list. The row is left-aligned under the
+ * marks so all three columns start on the same left edge as the in point.
+ */
+.trim__settings {
+  display: grid;
+  grid-template-columns: minmax(0, var(--field-pair)) 96px minmax(0, 340px);
+  gap: var(--space-4);
+  align-items: end;
+  justify-content: start;
 }
 
+/* ---- what it will do, and the buttons --------------------------------------------------- */
+
 /*
- * The length line: figures at the body size, in the figure face, with 1 px dot separators rather than
- * a run-on sentence. It is the answer to "what have I marked", so it is set as a line of data.
+ * The length line and the two buttons, on one row under the settings.
+ *
+ * The line does not stretch: it holds its content and the buttons follow it, so the primary action sits
+ * under the settings it acts on rather than pushed to the far right of the window. The row keeps a
+ * minimum height whether or not there is a length to show, so the buttons do not move when the marks
+ * become valid — a button that shifts under the pointer as a field is filled in gets mis-clicked.
  */
+.trim__go {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 34px;
+}
+
 .trim__length {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
+  min-width: 0;
   font-size: var(--text-base);
   color: var(--text-secondary);
 }
@@ -280,6 +297,10 @@
   color: var(--signal-warn);
 }
 
+.trim__length .danger {
+  color: var(--signal-danger);
+}
+
 .trim__dot {
   width: 3px;
   height: 3px;
@@ -290,122 +311,31 @@
 .trim__hint {
   font-size: var(--text-sm);
   color: var(--text-muted);
-  line-height: 1.6;
-}
-
-/*
- * The buttons are at the right-hand end of the summary line, where a form's submit has been for forty
- * years. `Trim` is the only primary button in the window.
- */
-.trim__buttons {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-3);
-}
-
-.trim__queue-hint {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-right: auto;
-  font-size: var(--text-xs);
-  color: var(--text-muted);
-}
-
-.empty--trim {
-  padding: var(--space-6) 0;
-  max-width: 58ch;
-}
-
-/*
- * Delivery: folded away, because these two settings do not change *what* is cut. The summary shows
- * the current answer, so a closed section still says which preset is in force — a disclosure whose
- * heading does not carry its value makes you open it to find out whether you needed to.
- */
-.trim__delivery {
-  margin-top: var(--space-5);
-}
-
-.trim__delivery-head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  padding: var(--space-1) 0;
-  cursor: pointer;
-  list-style: none;
-}
-
-.trim__delivery-head::-webkit-details-marker {
-  display: none;
-}
-
-.trim__delivery-head:hover .trim__delivery-value {
-  color: var(--text-secondary);
-}
-
-.trim__delivery-value {
-  font-size: var(--text-xs);
-  color: var(--text-muted);
-}
-
-.trim__delivery[open] > .trim__delivery-head {
-  margin-bottom: var(--space-3);
-}
-
-.trim__delivery > .field-grid {
-  max-width: 560px;
 }
 
 /* ==========================================================================================
-   Collapsed sections
+   The queue
    ========================================================================================== */
 
-.details {
+.app__side {
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
+  background: var(--surface-sunken);
+  border-left: 1px solid var(--line-subtle);
 }
 
-.section {
-  border-bottom: 1px solid var(--line-subtle);
-}
-
-.section__head {
+.side__head {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  height: 38px;
-  padding: 0 var(--space-5);
-  cursor: pointer;
-  list-style: none;
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-  transition: background var(--motion-fast) var(--easing);
+  height: var(--head-height);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--line-subtle);
 }
 
-.section__head::-webkit-details-marker {
-  display: none;
-}
-
-.section__head:hover {
-  background: var(--surface-raised);
-}
-
-.section__chevron {
-  width: 10px;
-  color: var(--text-faint);
-  font-size: var(--text-2xs);
-}
-
-.section__title {
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.01em;
-  color: var(--text-primary);
-}
-
-.section__count {
+.side__count {
   min-width: 17px;
   padding: 0 5px;
   border-radius: var(--radius-sm);
@@ -415,49 +345,30 @@
   text-align: center;
 }
 
-.section__hint {
+.side__hint {
   font-size: var(--text-2xs);
   color: var(--text-faint);
 }
 
-.section__body {
-  padding: 0 var(--space-5) var(--space-4);
+.side__body {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
-.section[open] > .section__body {
-  animation: settle var(--motion-base) var(--easing);
-}
-
-/* A 4 px rise, once, on open. Motion that says "this appeared" rather than motion to watch. */
-@keyframes settle {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.details__note {
-  max-width: 78ch;
-  padding: var(--space-2) 0;
+.side__empty {
+  padding: var(--space-4) var(--space-3);
   font-size: var(--text-xs);
   color: var(--text-muted);
-  line-height: 1.7;
+  line-height: 1.65;
 }
 
-.method {
-  max-width: 78ch;
-  padding-left: var(--space-5);
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-  line-height: 1.75;
-}
-
-.method li {
-  margin-bottom: var(--space-2);
+.side__proof {
+  flex: 0 1 auto;
+  max-height: 55%;
+  overflow-y: auto;
+  padding: var(--space-3);
+  border-top: 1px solid var(--line);
+  background: var(--surface-base);
 }
 
 /* ==========================================================================================
@@ -467,38 +378,34 @@
 .cut-table {
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--line-subtle);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  background: var(--surface-inset);
 }
 
 /*
  * One grid template, used by the header row and by every body row. This is what makes column *n* the
- * same width in both — the alternative, a flex row per row, aligns only by luck and stops aligning
- * the moment one cell's content is wider than the rest.
+ * same width in both; a flex row per row aligns only by luck and stops aligning the moment one cell's
+ * content is wider than the rest.
  */
 .cut-table__head,
 .cut-table__row {
   display: grid;
   grid-template-columns:
-    26px
-    26px
-    minmax(110px, 1.4fr)
-    minmax(90px, 1fr)
-    104px
-    104px
-    68px
-    78px
-    96px
-    28px;
+    24px
+    22px
+    minmax(74px, 1fr)
+    92px
+    92px
+    56px
+    74px
+    24px;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   padding: 0 var(--space-3);
   min-width: 0;
 }
 
 .cut-table__head {
+  position: sticky;
+  top: 0;
   height: var(--head-height);
   background: var(--surface-raised);
   border-bottom: 1px solid var(--line);
@@ -516,37 +423,31 @@
   transition: background var(--motion-fast) var(--easing);
 }
 
-.cut-table__row:last-child {
-  border-bottom: none;
-}
-
 .cut-table__row:hover {
   background: var(--surface-hover);
 }
 
 /*
- * The selection is a 3 px inset bar in the accent plus a faint wash of it — not a filled row. A
- * filled row in a table of timecodes makes the figures harder to read exactly when you are looking at
- * them, and it competes with the status colours in the Plan column.
+ * The selection is a 2 px inset bar in the accent plus a faint wash — not a filled row. A filled row in
+ * a table of timecodes makes the figures harder to read exactly when you are looking at them, and it
+ * competes with the status colour in the Plan column.
  */
 .cut-table__row--selected {
   background: var(--accent-subtle);
-  box-shadow: inset 3px 0 0 var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
-/* A segment that will be skipped is dimmed rather than hidden: it is still part of the project. */
 .cut-table__row--disabled {
   opacity: 0.45;
 }
 
-/* A segment that cannot be cut keeps a red edge whether or not it is selected. */
 .cut-table__row--blocked {
-  box-shadow: inset 3px 0 0 var(--signal-danger);
+  box-shadow: inset 2px 0 0 var(--signal-danger);
 }
 
 .cut-table__cell {
   min-width: 0;
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
 }
 
 .cut-table__cell--check,
@@ -565,7 +466,6 @@
 
 .cut-table__cell--index {
   color: var(--text-faint);
-  font-size: var(--text-xs);
 }
 
 .cut-table__cell--tc {
@@ -574,7 +474,6 @@
 
 .cut-table__cell--num {
   color: var(--text-secondary);
-  font-size: var(--text-xs);
 }
 
 .cut-table__cell--name {
@@ -592,8 +491,84 @@
   flex: none;
 }
 
+.cut-table__cell--actions {
+  text-align: right;
+}
+
 /* ==========================================================================================
-   Facts: a definition list as a two-column table
+   The transcript strip
+   ========================================================================================== */
+
+.transcript-strip {
+  flex: none;
+  padding: 0 var(--space-5) var(--space-4);
+  border-top: 1px solid var(--line-subtle);
+}
+
+.transcript {
+  display: grid;
+  grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+  padding-top: var(--space-3);
+}
+
+.transcript__list {
+  min-width: 0;
+}
+
+/* ==========================================================================================
+   Fields
+   ========================================================================================== */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.field--narrow input {
+  text-align: right;
+}
+
+/*
+ * The label sits above the field, always, at 11 px uppercase. Next to a 40 px timecode field a
+ * sentence-case 13 px label competes with the value; uppercase at 11 px reads as a column head.
+ */
+.field__label {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.field__help {
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+  line-height: 1.55;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.row > input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.row > .btn {
+  flex: none;
+}
+
+/* ==========================================================================================
+   Facts, notes, empty states
    ========================================================================================== */
 
 .facts {
@@ -613,11 +588,6 @@
   color: var(--text-secondary);
 }
 
-.facts--inline {
-  grid-template-columns: auto auto;
-  justify-content: start;
-}
-
 .facts .ok {
   color: var(--signal-ok);
 }
@@ -630,56 +600,18 @@
   color: var(--signal-danger);
 }
 
-/* ==========================================================================================
-   Fields
-   ========================================================================================== */
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-/*
- * The label sits above the field, always, at 11 px uppercase. Next to a 46 px timecode field a
- * sentence-case 13 px label competes with the value; uppercase at 11 px reads as a column head.
- */
-.field__label {
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.field__help {
-  margin-top: 2px;
-  font-size: var(--text-2xs);
-  color: var(--text-faint);
-  line-height: 1.6;
-}
-
-.field-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-4);
-}
-
-/* ==========================================================================================
-   Notes
-   ========================================================================================== */
-
 /*
  * A note is a paragraph with a coloured left edge, not a filled alert box. The tint is 10–14 % of the
- * signal colour, which is enough to group the lines and not enough to shout over the text.
+ * signal colour: enough to group the lines, not enough to shout over the text.
  */
 .note {
+  margin-top: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
-  font-size: var(--text-xs);
-  line-height: 1.6;
   border-left: 2px solid var(--line-strong);
   background: var(--surface-inset);
+  font-size: var(--text-xs);
+  line-height: 1.6;
   color: var(--text-secondary);
 }
 
@@ -703,56 +635,33 @@
   padding-left: var(--space-4);
 }
 
-/*
- * An empty state is left-aligned against the same margin as the content it replaces, capped at 58
- * characters. A centred empty state makes the eye travel to a different place from where the content
- * appears, which is the opposite of teaching.
- */
 .empty {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-2);
-  max-width: 58ch;
+  max-width: 56ch;
   font-size: var(--text-sm);
   color: var(--text-muted);
   line-height: 1.65;
 }
 
 .empty__title {
-  font-size: var(--text-base);
-  font-weight: var(--weight-semibold);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
   color: var(--text-secondary);
 }
 
 .empty .btn {
-  margin-top: var(--space-1);
-}
-
-.empty--tight {
-  padding: var(--space-2) 0;
+  margin-top: var(--space-2);
 }
 
 /* ==========================================================================================
-   Transcript
+   Transcript hits
    ========================================================================================== */
-
-.transcript {
-  display: grid;
-  grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
-  gap: var(--space-5);
-  align-items: start;
-}
-
-@media (max-width: 900px) {
-  .transcript {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
 
 .hits {
   position: relative;
-  border: 1px solid var(--line-subtle);
   border-radius: var(--radius-sm);
   background: var(--surface-inset);
 }
@@ -793,17 +702,18 @@
 
 .hits__actions {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: var(--space-2);
-  padding-top: var(--space-3);
-  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  margin-top: var(--space-2);
   border-top: 1px solid var(--line-subtle);
 }
 
 .hits__preview {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: var(--text-xs);
   color: var(--text-secondary);
-  line-height: 1.6;
 }
 
 .panel-body__count {
@@ -819,8 +729,7 @@
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
+  gap: 2px;
 }
 
 .proof__item {
@@ -831,8 +740,8 @@
 
 .proof__head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: baseline;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
   gap: var(--space-2);
   width: 100%;
   padding: var(--space-2) var(--space-3);
@@ -850,18 +759,16 @@
 }
 
 .proof__summary {
-  grid-column: 1 / -1;
-  margin-top: 2px;
+  grid-column: 2 / -1;
   color: var(--text-muted);
   font-size: var(--text-2xs);
-  line-height: 1.5;
 }
 
 .proof__detail {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-3);
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3);
   border-top: 1px solid var(--line-subtle);
 }
 
@@ -878,7 +785,7 @@
 .checks th,
 .checks td {
   text-align: left;
-  padding: var(--space-1) 0;
+  padding: 2px 0;
   border-bottom: 1px solid var(--line-subtle);
 }
 
@@ -895,7 +802,7 @@
 }
 
 .checks td:not(:first-child) {
-  padding-left: var(--space-3);
+  padding-left: var(--space-2);
 }
 
 .checks__name {
@@ -906,7 +813,7 @@
 
 .checks__detail {
   color: var(--text-muted);
-  line-height: 1.55;
+  line-height: 1.5;
 }
 
 .digest {
@@ -914,7 +821,7 @@
 }
 
 .digest__summary {
-  padding: var(--space-1) 0;
+  padding: 2px 0;
   cursor: pointer;
   color: var(--text-muted);
 }
@@ -942,7 +849,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: 0 var(--space-5);
+  padding: 0 var(--space-4);
   background: var(--surface-raised);
   border-top: 1px solid var(--line-subtle);
   font-size: var(--text-2xs);
@@ -991,13 +898,14 @@
 }
 
 /*
- * Only present while a batch is running, so it appears rather than sitting permanently empty: a
- * progress bar at zero is a promise the interface is not keeping.
+ * Only present while a batch runs, so it appears rather than sitting permanently empty: a progress bar
+ * at zero is a promise the interface is not keeping. A travelling segment rather than a rotating
+ * circle, because a line in a bar reads as "this is the thing that is happening".
  */
 .progress {
   position: relative;
   flex: none;
-  width: 120px;
+  width: 110px;
   height: 2px;
   overflow: hidden;
   background: var(--line);
@@ -1038,15 +946,15 @@
 }
 
 /*
- * The one place a shadow is earned: a dialog genuinely floats above the application, and the shadow
- * is what says so. It is tinted to the background hue rather than black, which is what stops it
- * reading as a grey smudge on a dark surface.
+ * The one place a shadow is earned: a dialog genuinely floats above the application, and the shadow is
+ * what says so. Tinted to the background hue rather than black, which is what stops it reading as a
+ * grey smudge on a dark surface.
  */
 .dialog {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  width: min(540px, calc(100vw - var(--space-7)));
+  width: min(520px, calc(100vw - var(--space-7)));
   max-height: calc(100vh - var(--space-7));
   padding: var(--space-5) var(--space-5) var(--space-4);
   overflow-y: auto;
@@ -1060,28 +968,6 @@
   font-size: var(--text-lg);
   font-weight: var(--weight-semibold);
   letter-spacing: -0.01em;
-}
-
-.dialog__subtitle {
-  margin-bottom: var(--space-2);
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.dialog__section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding-bottom: var(--space-4);
-  border-bottom: 1px solid var(--line-subtle);
-}
-
-.dialog__section:last-of-type {
-  padding-bottom: 0;
-  border-bottom: none;
 }
 
 .dialog__help {
@@ -1098,20 +984,19 @@
   border-top: 1px solid var(--line-subtle);
 }
 
-.dialog__section .row,
-.field .row {
+.source-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.source-list__item {
+  display: flex;
+  align-items: center;
   gap: var(--space-2);
-}
-
-.dialog__section .row > input,
-.field .row > input {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.dialog__section .row > .btn,
-.field .row > .btn {
-  flex: none;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
 }
 
 /* ==========================================================================================
@@ -1178,51 +1063,6 @@
 }
 
 /* ==========================================================================================
-   Project list
-   ========================================================================================== */
-
-.project-list {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  max-height: 200px;
-}
-
-.project-list__item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  border-left: 2px solid transparent;
-  text-align: left;
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-  transition: background var(--motion-fast) var(--easing);
-}
-
-.project-list__item:hover {
-  background: var(--surface-hover);
-}
-
-.project-list__item--open {
-  background: var(--accent-subtle);
-  border-left-color: var(--accent);
-  color: var(--text-primary);
-}
-
-.project-list__name {
-  font-weight: var(--weight-medium);
-}
-
-.project-list__when {
-  font-size: var(--text-2xs);
-  color: var(--text-faint);
-}
-
-/* ==========================================================================================
    Crash screen
    ========================================================================================== */
 
@@ -1267,21 +1107,33 @@
    ========================================================================================== */
 
 /*
- * The window's own minimum is 1100 px, so these are a safety net rather than layouts anybody should
- * meet. The marks stack rather than shrink, because a 46 px timecode field below about 300 px stops
- * holding eleven characters comfortably.
+ * The window opens fullscreen, so these are for a user who has un-maximised it on a small monitor. The
+ * side column gives up width first, then moves under the panel, because the marks are what is being
+ * worked in.
  */
-@media (max-width: 900px) {
-  .trim__marks {
+@media (max-width: 1180px) {
+  .app__body {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 38%);
+  }
+}
+
+@media (max-width: 980px) {
+  .app__body {
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-4);
+    grid-template-rows: minmax(0, auto) minmax(160px, 1fr);
+    overflow-y: auto;
+  }
+
+  .app__side {
+    border-left: none;
+    border-top: 1px solid var(--line-subtle);
+  }
+
+  .transcript {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .titlebar__tagline {
-    display: none;
-  }
-
-  .section__hint {
     display: none;
   }
 }
@@ -1297,8 +1149,7 @@
 @media (forced-colors: active) {
   .cut-table__row--selected,
   .hit--selected,
-  .choice__option:has(input:checked),
-  .project-list__item--open {
+  .choice__option:has(input:checked) {
     outline: 2px solid Highlight;
     outline-offset: -2px;
   }
@@ -1309,4 +1160,3 @@
     background: Highlight;
   }
 }
-

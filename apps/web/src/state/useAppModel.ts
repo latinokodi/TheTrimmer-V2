@@ -44,6 +44,20 @@ export interface AppModel {
   readonly lastOutcome: BatchOutcomeWire | null;
   readonly doctor: DoctorReportWire | null;
 
+  /**
+   * The session's name.
+   *
+   * There is one project and no picker, so this is not something the user chose — it is the name the
+   * sessions list, the export metadata and the run log use, derived from the day the window was first
+   * opened. `"TheTrimmer"` until one exists, which is only true for the first few hundred
+   * milliseconds.
+   */
+  readonly sessionName: string;
+
+  /** The verification policy for the whole project: `off`, `standard`, `strict` or `forensic`. */
+  readonly verifyPolicy: string;
+  readonly setVerifyPolicy: (value: string) => Promise<void>;
+
   readonly selectedSegment: string | null;
   readonly selectSegment: (id: string | null) => void;
 
@@ -74,7 +88,6 @@ export interface AppModel {
     readonly note?: string | null;
   }) => Promise<void>;
   readonly removeSegment: (id: string) => Promise<void>;
-  readonly preview: (id: string) => Promise<QueuePreview | null>;
   readonly previewAll: (marked?: {
     readonly startFrame: number;
     readonly endFrame: number;
@@ -123,6 +136,13 @@ export function useAppModel(): AppModel {
   const [lastOutcome, setLastOutcome] = useState<BatchOutcomeWire | null>(null);
   const [doctor, setDoctor] = useState<DoctorReportWire | null>(null);
   const [selectedSegment, setSelectedSegment] = useState<string | null>(null);
+  const [verifyPolicyState, setVerifyPolicyState] = useState("strict");
+  const [sessionName, setSessionName] = useState("TheTrimmer");
+
+  // A ref as well as the state, because `setVerifyPolicy` restores the previous value on a refusal
+  // and reading it out of the closure would capture whatever it was when the callback was made.
+  const policyRef = useRef(verifyPolicyState);
+  policyRef.current = verifyPolicyState;
 
   // A ref rather than state: this is read inside callbacks that must not be re-created when it
   // changes, and re-creating them would re-run effects that call commands.
@@ -186,20 +206,62 @@ export function useAppModel(): AppModel {
     [fail, refresh],
   );
 
-  // Startup: the doctor report is read once, because it does not change while the window is open.
+  /**
+   * Startup: read the environment, then open *the* project.
+   *
+   * There is no project picker and no "new project" step. The window keeps one project — the store
+   * has exactly one row in it for a single-user desktop tool — and opens it on launch, so the first
+   * thing on screen is the video and the two timecode fields rather than a dialog asking the user to
+   * name something before they can do anything.
+   *
+   * `GET /v1/projects` returning nothing is the first run: a project is created with a name derived
+   * from the date, because a name nobody chooses is better than a modal nobody wants. This is also
+   * why the store is still here at all: a batch of nine segments that a restart forgets is worse
+   * than the dialog it replaced.
+   */
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [nextDoctor, nextProjects] = await Promise.all([
-          commands.doctor(),
-          commands.listProjects(),
-        ]);
+        const nextDoctor = await commands.doctor();
         if (cancelled) {
           return;
         }
         setDoctor(nextDoctor);
-        setProjects(nextProjects);
+
+        const existing = await commands.listProjects();
+        if (cancelled) {
+          return;
+        }
+        const first = existing[0];
+        if (first === undefined) {
+          const name = defaultProjectName();
+          const created = await commands.createProject(name, "desktop");
+          if (cancelled) {
+            return;
+          }
+          setProjects([{ id: created.id, name, updatedAt: nowSeconds() }]);
+          setSessionName(name);
+          openRef.current = created.id;
+          setOpenProjectId(created.id);
+        } else {
+          setProjects(existing);
+          setSessionName(first.name);
+          await commands.openProject(first.id);
+          if (cancelled) {
+            return;
+          }
+          openRef.current = first.id;
+          setOpenProjectId(first.id);
+        }
+        // The policy is a property of the project, so it is read after the project is open rather
+        // than guessed at.
+        const policy = await commands.getVerifyPolicy();
+        if (cancelled) {
+          return;
+        }
+        setVerifyPolicyState(policy);
+        await refresh();
       } catch (caught) {
         if (!cancelled) {
           fail(caught, "starting up");
@@ -213,7 +275,16 @@ export function useAppModel(): AppModel {
     return () => {
       cancelled = true;
     };
-  }, [fail]);
+  }, [fail, refresh]);
+
+  /** The name for a project nobody asked to create: the day it was started. */
+  function defaultProjectName(): string {
+    return `Session ${new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+  }
+
+  function nowSeconds(): number {
+    return Math.floor(Date.now() / 1000);
+  }
 
   const openProject = useCallback(
     async (id: string) => {
@@ -266,6 +337,27 @@ export function useAppModel(): AppModel {
     [refreshProjects, withBusy],
   );
 
+  /**
+   * Change the verification policy.
+   *
+   * The value is applied optimistically and then confirmed, because the select is a control a person
+   * moves and reads back — waiting for a round trip to move a dropdown makes it feel broken. If the
+   * command refuses, the previous value is restored and the refusal lands in the status bar.
+   */
+  const setVerifyPolicy = useCallback(
+    async (value: string) => {
+      const previous = policyRef.current;
+      setVerifyPolicyState(value);
+      try {
+        await commands.setVerifyPolicy(value);
+      } catch (caught) {
+        setVerifyPolicyState(previous);
+        fail(caught, "setting the verification policy");
+      }
+    },
+    [fail],
+  );
+
   const addSource = useCallback(
     async (path: string) => {
       const result = await withBusy("probing the source", () => commands.addSource(path));
@@ -304,13 +396,6 @@ export function useAppModel(): AppModel {
     async (id: string) => {
       await withBusy("removing the segment", () => commands.removeSegment(id));
       setSelectedSegment((current) => (current === id ? null : current));
-    },
-    [withBusy],
-  );
-
-  const preview = useCallback(
-    async (id: string) => {
-      return withBusy("planning", () => commands.preview(id));
     },
     [withBusy],
   );
@@ -441,6 +526,9 @@ export function useAppModel(): AppModel {
       previews,
       lastOutcome,
       doctor,
+      sessionName,
+      verifyPolicy: verifyPolicyState,
+      setVerifyPolicy,
       selectedSegment,
       selectSegment: setSelectedSegment,
       clearMessages,
@@ -454,7 +542,6 @@ export function useAppModel(): AppModel {
       addSegment,
       updateSegment,
       removeSegment,
-      preview,
       previewAll,
       planQuietly,
       runBatch,
@@ -476,6 +563,9 @@ export function useAppModel(): AppModel {
       previews,
       lastOutcome,
       doctor,
+      sessionName,
+      verifyPolicyState,
+      setVerifyPolicy,
       selectedSegment,
       clearMessages,
       refresh,
@@ -488,7 +578,6 @@ export function useAppModel(): AppModel {
       addSegment,
       updateSegment,
       removeSegment,
-      preview,
       previewAll,
       planQuietly,
       runBatch,

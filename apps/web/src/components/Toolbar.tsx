@@ -1,31 +1,22 @@
 /**
  * The title bar.
  *
- * Four things, and none of them is an action: what the product is, what it claims, which project is
- * open, and the theme. The actions live under the trim panel, next to the thing they act on — a
- * toolbar at the top of a single-purpose window is a second place to look for the same button.
- *
- * The project control is deliberately a button rather than a menu: clicking it opens the one dialog
- * that holds every project decision (open, create, delete, add a master), which is the only place in
- * the product where a list of things is the right answer.
+ * Three things and no actions: what the product is, what it claims, and the theme. Everything you can
+ * *do* is next to the thing it acts on — the video chooser, the marks, the settings and the trim
+ * button are all in the one panel below, and the tools indicator is in the status bar where it has
+ * always been.
  */
 
 import type { Theme } from "../state/useTheme";
 
 export function Toolbar({
-  projectName,
-  projectOpen,
   theme,
   busy,
   onToggleTheme,
-  onOpenProjects,
 }: {
-  readonly projectName: string;
-  readonly projectOpen: boolean;
   readonly theme: Theme;
   readonly busy: boolean;
   readonly onToggleTheme: () => void;
-  readonly onOpenProjects: () => void;
 }): JSX.Element {
   return (
     <header className="titlebar">
@@ -40,22 +31,6 @@ export function Toolbar({
       </div>
 
       <div className="spacer" />
-
-      <button
-        type="button"
-        className="btn btn--ghost titlebar__project"
-        onClick={onOpenProjects}
-        disabled={busy}
-        title={
-          projectOpen
-            ? "Open another project, add a master, or delete this one"
-            : "Open or create a project, then add the videos to cut"
-        }
-      >
-        <span className={`status ${projectOpen ? "status--ok" : "status--idle"}`}>
-          {projectOpen ? projectName : "no project"}
-        </span>
-      </button>
 
       <button
         type="button"

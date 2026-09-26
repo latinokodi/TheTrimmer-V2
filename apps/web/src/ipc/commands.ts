@@ -283,6 +283,17 @@ export const commands = {
 
   /** Reveal a file in Explorer. */
   reveal: (path: string) => call<void>("reveal", { path }),
+
+  /**
+   * The verification policy.
+   *
+   * A property of the project rather than of the window, so it is read after the project is open and
+   * written when the select moves. Both are here rather than in a settings dialog because there is no
+   * settings dialog.
+   */
+  getVerifyPolicy: () => call<string>("get_verify_policy"),
+
+  setVerifyPolicy: (policy: string) => call<void>("set_verify_policy", { policy }),
 } as const;
 
 export type Commands = typeof commands;
