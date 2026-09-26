@@ -215,16 +215,17 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
       - name: Build the installers
-        working-directory: apps/desktop/src-tauri
-        run: npx --yes @tauri-apps/cli@^2 build
+        run: npx --yes @tauri-apps/cli@^2 build --config apps/desktop/src-tauri/tauri.conf.json
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
+      # The bundle output follows the workspace: there is one `target/` at the repository root, not
+      # one per crate, and a path that assumed otherwise is why this job had never been run.
       - uses: actions/upload-artifact@v4
         with:
           name: thetrimmer-installers
           path: |
-            apps/desktop/src-tauri/target/release/bundle/msi/*.msi
-            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+            target/release/bundle/msi/*.msi
+            target/release/bundle/nsis/*.exe
           if-no-files-found: error

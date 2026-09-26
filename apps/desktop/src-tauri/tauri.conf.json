@@ -4,9 +4,8 @@
   "version": "2.0.0",
   "identifier": "com.thetrimmer.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev --prefix ../../web",
-    "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm run build --prefix ../../web",
+    "beforeDevCommand": "npm --prefix ../../web run dev",
+    "devUrl": "http://127.0.0.1:5173",
     "frontendDist": "../../web/dist"
   },
   "app": {
