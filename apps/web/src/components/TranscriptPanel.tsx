@@ -106,114 +106,117 @@ export function TranscriptPanel({
   const window_ = hits.slice(first, first + visible);
 
   return (
-    <div className="panel-body">
-      <div className="field">
-        <label className="field__label" htmlFor="transcript-search">
-          Find in the transcript
-        </label>
-        <input
-          id="transcript-search"
-          ref={searchRef}
-          type="search"
-          value={phrase}
-          placeholder="the bit about custody…"
-          onChange={(event) => setPhrase(event.target.value)}
-          aria-describedby="transcript-search-help"
-          disabled={videoPath === null}
-        />
-        <p id="transcript-search-help" className="field__help">
-          {videoPath === null
-            ? "No source with a transcript beside it. Name a caption file `<video>.srt` and reopen the project."
-            : "Matching is case-insensitive and never crosses a pause, so a hit is always inside one breath."}
-        </p>
-      </div>
-
-      {withTranscripts.length > 1 ? (
-        <div className="field">
-          <label className="field__label" htmlFor="transcript-source">
-            Source
+    <div className="transcript">
+      {/* ---- the left column: what is being searched, and what was found ------------------- */}
+      <div className="transcript__find">
+        <div className="field-row">
+          <label className="field-row__label" htmlFor="transcript-search">
+            Find
           </label>
-          <select
-            id="transcript-source"
-            value={videoPath ?? ""}
-            onChange={(event) => setVideoPath(event.target.value)}
-          >
-            {withTranscripts.map((source) => (
-              <option key={source.path} value={source.path}>
-                {source.name} ({source.transcriptCues ?? "?"} cues)
-              </option>
-            ))}
-          </select>
-        </div>
-      ) : null}
-
-      {error !== null ? (
-        <p className="note note--danger" role="alert">
-          {error}
-        </p>
-      ) : null}
-
-      {phrase.trim().length >= 2 ? (
-        <p className="panel-body__count figures" aria-live="polite">
-          {hits.length === 0
-            ? "no matches"
-            : `${hits.length}${hits.length === 200 ? "+" : ""} match(es)`}
-        </p>
-      ) : null}
-
-      <div
-        className="hits scroll"
-        style={{ height: `${VIEWPORT_HEIGHT}px` }}
-        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
-        role="listbox"
-        aria-label="Transcript matches"
-        tabIndex={0}
-      >
-        {hits.length === 0 ? (
-          <p className="empty empty--tight">
-            {phrase.trim().length < 2
-              ? "Type at least two characters."
-              : "Nothing in this transcript matches."}
-          </p>
-        ) : (
-          <div style={{ height: `${hits.length * ROW_HEIGHT}px`, position: "relative" }}>
-            {window_.map((hit, offset) => {
-              const index = first + offset;
-              return (
-                <button
-                  key={`${hit.cue}-${hit.byteOffset}`}
-                  type="button"
-                  role="option"
-                  aria-selected={selected === index}
-                  className={`hit${selected === index ? " hit--selected" : ""}`}
-                  style={{ top: `${index * ROW_HEIGHT}px`, height: `${ROW_HEIGHT}px` }}
-                  onClick={() => setSelected(index)}
-                  onDoubleClick={() => void markSentence(hit)}
-                  title="Double-click to mark this sentence as a segment"
-                >
-                  <span className="hit__time figures">{formatFrames(hit.startFrame)}</span>
-                  <span className="hit__text truncate">{plain(hit.highlighted)}</span>
-                </button>
-              );
-            })}
+          <div className="field-row__value">
+            <input
+              id="transcript-search"
+              ref={searchRef}
+              type="search"
+              value={phrase}
+              placeholder="the bit about custody…"
+              onChange={(event) => setPhrase(event.target.value)}
+              aria-describedby="transcript-search-help"
+              disabled={videoPath === null}
+            />
           </div>
-        )}
+        </div>
+
+        {withTranscripts.length > 1 ? (
+          <div className="field-row">
+            <label className="field-row__label" htmlFor="transcript-source">
+              Source
+            </label>
+            <div className="field-row__value">
+              <select
+                id="transcript-source"
+                value={videoPath ?? ""}
+                onChange={(event) => setVideoPath(event.target.value)}
+              >
+                {withTranscripts.map((source) => (
+                  <option key={source.path} value={source.path}>
+                    {source.name} ({source.transcriptCues ?? "?"} cues)
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        ) : null}
+
+        <p id="transcript-search-help" className="field-row__note">
+          {videoPath === null
+            ? "No source with a transcript beside it. Name a caption file <video>.srt and reopen."
+            : "Case-insensitive, and it never crosses a pause — so a hit is always inside one breath."}
+        </p>
+
+        {error !== null ? (
+          <p className="note note--danger" role="alert">
+            {error}
+          </p>
+        ) : null}
+
+        {selected !== null && hits[selected] !== undefined ? (
+          <div className="hits__actions">
+            <div className="hits__preview selectable">
+              {plain(hits[selected]?.highlighted ?? "")}
+            </div>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => void markSentence(hits[selected] as TranscriptHit)}
+            >
+              Mark it
+            </button>
+          </div>
+        ) : null}
       </div>
 
-      {selected !== null && hits[selected] !== undefined ? (
-        <div className="hits__actions">
-          <p className="hits__preview selectable">
-            {plain(hits[selected]?.highlighted ?? "")}
-          </p>
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={() => void markSentence(hits[selected] as TranscriptHit)}
-          >
-            Mark this sentence
-          </button>
+      {/* ---- the right column: the hits, which scroll inside themselves ------------------- */}
+      <div className="transcript__list">
+        <div
+          className="hits"
+          style={{ height: `${VIEWPORT_HEIGHT}px` }}
+          onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+          role="listbox"
+          aria-label="Transcript matches"
+          tabIndex={0}
+        >
+          {hits.length === 0 ? (
+            <p className="empty-state">
+              {phrase.trim().length < 2
+                ? "Type at least two characters."
+                : "Nothing in this transcript matches."}
+            </p>
+          ) : (
+            <div style={{ height: `${hits.length * ROW_HEIGHT}px`, position: "relative" }}>
+              {window_.map((hit, offset) => {
+                const index = first + offset;
+                return (
+                  <button
+                    key={`${hit.cue}-${hit.byteOffset}`}
+                    type="button"
+                    role="option"
+                    aria-selected={selected === index}
+                    className={`hit${selected === index ? " hit--selected" : ""}`}
+                    style={{ top: `${index * ROW_HEIGHT}px`, height: `${ROW_HEIGHT}px` }}
+                    onClick={() => setSelected(index)}
+                    onDoubleClick={() => void markSentence(hit)}
+                    title="Double-click to mark this sentence as a segment"
+                  >
+                    <span className="hit__time figures">{formatFrames(hit.startFrame)}</span>
+                    <span className="hit__text truncate">{plain(hit.highlighted)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
-      ) : null}
+      </div>
     </div>
   );
 

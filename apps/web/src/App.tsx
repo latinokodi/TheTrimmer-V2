@@ -1,63 +1,48 @@
 /**
- * The application: a column of cards, in the order the work happens.
+ * The application: a fixed instrument panel.
  *
- * ## Why this shape, and what it is copying
+ * ## What this is
  *
- * This is the original TheTrimmer window's architecture: a title, then a stack of labelled cards down
- * a single centred column — Video, Subtitles, Range, Options — then the actions, then a progress strip
- * and a log. Two versions of this shell went somewhere else, a three-column dashboard and then a
- * two-column workbench, and both were worse for the same reason: they rearranged a form that did not
- * need rearranging and made a simple tool look like a complicated one.
+ * A grid of labelled zones that fills the window. It opens fullscreen, it has a minimum size, and
+ * **nothing in it scrolls except the three zones that can hold an unbounded number of rows** — the
+ * queue, the transcript hits, and the log. The frame itself never moves.
  *
- * The form is the product. So it is back to the original's structure, and the improvements are *added
- * to it* rather than built around it:
- *
- * * **A queue.** The original trimmed one range and stopped. A card under the actions holds every range
- *   you have marked, and `Trim` cuts them all — because the queue is the thing the engine was always
- *   able to do and the window never exposed.
- * * **A transcript you can search.** The original had a subtitle *path* box. This has the path box and a
- *   search over the same file, because "the bit where he says the thing about custody" is not a
- *   timecode anybody knows by heart.
- * * **A progress strip and a log that actually work.** The original had both. The listener for the
- *   events the shell emits was missing, so a four-minute cut looked like a hung window.
- * * **A delivery preset with a description** rather than an encoder name and a CRF, because "which
- *   encoder" is a question an editor should not have to answer.
- *
- * ## What each card is for
+ * ## The frame
  *
  * ```
- * TheTrimmer                     frame-exact, lossless segment cutting
- * ┌ Video ──────────────────────────────────────────────────────────────┐
- * │ [ path                                        ] [ Browse… ]          │
- * │ 3840×2160 · prores · 25 fps · 3,101 frames · 214 caption cues        │
- * └─────────────────────────────────────────────────────────────────────┘
- * ┌ Subtitles ──────────────────────────────────────────────────────────┐
- * │ [ path to the caption file                    ] [ Browse… ]          │
- * │ [x] Cut the transcript with the segment, as a .srt named after it    │
- * └─────────────────────────────────────────────────────────────────────┘
- * ┌ Range · Premiere timecode HH:MM:SS:FF ──────────────────────────────┐
- * │ In point   [ 00:00:01:00 ]                                           │
- * │ Out point  [ 00:00:02:00 ]                                           │
- * │            frame 50, the last one kept                               │
- * │ 26 frames · 1.04 s · lossless copy — every frame is the original     │
- * └─────────────────────────────────────────────────────────────────────┘
- * ┌ Options ────────────────────────────────────────────────────────────┐
- * │ Delivery  [ master — Original packets, MP4, audio copied        ▾ ]  │
- * │ Handles   [ 0 ]   Verify  [ Strict — hash decoded frames        ▾ ]  │
- * └─────────────────────────────────────────────────────────────────────┘
- * ┌ Queue · 2 ──────────────────────────────────────────────────────────┐
- * │ [x] # Name          In           Out          Frames  Plan    ×      │
- * └─────────────────────────────────────────────────────────────────────┘
- *                     [ Queue it ]  [ Trim 2 ]  [ Export… ]
- * ┌ Progress ───────────────────────────────────────────────────────────┐
- * │ ▬▬▬▬▬▬▬▬                                                             │
- * │ head encode — ok (0.2s)                                              │
- * │ ffmpeg -ss 1.48 -i master.mp4 -t 0.52 … -c:v libx264 …               │
- * └─────────────────────────────────────────────────────────────────────┘
+ * ┌ TheTrimmer ─ frame-exact, lossless ───────────────────────────────────────────────────┐
+ * ├──────────────────────────────┬────────────────────────────────────────────────────────┤
+ * │ VIDEO                        │ QUEUE                                                  │
+ * │ TRANSCRIPT                   │  [x] # Name          In      Out     Frames Plan    ×  │
+ * │ RANGE · HH:MM:SS:FF          │                                                        │
+ * │ OPTIONS                      │ ── WHAT CAME OUT ──                                    │
+ * │ ── [Queue] [Export] [Trim] ──│                                                        │
+ * ├──────────────────────────────┴────────────────────────────────────────────────────────┤
+ * │ TRANSCRIPT · find + hits                                                              │
+ * ├───────────────────────────────────────────────────────────────────────────────────────┤
+ * │ PROGRESS · bar · status · the log                                                     │
+ * ├───────────────────────────────────────────────────────────────────────────────────────┤
+ * │ ● ffmpeg ready · 2/2 runnable · notice                                      dark      │
+ * └───────────────────────────────────────────────────────────────────────────────────────┘
  * ```
  *
- * `Ctrl+Enter` trims, `Ctrl+Q` queues the marked range, `Ctrl+O` chooses a video, `Ctrl+E` exports,
- * `Ctrl+F` finds in the transcript.
+ * ## What it is, in design terms
+ *
+ * *Tactical telemetry*: a rack panel. Zones are separated by solid hairlines and a change of substrate
+ * rather than by cards on a background, every corner is 90 degrees, the data face is monospace, and
+ * there is **one** accent — hazard red — used for the focus ring, the selected row's edge and a
+ * failure. One signal colour, terminal green, appears on exactly one element: the ffmpeg lamp in the
+ * footer. A single instrument that reads as live; used anywhere else it would stop meaning anything.
+ *
+ * Three earlier versions of this shell were a three-column dashboard, a two-column workbench and a
+ * column of cards. Each tried to arrange a form that did not need arranging, and each made a simple
+ * tool look like a complicated one. This is the form, with the compartments a broadcast panel would
+ * have, and the new features — the queue, the transcript search, the log — as compartments of their own.
+ *
+ * ## Density
+ *
+ * A 26 px row. Small on purpose: the window sits beside a video monitor and the operator is comparing
+ * two timecodes, three column values and a plan badge at once.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -88,6 +73,7 @@ export function App(): JSX.Element {
   const queued = model.segments.length;
   const runnable = model.summary?.runnable ?? 0;
   const chosen = model.sources.find((source) => source.path === draft.source) ?? model.sources[0];
+  const hasTranscript = chosen?.transcript != null;
 
   /** What the plan says about the range currently marked, matched on the frame numbers. */
   const markedPlan = useMemo(() => {
@@ -103,9 +89,9 @@ export function App(): JSX.Element {
   }, [draft.endFrame, draft.inFrame, model.previews]);
 
   /**
-   * Plan as the marks are typed, so the length line says what will happen before the decision is made
+   * Plan as the marks are typed, so the plan line says what will happen before the decision is made
    * rather than after. The function is held in a ref because the model object is rebuilt on every
-   * render; naming it in the dependency list would make this run on every render and spin.
+   * render; naming it in the dependency list would run this on every render and spin.
    */
   const planRef = useRef(model.planQuietly);
   planRef.current = model.planQuietly;
@@ -122,7 +108,7 @@ export function App(): JSX.Element {
     };
     const timer = setTimeout(() => {
       void planRef.current(marked);
-    }, 350);
+    }, 300);
     return () => clearTimeout(timer);
   }, [draft.endFrame, draft.handles, draft.inFrame, draft.preset, draft.ready]);
 
@@ -136,9 +122,9 @@ export function App(): JSX.Element {
   }, [draft, model]);
 
   const trimNow = useCallback(async () => {
-    // A marked range that is not queued yet is what the plain "Trim" means. When something is already
-    // queued the button says `Trim n` and the marks are left alone — they are for the next range, and a
-    // person who has typed one and not queued it should not have it swept into the run by accident.
+    // A marked range that is not queued is what the plain "Trim" means. With something already queued
+    // the button says `Trim n` and the marks are left alone — they are for the next range, and a person
+    // who has typed one and not queued it should not have it swept into the run by accident.
     const request = queued === 0 ? draft.request() : null;
     if (request !== null) {
       await model.addSegment(request);
@@ -173,6 +159,7 @@ export function App(): JSX.Element {
         case "f":
           event.preventDefault();
           setSearchFocusToken((token) => token + 1);
+          document.getElementById("transcript-search")?.focus();
           break;
         default:
           break;
@@ -184,52 +171,61 @@ export function App(): JSX.Element {
 
   return (
     <ErrorBoundary>
-      <div className="app" data-theme={theme}>
-        <div className="app__scroll scroll">
-          <div className="app__column">
-            <header className="masthead">
-              <div>
-                <h1 className="masthead__product">TheTrimmer</h1>
-                <p className="masthead__tagline">
-                  Frame-exact, lossless segment trimming &nbsp;·&nbsp; only the keyframe head is
-                  re-encoded
-                </p>
-              </div>
-              <div className="spacer" />
-              <button
-                type="button"
-                className="btn btn--ghost btn--icon"
-                onClick={toggleTheme}
-                disabled={running}
-                aria-label={`Switch to the ${theme === "dark" ? "light" : "dark"} theme`}
-                title={`Switch to the ${theme === "dark" ? "light" : "dark"} theme`}
-              >
-                {theme === "dark" ? "☾" : "☀"}
-              </button>
-            </header>
+      <div className="app">
+        <a className="skip-link" href="#trim-in">
+          Skip to the In point
+        </a>
 
-            {/* ---- Video ---------------------------------------------------------------- */}
-            <section className="card">
-              <header className="card__head">
-                <h2 className="card__title">
-                  Video
-                </h2>
+        {/* ---- title bar ------------------------------------------------------------------ */}
+        <header className="titlebar">
+          <span className="titlebar__mark" aria-hidden="true">
+            T
+          </span>
+          <h1 className="titlebar__product">TheTrimmer</h1>
+          <span className="titlebar__rule" aria-hidden="true" />
+          <p className="titlebar__tagline">
+            Frame-exact, lossless segment cutting &nbsp;·&nbsp; only the keyframe head is re-encoded
+          </p>
+          <span className="spacer" />
+          <button
+            type="button"
+            className="btn btn--ghost btn--small"
+            onClick={toggleTheme}
+            disabled={running}
+            aria-label={`Switch to the ${theme === "dark" ? "light" : "dark"} theme`}
+            title={`Switch to the ${theme === "dark" ? "light" : "dark"} theme`}
+          >
+            {theme === "dark" ? "Light" : "Dark"}
+          </button>
+        </header>
+
+        {/* ---- the two columns ------------------------------------------------------------ */}
+        <div className="app__body">
+          <div className="app__col app__col--form">
+            {/* ---- VIDEO ---------------------------------------------------------------- */}
+            <section className="zone">
+              <header className="zone__head">
+                <h2 className="zone__title">Video</h2>
+                <span className="spacer" />
+                <span className="zone__note">
+                  {chosen === undefined
+                    ? "no file"
+                    : chosen.media === null
+                      ? "not on disk"
+                      : `${chosen.media.width}×${chosen.media.height} · ${chosen.media.codec} · ${chosen.media.rate.num / chosen.media.rate.den} fps`}
+                </span>
               </header>
-              <div className="card__body">
+              <div className="zone__body zone__body--tight">
                 <div className="row">
                   <input
                     id="video-path"
+                    key={chosen?.path ?? "none"}
                     className="path-field"
                     type="text"
-                    value={chosen?.path ?? ""}
+                    defaultValue={chosen?.path ?? ""}
                     placeholder="path to the video to trim"
                     spellCheck={false}
                     aria-label="Video file"
-                    onChange={(event) => {
-                      // Typing a path does not probe on every keystroke; Enter or Browse does. A probe
-                      // is a process launch.
-                      void event.target.value;
-                    }}
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
                         void model.addSource(event.currentTarget.value.trim());
@@ -242,39 +238,40 @@ export function App(): JSX.Element {
                     onClick={() => setSourceOpen(true)}
                     disabled={running}
                   >
-                    Browse…
+                    Browse
                   </button>
                 </div>
-                <p className="card__facts figures">
+                <p className="zone__note">
                   {chosen === undefined
                     ? "Pick a video to see its frame rate and length."
                     : chosen.media === null
                       ? chosen.summary
-                      : `${chosen.media.width}×${chosen.media.height}  ·  ${chosen.media.codec} ` +
-                        `${chosen.media.pixFmt}  ·  ${chosen.media.rate.num / chosen.media.rate.den} fps  ·  ` +
-                        `${chosen.media.frameCount.toLocaleString()} frames  ·  ` +
-                        `${chosen.transcript === null ? "no transcript beside it" : `${chosen.transcriptCues ?? "?"} caption cues`}`}
+                      : `${chosen.media.frameCount.toLocaleString()} frames · ${chosen.media.pixFmt} · ${chosen.media.audio === null ? "no audio" : `${chosen.media.audio.codec} ${chosen.media.audio.sampleRate} Hz ${chosen.media.audio.channels}ch`}`}
                 </p>
               </div>
             </section>
 
-            {/* ---- Subtitles ------------------------------------------------------------ */}
-            <section className="card">
-              <header className="card__head">
-                <h2 className="card__title">
-                  Subtitles
-                </h2>
+            {/* ---- TRANSCRIPT: the file, not the search --------------------------------- */}
+            <section className="zone">
+              <header className="zone__head">
+                <h2 className="zone__title">Caption file</h2>
+                <span className="spacer" />
+                <span className="zone__note">
+                  {hasTranscript
+                    ? `${chosen?.transcriptCues ?? "?"} cues, retimed with every segment`
+                    : "none found beside the video"}
+                </span>
               </header>
-              <div className="card__body">
+              <div className="zone__body zone__body--tight">
                 <div className="row">
                   <input
                     id="subtitle-path"
                     className="path-field"
                     type="text"
                     value={chosen?.transcript ?? ""}
-                    placeholder="no transcript found beside this video"
+                    placeholder="no caption file beside this video"
                     spellCheck={false}
-                    aria-label="Transcript"
+                    aria-label="Transcript file"
                     readOnly
                   />
                   <button
@@ -282,38 +279,32 @@ export function App(): JSX.Element {
                     className="btn"
                     onClick={() => {
                       setSearchFocusToken((token) => token + 1);
-                      document.getElementById("card-transcript")?.scrollIntoView({ block: "start" });
+                      document.getElementById("transcript-search")?.focus();
                     }}
-                    disabled={running || chosen?.transcript == null}
+                    disabled={running || !hasTranscript}
                     title={
-                      chosen?.transcript == null
-                        ? "No caption file was found beside this video"
-                        : "Search the transcript and mark a range from a sentence"
+                      hasTranscript
+                        ? "Search the transcript and mark a range from a sentence"
+                        : "No caption file was found beside this video"
                     }
                   >
-                    Search…
+                    Find
                   </button>
                 </div>
-                <p className="card__facts">
-                  {chosen?.transcript == null
-                    ? "A caption file named after the video (<video>.srt) is picked up automatically."
-                    : `${chosen.transcript} is retimed with every segment, as a .srt named after the output.`}
-                </p>
               </div>
             </section>
 
-            {/* ---- Range ---------------------------------------------------------------- */}
-            <section className="card">
-              <header className="card__head">
-                <h2 className="card__title">
-                  Range
-                  <span className="card__note">Premiere timecode HH:MM:SS:FF</span>
-                </h2>
+            {/* ---- RANGE ---------------------------------------------------------------- */}
+            <section className="zone zone--grow">
+              <header className="zone__head">
+                <h2 className="zone__title">Range</h2>
+                <span className="spacer" />
+                <span className="zone__note">Premiere timecode HH:MM:SS:FF</span>
               </header>
-              <div className="card__body">
+              <div className="zone__body">
                 <div className="range">
                   <div className="range__row">
-                    <label className="range__label" htmlFor="trim-in">
+                    <label className="field-row__label" htmlFor="trim-in">
                       In point
                     </label>
                     <input
@@ -334,13 +325,15 @@ export function App(): JSX.Element {
                         }
                       }}
                     />
-                    <span className="range__help figures" id="trim-in-help">
-                      {draft.inFrame === null ? "first frame kept" : `frame ${draft.inFrame.toLocaleString()}`}
+                    <span className="field-row__note" id="trim-in-help">
+                      {draft.inFrame === null
+                        ? "first frame kept"
+                        : `frame ${draft.inFrame.toLocaleString()}`}
                     </span>
                   </div>
 
                   <div className="range__row">
-                    <label className="range__label" htmlFor="trim-out">
+                    <label className="field-row__label" htmlFor="trim-out">
                       Out point
                     </label>
                     <input
@@ -356,7 +349,7 @@ export function App(): JSX.Element {
                       aria-invalid={draft.outText !== "" && draft.outFrame === null}
                       onChange={(event) => draft.setOutText(event.target.value)}
                     />
-                    <span className="range__help figures" id="trim-out-help">
+                    <span className="field-row__note" id="trim-out-help">
                       {draft.outFrame === null
                         ? "last frame kept, as Premiere's Out point works"
                         : `frame ${draft.outFrame.toLocaleString()}, the last one kept`}
@@ -371,13 +364,11 @@ export function App(): JSX.Element {
                     "Type both timecodes; the frame numbers appear here as you type."
                   ) : (
                     <>
-                      <span className="figures">
+                      <span>
                         frames {draft.inFrame} … {draft.outFrame}
                       </span>
                       <span className="range__sep" aria-hidden="true" />
-                      <span className="figures">
-                        {draft.frames.toLocaleString()} frames
-                      </span>
+                      <span>{draft.frames.toLocaleString()} frames</span>
                       {markedPlan?.plan != null ? (
                         <>
                           <span className="range__sep" aria-hidden="true" />
@@ -385,7 +376,7 @@ export function App(): JSX.Element {
                             {markedPlan.plan.mode === "copy"
                               ? "lossless copy — every frame is the original"
                               : markedPlan.plan.mode === "headPatch"
-                                ? `head patch — ${markedPlan.plan.headFrames} frames re-encoded, ${markedPlan.plan.bodyFrames} copied`
+                                ? `head patch — ${markedPlan.plan.headFrames} re-encoded, ${markedPlan.plan.bodyFrames} copied`
                                 : "full re-encode — no keyframe inside this range"}
                           </span>
                         </>
@@ -396,22 +387,19 @@ export function App(): JSX.Element {
               </div>
             </section>
 
-            {/* ---- Options -------------------------------------------------------------- */}
-            <section className="card">
-              <header className="card__head">
-                <h2 className="card__title">
-                  Options
-                </h2>
+            {/* ---- OPTIONS -------------------------------------------------------------- */}
+            <section className="zone">
+              <header className="zone__head">
+                <h2 className="zone__title">Options</h2>
               </header>
-              <div className="card__body">
-                <div className="options">
-                  <div className="options__row">
-                    <label className="options__label" htmlFor="trim-preset">
-                      Delivery
-                    </label>
+              <div className="zone__body zone__body--tight">
+                <div className="field-row">
+                  <label className="field-row__label" htmlFor="trim-preset">
+                    Delivery
+                  </label>
+                  <div className="field-row__value">
                     <select
                       id="trim-preset"
-                      className="options__wide"
                       value={draft.preset}
                       onChange={(event) => draft.setPreset(event.target.value)}
                     >
@@ -423,42 +411,45 @@ export function App(): JSX.Element {
                       ))}
                     </select>
                   </div>
+                </div>
 
-                  <div className="options__row">
-                    <label className="options__label" htmlFor="trim-handles">
-                      Handles
-                    </label>
+                <div className="field-row">
+                  <label className="field-row__label" htmlFor="trim-handles">
+                    Handles
+                  </label>
+                  <div className="field-row__value">
                     <input
                       id="trim-handles"
-                      className="options__narrow"
                       type="number"
                       min={0}
                       step={1}
                       value={draft.handles}
+                      style={{ width: "72px" }}
                       onChange={(event) =>
                         draft.setHandles(Math.max(0, Number(event.target.value) || 0))
                       }
                     />
-                    <span className="options__note">
+                    <span className="field-row__note">
                       extra frames kept either side, for a crossfade
                     </span>
                   </div>
+                </div>
 
-                  <div className="options__row">
-                    <label className="options__label" htmlFor="trim-policy">
-                      Verify
-                    </label>
+                <div className="field-row">
+                  <label className="field-row__label" htmlFor="trim-policy">
+                    Verify
+                  </label>
+                  <div className="field-row__value">
                     <select
                       id="trim-policy"
-                      className="options__wide"
                       value={model.verifyPolicy}
                       onChange={(event) => void model.setVerifyPolicy(event.target.value)}
                     >
                       <option value="off">Off — do not measure the result</option>
-                      <option value="standard">Standard — frame count, duration, audio alignment</option>
-                      <option value="strict">
-                        Strict — also hash decoded frames at sample points
+                      <option value="standard">
+                        Standard — frame count, duration, audio alignment
                       </option>
+                      <option value="strict">Strict — also hash decoded frames at sample points</option>
                       <option value="forensic">
                         Forensic — also compare the head pixel-wise, and every caption cue
                       </option>
@@ -468,32 +459,7 @@ export function App(): JSX.Element {
               </div>
             </section>
 
-            {/* ---- Queue ---------------------------------------------------------------- */}
-            <section className="card">
-              <header className="card__head">
-                <h2 className="card__title">
-                  Queue
-                  {queued > 0 ? <span className="card__count figures">{queued}</span> : null}
-                </h2>
-                <span className="spacer" />
-                <span className="card__note figures">
-                  {queued === 0 ? "nothing marked yet" : `${runnable} of ${queued} ready`}
-                </span>
-              </header>
-              <div className="card__body card__body--flush">
-                <CutTable
-                  segments={model.segments}
-                  selected={model.selectedSegment}
-                  onSelect={model.selectSegment}
-                  onToggleEnabled={(id, enabled) => void model.updateSegment({ id, enabled })}
-                  onRemove={(id) => void model.removeSegment(id)}
-                  previews={model.previews}
-                  busy={running}
-                />
-              </div>
-            </section>
-
-            {/* ---- Actions -------------------------------------------------------------- */}
+            {/* ---- actions -------------------------------------------------------------- */}
             <div className="actions">
               <button
                 type="button"
@@ -502,7 +468,7 @@ export function App(): JSX.Element {
                 disabled={!draft.ready || running}
                 title="Add this range to the queue without trimming it yet (Ctrl+Q)"
               >
-                Queue it
+                Queue
               </button>
               <button
                 type="button"
@@ -515,7 +481,7 @@ export function App(): JSX.Element {
                     : "Write the timeline as a Premiere XML, FCPXML, EDL or CSV (Ctrl+E)"
                 }
               >
-                Export…
+                Export
               </button>
               <button
                 type="button"
@@ -526,7 +492,7 @@ export function App(): JSX.Element {
               >
                 Cancel
               </button>
-              <div className="spacer" />
+              <span className="spacer" />
               <button
                 type="button"
                 className="btn btn--primary btn--big"
@@ -538,89 +504,144 @@ export function App(): JSX.Element {
                     : "Cut the marked range, then check the finished file (Ctrl+Enter)"
                 }
               >
-                {running ? "Working…" : queued > 0 ? `Trim ${queued}` : "Trim"}
+                {running ? "Working" : queued > 0 ? `Trim ${queued}` : "Trim"}
               </button>
             </div>
+          </div>
 
-            {/* ---- The proof, once there is one ----------------------------------------- */}
-            {model.lastOutcome !== null ? (
-              <section className="card">
-                <header className="card__head">
-                  <h2 className="card__title">
-                    What came out
-                  </h2>
-                </header>
-                <div className="card__body">
-                  <ProofPanel outcome={model.lastOutcome} model={model} />
-                </div>
-              </section>
-            ) : null}
-
-            {/* ---- Transcript search, when it is asked for ------------------------------ */}
-            <section className="card">
-              <header className="card__head">
-                <h2 className="card__title">
-                  Transcript
-                </h2>
+          {/* ---- the queue column ------------------------------------------------------- */}
+          <div className="app__col app__col--queue">
+            <section className="zone zone--grow">
+              <header className="zone__head">
+                <h2 className="zone__title">Queue</h2>
+                {queued > 0 ? <span className="zone__count figures">{queued}</span> : null}
                 <span className="spacer" />
-                <span className="card__note">
-                  search the words, then mark the sentence (Ctrl+F)
+                <span className="zone__note">
+                  {queued === 0 ? "nothing marked yet" : `${runnable} of ${queued} ready`}
                 </span>
               </header>
-              <div className="card__body">
-                <TranscriptPanel
-                  sources={model.sources}
-                  focusToken={searchFocusToken}
-                  onMark={async (input) => {
-                    await model.addSegment(input);
-                  }}
+              <div className="zone__body zone__body--flush">
+                <CutTable
+                  segments={model.segments}
+                  selected={model.selectedSegment}
+                  onSelect={model.selectSegment}
+                  onToggleEnabled={(id, enabled) => void model.updateSegment({ id, enabled })}
+                  onRemove={(id) => void model.removeSegment(id)}
+                  previews={model.previews}
+                  busy={running}
                 />
               </div>
             </section>
 
-            {/* ---- Progress ------------------------------------------------------------- */}
-            <ProgressLog
-              lines={log.lines}
-              step={log.step}
-              running={running}
-              onClear={log.clear}
-            />
-
-            <footer className="footerline">
-              <span className="footerline__item">
-                <span
-                  className={`status ${model.doctor?.libx264 === true ? "status--ok" : "status--danger"}`}
-                  title={model.doctor?.ffmpeg ?? ""}
-                >
-                  {model.doctor === null
-                    ? "checking ffmpeg…"
-                    : model.doctor.libx264
-                      ? "ffmpeg ready"
-                      : "no H.264 encoder"}
-                </span>
-                {model.doctor !== null ? (
-                  <span className="footerline__detail truncate figures">{model.doctor.ffmpeg}</span>
-                ) : null}
-              </span>
-              <span className="spacer" />
-              {model.notice !== null ? (
-                <span className="footerline__notice truncate" role="status">
-                  {model.notice}
-                </span>
-              ) : null}
-              {model.error !== null ? (
-                <button
-                  type="button"
-                  className="btn btn--danger btn--small"
-                  onClick={model.clearMessages}
-                  title={model.error.message}
-                >
-                  {model.error.message.split("\n")[0]?.slice(0, 80) ?? "error"}
-                </button>
-              ) : null}
-            </footer>
+            {model.lastOutcome !== null ? (
+              <section className="zone zone--grow">
+                <header className="zone__head">
+                  <h2 className="zone__title">What came out</h2>
+                  <span className="spacer" />
+                  <span className="zone__note">{model.lastOutcome.jobs.length} job(s)</span>
+                </header>
+                <div className="zone__body zone__body--flush">
+                  <ProofPanel outcome={model.lastOutcome} model={model} />
+                </div>
+              </section>
+            ) : null}
           </div>
         </div>
+
+        {/* ---- the transcript search ------------------------------------------------------ */}
+        <section className="zone">
+          <header className="zone__head">
+            <h2 className="zone__title">Find in the transcript</h2>
+            <span className="spacer" />
+            <span className="zone__note">search the words, then mark the sentence (Ctrl+F)</span>
+          </header>
+          <div className="zone__body zone__body--tight">
+            <TranscriptPanel
+              sources={model.sources}
+              focusToken={searchFocusToken}
+              onMark={async (input) => {
+                await model.addSegment(input);
+              }}
+            />
+          </div>
+        </section>
+
+        {/* ---- progress ------------------------------------------------------------------ */}
+        <section className="zone">
+          <header className="zone__head">
+            <h2 className="zone__title">Progress</h2>
+            <span className="spacer" />
+            {log.lines.length > 0 ? (
+              <button type="button" className="btn btn--ghost btn--small" onClick={log.clear}>
+                Clear
+              </button>
+            ) : null}
+          </header>
+          <ProgressLog lines={log.lines} step={log.step} running={running} />
+        </section>
+
+        {/* ---- footer -------------------------------------------------------------------- */}
+        <footer className="footerline">
+          {/*
+            The one signal-green element in the application: a live instrument. `doctor` runs once at
+            startup, so a green lamp here means ffmpeg resolved and the build has libx264 — the two
+            facts that decide whether anything else in this window can work.
+          */}
+          <span className="footerline__item">
+            <span
+              className={`status ${
+                model.doctor === null
+                  ? "status--idle"
+                  : model.doctor.libx264
+                    ? "status--ok"
+                    : "status--danger"
+              }`}
+              title={model.doctor?.ffmpeg ?? "checking ffmpeg"}
+            >
+              {model.doctor === null
+                ? "ffmpeg"
+                : model.doctor.libx264
+                  ? "ffmpeg ready"
+                  : "no H.264"}
+            </span>
+            {model.doctor !== null ? (
+              <span className="footerline__detail">{model.doctor.ffmpeg}</span>
+            ) : null}
+          </span>
+
+          <span className="footerline__sep" aria-hidden="true" />
+
+          <span className="footerline__item figures">
+            {model.summary === null
+              ? "no project"
+              : `${model.summary.runnable}/${model.summary.segments} runnable`}
+            {(model.summary?.missingSources ?? 0) > 0
+              ? ` · ${model.summary?.missingSources} source(s) missing`
+              : ""}
+          </span>
+
+          <span className="spacer" />
+
+          {model.notice !== null ? (
+            <span className="footerline__notice" role="status">
+              {model.notice}
+            </span>
+          ) : null}
+
+          {model.error !== null ? (
+            <button
+              type="button"
+              className="btn btn--danger btn--small"
+              onClick={model.clearMessages}
+              title={model.error.message}
+            >
+              {model.error.message.split("\n")[0]?.slice(0, 70) ?? "error"}
+            </button>
+          ) : null}
+
+          <span className="footerline__sep" aria-hidden="true" />
+          <span className="footerline__item">{theme}</span>
+        </footer>
 
         {sourceOpen ? (
           <SourceDialog

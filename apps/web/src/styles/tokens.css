@@ -1,212 +1,282 @@
 /*
  * TheTrimmer's design tokens.
  *
- * One source of truth for every colour, size, radius and shadow in the interface. No component
- * hard-codes a value; if a component needs something that is not here, the token set is what is
- * wrong, not the component.
+ * ============================================================================================
+ * The design stance, named
+ * ============================================================================================
  *
- * ## Why these names
+ * **Tactical telemetry.** The reference point is not a website and not a consumer app; it is a
+ * broadcast engineering panel — a rack unit with labelled zones, aviation-grade hazard red, and data
+ * set in a monospace face because data is what it is. Deliberately chosen over the three aesthetic
+ * directions that were tried first and rejected:
  *
- * Tokens are named for their *role* — `--surface-raised`, `--signal-danger` — and never for their
- * appearance. `--orange` would be a lie the moment the accent changes, and `--text-muted` is the
- * same token in both themes with a different value. The whole light theme below is therefore a
- * value set, not a second stylesheet.
+ * * a "premium dark dashboard" (soft greys, rounded cards, indigo accent) — the look every generated
+ *   interface has, and therefore the look that reads as generated;
+ * * a light documentation style — wrong for a grading suite, where a bright surface next to a monitor
+ *   wrecks your eye's adaptation to the picture;
+ * * a paper-brutalist light mode — the same problem, and its large negative spaces cost rows.
  *
- * ## Why this palette
+ * ============================================================================================
+ * The colour system
+ * ============================================================================================
  *
- * The audience is editors cutting broadcast material, often in a dim suite, often for hours. That
- * decides three things:
+ * One substrate, off-black, in six steps from the floor to a raised panel. Not pure `#000`: a true
+ * black next to a video frame makes the frame look washed out, and it makes every hairline invisible.
  *
- * 1. **Dark by default, and genuinely dark.** `--surface-sunken` is near-black so a video thumbnail
- *    or a waveform reads against it rather than glowing out of a mid-grey. The raised surfaces step
- *    up in small, even increments, because a large jump creates banding that becomes tiring.
- * 2. **One accent, used sparingly.** A cutting tool's most important information is a timecode, and
- *    colour competes with it. The accent marks the thing being acted on and the selection, and
- *    nothing else.
- * 3. **Semantic status colours that survive colour blindness.** Never the only cue: every status
- *    also carries a word or a shape, so `--signal-danger` is a reinforcement rather than the
- *    message. That is what makes the interface usable for the roughly one in twelve men who cannot
- *    separate the red from the green.
+ * **One accent.** Aviation hazard red, `--hazard`, used for exactly three things: the focus ring, the
+ * selected row's edge, and a failure. It is not a decoration and it is not a brand colour.
  *
- * ## Scales
+ * **One signal colour.** Terminal green, `--data-readout`, on exactly one element in the whole
+ * interface: the ffmpeg status lamp. A single instrument that reads as live. Used anywhere else it
+ * would stop meaning anything — which is the rule the brutalist reference sets and the reason a tool
+ * like this looks purposeful rather than decorated.
  *
- * Spacing is a 4 px rhythm and type is a Major Third (1.25) from a 13 px base — chosen because the
- * interface is dense: a cut table with four timecodes per row has no room for a 16 px body size,
- * and 13 px mono at 1.5 line height is comfortable for hours.
+ * Status colours carry a word as well as a hue, always. Roughly one man in twelve cannot separate the
+ * red from the green, and a tool where "failed" is a colour is a tool that lies to him.
+ *
+ * No gradients. No glow. No blur. No translucency. No `border-radius` — every corner is 90 degrees,
+ * because a rounded corner is a promise of softness that a cutting tool has no reason to make.
+ *
+ * ============================================================================================
+ * Typography
+ * ============================================================================================
+ *
+ * Two families, both **already on the machine**. A desktop application that downloads a font is an
+ * application that looks broken for the first half-second it runs and cannot be used on a machine
+ * with no network, and this one is sold to studios that have neither.
+ *
+ * * `--font-data` — Cascadia Mono, falling back to Consolas. **The dominant face.** Every timecode,
+ *   every frame count, every path, the log, and all 10 px uppercase zone labels. Monospace is what
+ *   makes a column of timecodes line up digit for digit, and lining up is the entire job.
+ * * `--font-ui` — Segoe UI Variable Text. Prose only: the tagline, the notes, the sentences under a
+ *   field. Where the type is a sentence rather than a datum, a proportional face is easier to read.
+ *
+ * The scale is a **Major Third (1.25)** from a 12 px base, which is deliberately smaller than a web
+ * body size: this window sits next to a video monitor, and 12 px mono at 1.45 is comfortable for
+ * hours while fitting twice the rows that 16 px does.
+ *
+ * ============================================================================================
+ * Spacing
+ * ============================================================================================
+ *
+ * A **4 px baseline grid**, with 2 px available for the places a hairlines width has to be accounted
+ * for. Every margin, padding and gap in the application is a token from this scale; a component that
+ * needs a value that is not here has found a gap in the scale, not a reason to write `13px`.
  */
 
 :root {
-  /* ---- The spacing scale: a 4 px rhythm ------------------------------------------------ */
+  /* ---- The 4 px baseline grid --------------------------------------------------------- */
   --space-0: 0;
-  --space-1: 0.25rem; /*  4 px */
-  --space-2: 0.5rem; /*  8 px */
-  --space-3: 0.75rem; /* 12 px */
-  --space-4: 1rem; /* 16 px */
-  --space-5: 1.5rem; /* 24 px */
-  --space-6: 2rem; /* 32 px */
-  --space-7: 3rem; /* 48 px */
-  --space-8: 4rem; /* 64 px */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-7: 20px;
+  --space-8: 24px;
+  --space-9: 32px;
+  --space-10: 40px;
 
-  /* ---- Type: Major Third from a 13 px base --------------------------------------------- */
-  --text-2xs: 0.6875rem; /* 11 px — axis labels, units */
-  --text-xs: 0.75rem; /* 12 px — secondary metadata */
-  --text-sm: 0.8125rem; /* 13 px — body */
-  --text-base: 0.875rem; /* 14 px — emphasised body */
-  --text-lg: 1.125rem; /* 18 px — panel titles */
-  --text-xl: 1.4375rem; /* 23 px — the project name */
-  --text-2xl: 1.75rem; /* 28 px — the one big number */
+  /* ---- Type: Major Third from a 12 px base --------------------------------------------- */
+  --text-2xs: 9px; /* zone labels, units, column heads */
+  --text-xs: 10px; /* metadata, help text */
+  --text-sm: 12px; /* the base: body, values, table cells */
+  --text-base: 13px; /* an emphasised value */
+  --text-lg: 16px; /* a timecode in an input */
+  --text-xl: 20px; /* zone titles */
+  --text-2xl: 25px; /* the product name */
 
   --leading-tight: 1.2;
-  --leading-normal: 1.5;
-  --leading-loose: 1.7;
+  --leading-normal: 1.45;
+  --leading-loose: 1.65;
 
   --weight-regular: 400;
   --weight-medium: 500;
   --weight-semibold: 600;
+  --weight-bold: 700;
 
   /*
-   * The UI stack is the platform's own, so there is no font download, no flash of unstyled text and
-   * no network request at startup. The figure stack is a monospace because a timecode is a column
-   * of digits and every one of them must line up; `tabular-nums` is also applied wherever a figure
-   * appears, so a proportional fallback still aligns.
+   * The two faces. Cascadia Mono first: it ships with Windows Terminal and with Windows 11, and it is
+   * the face the machine's own developer tooling uses, so it looks native rather than imported.
    */
-  --font-ui:
-    "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
-  --font-figure: "Cascadia Mono", "Consolas", "SF Mono", ui-monospace, monospace;
+  --font-data: "Cascadia Mono", Consolas, "Cascadia Code", ui-monospace, monospace;
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 
-  /* ---- Radii: small, because a dense interface reads better with crisp edges ------- */
-  --radius-sm: 3px;
-  --radius-md: 5px;
-  --radius-lg: 8px;
-  --radius-pill: 999px;
+  /* ---- Geometry: 90 degrees, and hairlines -------------------------------------------- */
+  --hairline: 1px;
+  --rule: 1px;
+  --focus-width: 1px;
 
-  /* ---- Motion: short, and every one of them is disabled by the reduced-motion block --- */
-  --motion-fast: 90ms;
-  --motion-base: 140ms;
+  /* ---- Motion: feedback only, and short ------------------------------------------------- */
+  --motion-fast: 80ms;
+  --motion-base: 120ms;
   --easing: cubic-bezier(0.2, 0, 0.2, 1);
 
-  /* ---- Focus: one ring, used everywhere, never removed ------------------------------- */
-  --focus-width: 2px;
-  --focus-offset: 2px;
-
-  /* ---- Layout ------------------------------------------------------------------------ */
+  /* ---- The fixed window ---------------------------------------------------------------- */
   /*
-   * The three strips of the shell, and the two heights a row can be. `--row-height` is *fixed*, which
-   * is a functional decision rather than a stylistic one: a plan arrives asynchronously and fills in a
-   * column, and a row that grew when its plan landed would move the table under the pointer mid-click.
+   * This is a PC application and it is not responsive. The window opens fullscreen with a 1280x800
+   * minimum, the layout is a grid that fills it, and **nothing scrolls** — every control is on screen
+   * or it does not belong in the window. So the frame is declared here, once, and the grid uses it.
    */
-  --row-height: 30px;
-  --head-height: 28px;
-  --titlebar-height: 44px;
-  --statusbar-height: 24px;
+  --frame-min-width: 1280px;
+  --titlebar-height: 30px;
+  --footer-height: 24px;
+  --zone-head-height: 22px;
+  --row-height: 26px;
+  --field-height: 26px;
+  --timecode-height: 34px;
+  --form-panel-width: 46%;
 }
 
 /* ==========================================================================================
-   Dark theme — the default
+   The substrate: a deactivated CRT, in six even steps
    ========================================================================================== */
 
-:root,
-:root[data-theme="dark"] {
+:root {
   color-scheme: dark;
 
-  /* Surfaces, sunken to raised. The steps are deliberately even: an editor looks at this for
-     hours, and uneven steps read as banding. */
-  --surface-sunken: #0b0d10;
-  --surface-base: #101317;
-  --surface-raised: #161a20;
-  --surface-overlay: #1c2129;
-  --surface-hover: #212732;
-  --surface-active: #28303c;
-  --surface-inset: #0d1014;
+  /* Floor to raised. Even steps: uneven ones read as banding on a large dark surface. */
+  --substrate-000: #0a0b0c; /* the window floor */
+  --substrate-100: #0f1113; /* a sunken well: the log, an inset field */
+  --substrate-200: #141619; /* a panel */
+  --substrate-300: #1a1d21; /* a zone header, a table head */
+  --substrate-400: #212529; /* a hover */
+  --substrate-500: #2a2f35; /* an active control */
 
-  /* Lines. `--line-strong` is for a boundary that must be seen, `--line-subtle` for one that
-     must merely be felt. */
-  --line-subtle: #1e242c;
-  --line: #2a323d;
-  --line-strong: #3a4553;
+  /* Hairlines. `--rule-strong` is a zone boundary; `--rule-hair` is a row separator that must be
+     felt rather than seen. */
+  --rule-hair: #1e2226;
+  --rule: #2b3137;
+  --rule-strong: #3a4149;
 
-  /* Text. Four levels, and every one is used: the interface has a lot of metadata. */
-  --text-primary: #e7ecf2;
-  --text-secondary: #a8b3c0;
-  --text-muted: #7b8797;
-  --text-faint: #5a6472;
-  --text-inverse: #0b0d10;
+  /* Phosphor text, four levels, all four used. */
+  --phosphor-bright: #e8ebee; /* a value being read */
+  --phosphor: #b9c0c7; /* a label */
+  --phosphor-dim: #7d858d; /* metadata */
+  --phosphor-faint: #565d64; /* a unit, a hint */
+  --phosphor-inverse: #0a0b0c;
 
-  /* One accent. Used for the active tab, the selection, the primary button and focus. */
-  --accent: #4c9aff;
-  --accent-hover: #63a9ff;
-  --accent-subtle: rgb(76 154 255 / 14%);
-  --accent-border: rgb(76 154 255 / 45%);
+  /* One accent, and its two derivatives for a wash and an edge. */
+  --hazard: #e5413a;
+  --hazard-bright: #f2544c;
+  --hazard-wash: rgb(229 65 58 / 12%);
+  --hazard-edge: rgb(229 65 58 / 55%);
 
-  /* Status. Each is paired with a word or a glyph everywhere it appears. */
-  --signal-ok: #46b17b;
-  --signal-ok-subtle: rgb(70 177 123 / 14%);
-  --signal-warn: #d9a441;
-  --signal-warn-subtle: rgb(217 164 65 / 14%);
-  --signal-danger: #e5645f;
-  --signal-danger-subtle: rgb(229 100 95 / 14%);
-  --signal-info: #58a6d8;
-  --signal-info-subtle: rgb(88 166 216 / 14%);
+  /* One signal. Used on one element. */
+  --data-readout: #54d98c;
 
-  /* The re-encoded head: a distinct colour because it is the one thing the user pays for. */
-  --signal-head: #b98ae0;
-  --signal-head-subtle: rgb(185 138 224 / 16%);
+  /* Advisory. A warning is not a failure and must not look like one. */
+  --caution: #d9a441;
+  --caution-wash: rgb(217 164 65 / 12%);
+  --hazard-soft: rgb(229 65 58 / 10%);
 
-  --shadow-raised: 0 1px 2px rgb(0 0 0 / 40%);
-  --shadow-overlay: 0 12px 32px -8px rgb(0 0 0 / 70%), 0 0 0 1px rgb(255 255 255 / 5%) inset;
-
-  /*
-   * The scrim behind a dialog. A tint of the background hue rather than neutral black, and no
-   * `backdrop-filter`: a blur over a repainting WebView2 surface costs a full-surface composite every
-   * frame, for a decorative effect, in an application that is already decoding video next to it.
-   */
-  --scrim: rgb(6 8 11 / 72%);
+  /* No shadows anywhere except the one element that genuinely floats. */
+  --scrim: rgb(4 5 6 / 78%);
 }
 
 /* ==========================================================================================
-   Light theme — a second value set, not a second stylesheet
+   A light mode exists and is not the point
    ========================================================================================== */
 
+/*
+ * Somebody will open this on a machine with a light desktop theme and a bright room, and a window that
+ * ignores that is a window they invert with a system tool that produces worse results than this. It is
+ * a second value set — the same semantic names, different values — so no component knows it exists.
+ *
+ * It is not the design. The design is the dark one: a grading suite is dim, and a bright surface beside
+ * a video monitor destroys the operator's adaptation to the picture.
+ */
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --surface-sunken: #eceef2;
-  --surface-base: #f6f7f9;
-  --surface-raised: #ffffff;
-  --surface-overlay: #ffffff;
-  --surface-hover: #eef0f4;
-  --surface-active: #e2e6ed;
-  --surface-inset: #f2f4f7;
+  --substrate-000: #e9eaec;
+  --substrate-100: #f2f3f5;
+  --substrate-200: #fbfbfc;
+  --substrate-300: #eff1f3;
+  --substrate-400: #e4e7ea;
+  --substrate-500: #d7dbe0;
 
-  --line-subtle: #e6e9ee;
-  --line: #d3d8e0;
-  --line-strong: #b6bdc9;
+  --rule-hair: #dfe2e6;
+  --rule: #c9ced5;
+  --rule-strong: #a8b0b9;
 
-  --text-primary: #14181d;
-  --text-secondary: #47505c;
-  --text-muted: #6b7482;
-  --text-faint: #8b93a0;
-  --text-inverse: #ffffff;
+  --phosphor-bright: #101317;
+  --phosphor: #333a42;
+  --phosphor-dim: #5c646d;
+  --phosphor-faint: #838b94;
+  --phosphor-inverse: #ffffff;
 
-  --accent: #1f6feb;
-  --accent-hover: #1a5fd0;
-  --accent-subtle: rgb(31 111 235 / 10%);
-  --accent-border: rgb(31 111 235 / 40%);
+  --hazard: #b3231c;
+  --hazard-bright: #93190f;
+  --hazard-wash: rgb(179 35 28 / 9%);
+  --hazard-edge: rgb(179 35 28 / 45%);
 
-  --signal-ok: #1f7a4d;
-  --signal-ok-subtle: rgb(31 122 77 / 10%);
-  --signal-warn: #92650a;
-  --signal-warn-subtle: rgb(146 101 10 / 12%);
-  --signal-danger: #b3261e;
-  --signal-danger-subtle: rgb(179 38 30 / 10%);
-  --signal-info: #1a6a9e;
-  --signal-info-subtle: rgb(26 106 158 / 10%);
-  --signal-head: #6b3fa0;
-  --signal-head-subtle: rgb(107 63 160 / 12%);
+  --data-readout: #1f7a4d;
 
-  --shadow-raised: 0 1px 2px rgb(16 20 26 / 8%);
-  --shadow-overlay: 0 12px 28px -10px rgb(16 20 26 / 22%);
-  --scrim: rgb(24 28 34 / 32%);
+  --caution: #8a6308;
+  --caution-wash: rgb(138 99 8 / 10%);
+  --hazard-soft: rgb(179 35 28 / 8%);
+
+  --scrim: rgb(20 24 28 / 40%);
+}
+
+/* ==========================================================================================
+   Deprecated aliases
+   ==========================================================================================
+ *
+ * The first version of this token set named its colours for a soft dashboard: `--surface-raised`,
+ * `--text-muted`, `--radius-lg`. Those names are gone, because they described an appearance rather
+ * than a role and the appearance is what changed.
+ *
+ * These aliases exist for exactly one reason: a component that has not been visited yet must keep
+ * working while the visual layer underneath it is replaced wholesale. Every one of them is a name that
+ * appears nowhere in this file, so deleting an alias after its last use is a one-line change and the
+ * grep that finds the users is `grep -rn '\-\-surface-raised' apps/web/src`. They are listed together
+ * here rather than spread through the file so that removing the last one removes the whole block.
+ */
+:root {
+  --surface-sunken: var(--substrate-100);
+  --surface-base: var(--substrate-000);
+  --surface-raised: var(--substrate-200);
+  --surface-overlay: var(--substrate-300);
+  --surface-hover: var(--substrate-400);
+  --surface-active: var(--substrate-500);
+  --surface-inset: var(--substrate-100);
+
+  --line-subtle: var(--rule-hair);
+  --line: var(--rule);
+  --line-strong: var(--rule-strong);
+
+  --text-primary: var(--phosphor-bright);
+  --text-secondary: var(--phosphor);
+  --text-muted: var(--phosphor-dim);
+  --text-faint: var(--phosphor-faint);
+  --text-inverse: var(--phosphor-inverse);
+
+  --accent: var(--hazard);
+  --accent-hover: var(--hazard-bright);
+  --accent-subtle: var(--hazard-wash);
+  --accent-border: var(--hazard-edge);
+
+  --signal-ok: var(--data-readout);
+  --signal-ok-subtle: rgb(84 217 140 / 12%);
+  --signal-warn: var(--caution);
+  --signal-warn-subtle: var(--caution-wash);
+  --signal-danger: var(--hazard);
+  --signal-danger-subtle: var(--hazard-soft);
+  --signal-info: var(--phosphor-dim);
+  --signal-info-subtle: rgb(125 133 141 / 12%);
+  --signal-head: var(--caution);
+  --signal-head-subtle: var(--caution-wash);
+
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-pill: 0;
+
+  --shadow-overlay: 0 0 0 1px var(--rule-strong);
+  --shadow-raised: none;
 }
 
 /* ==========================================================================================
@@ -214,55 +284,34 @@
    ========================================================================================== */
 
 /*
- * Every transition and animation in the interface goes through a token, so honouring this
- * preference is one block rather than a hunt. Nothing here is decorative motion — it is all
- * feedback — so the durations go to zero rather than the transitions being removed, which keeps
- * `transitionend` handlers working.
+ * A token, so honouring the preference is one block rather than a hunt. Nothing here is decorative —
+ * it is all feedback — so the durations go to zero and `transitionend` handlers keep working.
  */
 @media (prefers-reduced-motion: reduce) {
   :root {
     --motion-fast: 0ms;
     --motion-base: 0ms;
   }
-
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
 }
 
 /* ==========================================================================================
-   Forced colours (Windows high contrast)
+   Forced colours
    ========================================================================================== */
 
 /*
- * In forced-colours mode the operating system replaces the palette, so the interface must not
- * fight it. Borders are made explicit because a background-only separation disappears, and the
- * accent is mapped to the system highlight so selection is still visible.
+ * Windows high contrast replaces the palette, so the application stops fighting it: lines become the
+ * system's text colour and the accent becomes the system's highlight, which is the only way a selected
+ * row stays visible when the OS has taken the colours away.
  */
 @media (forced-colors: active) {
   :root {
-    --line-subtle: CanvasText;
-    --line: CanvasText;
-    --line-strong: CanvasText;
-    --accent: Highlight;
-    --accent-border: Highlight;
-    --surface-hover: Highlight;
-    --surface-active: Highlight;
-  }
-
-  .panel,
-  .card,
-  .row,
-  button,
-  input,
-  select,
-  [role="gridcell"],
-  [role="columnheader"] {
-    border: 1px solid CanvasText;
+    --rule-hair: CanvasText;
+    --rule: CanvasText;
+    --rule-strong: CanvasText;
+    --hazard: Highlight;
+    --hazard-edge: Highlight;
+    --hazard-wash: Canvas;
+    --substrate-400: Highlight;
+    --substrate-500: Highlight;
   }
 }

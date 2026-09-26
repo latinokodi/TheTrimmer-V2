@@ -3,17 +3,17 @@ import { expect, test } from "@playwright/test";
 /**
  * The whole product, driven as a person drives it.
  *
- * The window is a column of cards in the order the work happens — Video, Subtitles, Range, Options,
- * Queue, actions, Progress — and these tests walk that order. Each starts from a fresh page and a fresh
- * stub, so the order they run in cannot matter.
+ * The window is a fixed panel of labelled zones — Video, Caption file, Range, Options, Queue,
+ * Find in the transcript, Progress — and these tests walk it in that order. Each starts from a fresh
+ * page and a fresh stub, so the order they run in cannot matter.
  *
- * There is no project setup step: the window opens a session by itself, because the original
- * application's project dialog was ceremony around a form that had nothing to do with it.
+ * There is no project setup step: the window opens a session by itself, because a dialog asking what to
+ * call something is ceremony in front of a form that has nothing to do with it.
  */
 
 /** Choose the fixture master. The stub answers the picker with a real path. */
 async function chooseMaster(page: import("@playwright/test").Page): Promise<void> {
-  await page.getByRole("button", { name: "Browse…" }).click();
+  await page.getByRole("button", { name: "Browse" }).click();
   await expect(page.getByRole("dialog", { name: "Choose a video" })).toBeVisible();
   await page.getByRole("button", { name: "Choose a file…" }).click();
   await expect(page.getByLabel("Video file")).toHaveValue(/A007C012_250312_R1QK\.mov$/);
@@ -30,31 +30,33 @@ async function mark(
   await expect(page.locator(".range__plan")).not.toContainText("Type both timecodes");
 }
 
-test("the cards are in the order the work happens, and the first one says what to do", async ({
+test("the zones are in the order the work happens, and the first says what to do", async ({
   page,
 }) => {
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "TheTrimmer" })).toBeVisible();
-  await expect(page.locator(".masthead__tagline")).toContainText("Frame-exact, lossless segment trimming");
-
-  // The four cards the original had, in the original's order, plus the queue — the thing the engine
-  // always supported and the window never exposed. The Range card carries the timecode format in its
-  // heading, the way the original's did, so the headings are compared by their first line.
-  const titles = (await page.locator(".card__title").allInnerTexts()).map(
-    (title) => title.split("\n")[0]?.trim() ?? "",
+  await expect(page.locator(".titlebar__tagline")).toContainText(
+    "Frame-exact, lossless segment cutting",
   );
-  expect(titles.slice(0, 5)).toEqual(["Video", "Subtitles", "Range", "Options", "Queue"]);
-  expect(titles).toContain("Progress");
 
-  // The first card is the one that needs answering, and it says so.
+  /*
+   * The zones, in the order an operator works through them. They read as uppercase because a zone title
+   * is set in caps by the stylesheet rather than typed in caps in the markup — which is the right way
+   * round, since the accessible name is the readable one and only the rendering is shouting.
+   */
+  const titles = (await page.locator(".zone__title").allInnerTexts()).map((title) =>
+    title.trim().toLowerCase(),
+  );
+  expect(titles.slice(0, 5)).toEqual(["video", "caption file", "range", "options", "queue"]);
+  expect(titles).toContain("progress");
+
+  // The first zone is the one that needs answering, and it says so.
   await expect(page.getByLabel("Video file")).toHaveValue("");
-  await expect(page.locator(".card__facts").first()).toContainText("Pick a video");
+  await expect(page.locator(".zone__note").first()).toContainText("no file");
 });
 
-test("every option is on the window, in the Options card, with its value visible", async ({
-  page,
-}) => {
+test("every setting is on the panel, with its value visible", async ({ page }) => {
   await page.goto("/");
 
   for (const control of ["In point", "Out point", "Delivery", "Handles", "Verify"]) {
@@ -63,12 +65,6 @@ test("every option is on the window, in the Options card, with its value visible
 
   // Nothing is folded away anywhere.
   await expect(page.locator("details")).toHaveCount(0);
-
-  // The three settings are inside the Options card rather than scattered.
-  const options = page.locator(".card", { has: page.getByRole("heading", { name: "Options" }) });
-  await expect(options.getByLabel("Delivery")).toBeVisible();
-  await expect(options.getByLabel("Handles")).toBeVisible();
-  await expect(options.getByLabel("Verify")).toBeVisible();
 });
 
 test("the marks show the frame numbers as they are typed, and the length is inclusive", async ({
@@ -78,11 +74,11 @@ test("the marks show the frame numbers as they are typed, and the length is incl
   await chooseMaster(page);
 
   await page.getByLabel("In point").fill("00:00:01:00");
-  await expect(page.locator(".range__help").first()).toContainText("frame 25");
+  await expect(page.locator(".range__row").first()).toContainText("frame 25");
 
   // 00:00:02:00 is frame 50 and the **last frame kept**, so the range is 26 frames, not 25.
   await page.getByLabel("Out point").fill("00:00:02:00");
-  await expect(page.locator(".range__help").last()).toContainText("frame 50, the last one kept");
+  await expect(page.locator(".range__row").nth(1)).toContainText("frame 50, the last one kept");
   await expect(page.locator(".range__plan")).toContainText("26 frames");
 
   await expect(page.getByRole("button", { name: "Trim", exact: true })).toBeEnabled();
@@ -110,7 +106,7 @@ test("a range that is backwards offers no button", async ({ page }) => {
   await page.getByLabel("Out point").fill("00:00:02:00");
 
   await expect(page.getByRole("button", { name: "Trim", exact: true })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Queue it" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Queue", exact: true })).toBeDisabled();
 });
 
 test("a timecode the source cannot reach says so, in the plan line", async ({ page }) => {
@@ -128,12 +124,12 @@ test("queueing ranges and trimming them produces verified files", async ({ page 
   await chooseMaster(page);
 
   await mark(page, "00:00:01:00", "00:00:02:00");
-  await page.getByRole("button", { name: "Queue it" }).click();
+  await page.getByRole("button", { name: "Queue", exact: true }).click();
   await expect(page.locator(".cut-table__row")).toHaveCount(1);
   await expect(page.getByLabel("In point")).toHaveValue("");
 
   await mark(page, "00:00:04:00", "00:00:06:00");
-  await page.getByRole("button", { name: "Queue it" }).click();
+  await page.getByRole("button", { name: "Queue", exact: true }).click();
   await expect(page.locator(".cut-table__row")).toHaveCount(2);
 
   const trim = page.getByRole("button", { name: "Trim 2" });
@@ -141,7 +137,7 @@ test("queueing ranges and trimming them produces verified files", async ({ page 
   await expect(trim).toBeEnabled({ timeout: 10_000 });
   await trim.click();
 
-  // The proof card appears, one row per segment, each opening onto the checks it was measured against.
+  // The proof zone appears, one row per segment, each opening onto the checks it was measured against.
   await expect(page.getByRole("heading", { name: "What came out" })).toBeVisible();
   await expect(page.locator(".proof__item")).toHaveCount(2);
   await page.locator(".proof__head").first().click();
@@ -149,7 +145,7 @@ test("queueing ranges and trimming them produces verified files", async ({ page 
   await expect(page.getByText("Run signature")).toBeVisible();
 });
 
-test("the verification policy is on the window and reaches the project", async ({ page }) => {
+test("the verification policy is on the panel and reaches the project", async ({ page }) => {
   await page.goto("/");
   await chooseMaster(page);
 
@@ -176,19 +172,19 @@ test("the transcript can be searched and a range marked from a sentence", async 
   await page.goto("/");
   await chooseMaster(page);
 
-  await page.getByLabel("Find in the transcript").fill("second");
+  await page.getByLabel("Find").fill("second");
   await expect(page.locator(".hit").first()).toContainText("second take");
 
   await page.locator(".hit").first().click();
-  await page.getByRole("button", { name: "Mark this sentence" }).click();
+  await page.getByRole("button", { name: "Mark it" }).click();
   await expect(page.locator(".cut-table__row")).toHaveCount(1);
 });
 
-test("the progress card is there before anything runs, and says so", async ({ page }) => {
+test("the progress zone is there before anything runs, and says so", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Progress" })).toBeVisible();
-  await expect(page.locator(".progress-status")).toHaveText("ready");
+  await expect(page.locator(".progress-status").first()).toHaveText("ready");
   await expect(page.locator(".log")).toContainText("Nothing has run yet");
 });
 
@@ -199,5 +195,5 @@ test("the interface works with no window behind it, which is the whole point", a
     return tauri?.mocks === true;
   });
   expect(bridged).toBe(true);
-  await expect(page.locator(".app__column")).toBeVisible();
+  await expect(page.locator(".app")).toBeVisible();
 });

@@ -1,301 +1,521 @@
 /*
- * The application layout: a column of cards.
+ * The application layout: a fixed instrument panel.
  *
  * ============================================================================================
- * The shape, and why it is this one
+ * It is not responsive, and that is the point
  * ============================================================================================
  *
- * The original TheTrimmer window was a single centred column of labelled cards — Video, Subtitles,
- * Range, Options — then a row of buttons, a progress strip and a log. This is that structure, because
- * two versions of this shell tried to be cleverer and both were worse: a three-column dashboard, then a
- * two-column workbench, and each one rearranged a form that did not need rearranging. A trimming tool's
- * form *is* the product; putting it in a grid with side panels makes a simple tool look like a
- * complicated one.
+ * This is a Windows desktop application for a cutting room. It opens fullscreen. There is **no media
+ * query in this file**, no breakpoint, no reflow — because there is no mobile, and a professional tool
+ * that rearranges itself is a tool that cannot be learned by muscle memory. An operator's hand knows
+ * where the In field is; it must stay there.
  *
- * So: one column, cards in the order the work happens, nothing folded away, and the features the
- * original did not have — a queue, transcript search, a working progress log — added as cards of their
- * own rather than built around the form.
+ * The window has a 1280x800 minimum, declared in `tauri.conf.json`. The layout is a grid that fills
+ * whatever it is given, and inside it every zone is `min-height: 0` with its own scroll if its own
+ * contents can be arbitrarily long. **The frame never scrolls.** A scrollbar on the window means the
+ * operator cannot see a control, and a control they cannot see does not exist.
  *
- * ## The card
+ * ============================================================================================
+ * The frame
+ * ============================================================================================
  *
- * A 1 px border on a slightly raised surface, an 8 px radius, and a bold title inside the top-left.
- * That is the original's treatment and it is the right amount of structure: enough that the sections are
- * unmistakable when scanning, not so much that the window becomes a filing cabinet. Cards are the one
- * place in this interface where a border is correct, because they are the *only* grouping mechanism —
- * there is no second level of nesting to distinguish.
+ * ```
+ * ┌ title bar ────────────────────────────────────────────────────────────────────────────┐ 30
+ * ├──────────────────────────────┬────────────────────────────────────────────────────────┤
+ * │ VIDEO / TRANSCRIPT / RANGE   │ QUEUE                                                  │
+ * │ OPTIONS                      │  table (scrolls internally when long)                  │ 1fr
+ * │ ── actions ──                │ ── WHAT CAME OUT ──                                    │
+ * ├──────────────────────────────┴────────────────────────────────────────────────────────┤
+ * │ TRANSCRIPT: find + hits                                                               │ 0.42fr
+ * ├───────────────────────────────────────────────────────────────────────────────────────┤
+ * │ PROGRESS: bar, status, log (scrolls internally)                                        │ 0.62fr
+ * ├───────────────────────────────────────────────────────────────────────────────────────┤
+ * │ ffmpeg lamp · queue counts · notice · theme                                            │ 24
+ * └───────────────────────────────────────────────────────────────────────────────────────┘
+ * ```
  *
- * ## Centred, and capped
+ * ============================================================================================
+ * Compartmentalisation
+ * ============================================================================================
  *
- * The column is 940 px and centred. A form that spans a 1900 px display puts a label and its field far
- * enough apart that reading it costs a head movement, and a timecode 1200 px from its own label is a
- * timecode you check twice.
+ * Zones are separated by **solid hairlines and a change of substrate**, not by cards floating on a
+ * background. A zone is a labelled compartment in a rack panel: a header strip with a 9 px uppercase
+ * title, a rule under it, and a body. That is the whole visual language, and it is what makes forty
+ * controls in one window read as a panel rather than as clutter.
  *
- * ## Density
+ * Every corner is 90 degrees. Not one `border-radius` appears anywhere, including on buttons, inputs
+ * and the log well.
  *
- * 13 px body, 4 px rhythm, one fact per line, and every figure in the monospace stack with
- * `tabular-nums`. Nothing is folded away: the delivery preset, the handles and the verification policy
- * are all in the Options card with their values visible.
+ * ============================================================================================
+ * Density
+ * ============================================================================================
  *
- * ## One accent, and motion only as feedback
- *
- * A neutral ramp with one desaturated accent. No gradient, no glow, no pure black. The only motion is
- * feedback for something the user just did — 90–140 ms, `transform` and `opacity` only. Nothing moves on
- * its own: movement in a tool is not delight, it is something to wait for.
+ * A 26 px row, a 26 px field, a 22 px zone header. Small on purpose: the window sits beside a video
+ * monitor and the operator is comparing two timecodes, three column values and a plan badge at once.
+ * Every figure is in the data face with `tabular-nums`, so a column lines up digit for digit.
  */
 
 .app {
+  display: grid;
+  grid-template-rows:
+    var(--titlebar-height)
+    minmax(0, 1fr)
+    minmax(0, 0.42fr)
+    minmax(0, 0.62fr)
+    var(--footer-height);
   height: 100%;
-  background: var(--surface-sunken);
-}
-
-.app__scroll {
-  height: 100%;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.app__column {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  width: min(940px, calc(100% - var(--space-6)));
-  margin: 0 auto;
-  padding: var(--space-5) 0 var(--space-6);
+  overflow: hidden;
+  background: var(--substrate-000);
+  font-family: var(--font-data);
 }
 
 /* ==========================================================================================
-   The masthead
+   Title bar
    ========================================================================================== */
 
-.masthead {
+.titlebar {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  padding-bottom: var(--space-1);
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-5);
+  background: var(--substrate-300);
+  border-bottom: var(--rule) solid var(--rule-strong);
 }
 
 /*
- * The product name is the largest type in the window, which is the one place that is right: this is the
- * title of a document rather than a control, and a person reads it once.
+ * The mark is a filled hazard block with the product's initial reversed out of it. No logo file, no
+ * icon font, and it is one of the only places the accent appears.
  */
-.masthead__product {
-  font-size: 1.5rem;
-  font-weight: var(--weight-semibold);
-  letter-spacing: -0.015em;
-  line-height: 1.2;
+.titlebar__mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: var(--hazard);
+  color: var(--phosphor-inverse);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  line-height: 1;
 }
 
-.masthead__tagline {
-  margin-top: 2px;
-  font-size: var(--text-xs);
-  color: var(--text-muted);
+.titlebar__product {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--phosphor-bright);
+}
+
+.titlebar__tagline {
+  font-size: var(--text-2xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--phosphor-faint);
+}
+
+.titlebar__rule {
+  width: var(--rule);
+  height: 12px;
+  background: var(--rule);
 }
 
 /* ==========================================================================================
-   The card
+   The body: two columns, and the form column is the wider one
    ========================================================================================== */
 
-.card {
-  display: flex;
-  flex-direction: column;
-  background: var(--surface-raised);
-  border: 1px solid var(--line-subtle);
-  border-radius: var(--radius-lg);
+.app__body {
+  display: grid;
+  grid-template-columns: var(--form-panel-width) minmax(0, 1fr);
+  min-height: 0;
   overflow: hidden;
 }
 
-.card__head {
+.app__col {
   display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4) 0;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.card__title {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-  color: var(--text-secondary);
+.app__col--form {
+  background: var(--substrate-200);
+  border-right: var(--rule) solid var(--rule-strong);
 }
 
-.card__note {
+.app__col--queue {
+  background: var(--substrate-100);
+}
+
+/* ==========================================================================================
+   A zone: a header strip, a rule, a body
+   ========================================================================================== */
+
+.zone {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-bottom: var(--rule) solid var(--rule-strong);
+}
+
+.zone:last-child {
+  border-bottom: none;
+}
+
+/* Grow the one zone in a column that should absorb the leftover height. */
+.zone--grow {
+  flex: 1 1 auto;
+}
+
+.zone__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex: none;
+  height: var(--zone-head-height);
+  padding: 0 var(--space-5);
+  background: var(--substrate-300);
+  border-bottom: var(--rule-hair) solid var(--rule-hair);
+}
+
+.zone__title {
   font-size: var(--text-2xs);
-  font-weight: var(--weight-regular);
-  color: var(--text-faint);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--phosphor);
 }
 
-.card__count {
-  min-width: 17px;
-  padding: 0 5px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-active);
-  color: var(--text-secondary);
+/*
+ * The units and counts in a zone header, in faint phosphor at the same size as the title. A header
+ * that carries its own state — how many rows, what the format is — is a header you do not have to open
+ * anything to read.
+ */
+.zone__note {
+  font-size: var(--text-2xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--phosphor-faint);
+}
+
+.zone__count {
+  min-width: 16px;
+  padding: 0 var(--space-2);
+  background: var(--substrate-500);
+  color: var(--phosphor);
   font-size: var(--text-2xs);
   text-align: center;
 }
 
-.card__body {
+.zone__body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4) var(--space-4);
+  gap: var(--space-5);
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-5);
 }
 
-/* A body whose child brings its own padding — the queue table, which is full-bleed. */
-.card__body--flush {
-  padding: 0;
+.zone__body--flush {
   gap: 0;
+  padding: 0;
 }
 
-/* One line of facts under a field: the probed rate, the caption count, the plan. */
-.card__facts {
-  font-size: var(--text-xs);
-  color: var(--text-muted);
-  line-height: 1.5;
+.zone__body--tight {
+  gap: var(--space-4);
 }
 
 /* ==========================================================================================
-   Rows: a label, a field, and a trailing note
+   Fields: a label column and a value column, one grid for the whole panel
    ========================================================================================== */
+
+/*
+ * `In point`, `Out point`, `Delivery`, `Handles` and `Verify` all start their labels on the same left
+ * edge and their controls on the same second edge. One label column for the whole form is what makes it
+ * scannable down the page; a second alignment breaks the run and the eye has to find it again.
+ */
+.field-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.field-row__label {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--phosphor-dim);
+}
+
+.field-row__value {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* The trailing note on a settings row, to the right of the control. */
+.field-row__note {
+  font-size: var(--text-2xs);
+  color: var(--phosphor-faint);
+  white-space: nowrap;
+}
+
+/* ==========================================================================================
+   Controls
+   ========================================================================================== */
+
+.path-field,
+select,
+input[type="text"],
+input[type="number"],
+input[type="search"] {
+  width: 100%;
+  height: var(--field-height);
+  padding: 0 var(--space-4);
+  border: var(--rule) solid var(--rule);
+  background: var(--substrate-000);
+  color: var(--phosphor-bright);
+  font-family: var(--font-data);
+  font-size: var(--text-sm);
+  transition:
+    border-color var(--motion-fast) var(--easing),
+    background var(--motion-fast) var(--easing);
+}
+
+select {
+  /* A native indicator in a 26 px row needs its own slot or the text is clipped. */
+  padding-right: var(--space-6);
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--phosphor-dim) 50%),
+    linear-gradient(135deg, var(--phosphor-dim) 50%, transparent 50%);
+  background-position:
+    right 11px center,
+    right 7px center;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+input:hover:not(:disabled),
+select:hover:not(:disabled) {
+  border-color: var(--rule-strong);
+}
+
+/*
+ * Focus is a 1 px hazard outline and a change of edge, no glow. On a dark instrument panel a glowing
+ * ring is the visual equivalent of a beep, and this application has one accent for one purpose.
+ */
+input:focus-visible,
+select:focus-visible,
+button:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: var(--focus-width) solid var(--hazard);
+  outline-offset: 1px;
+}
+
+input:read-only {
+  color: var(--phosphor-dim);
+}
+
+input[aria-invalid="true"] {
+  border-color: var(--hazard);
+}
+
+input::placeholder {
+  color: var(--phosphor-faint);
+}
+
+input[type="number"] {
+  text-align: right;
+}
+
+/*
+ * The timecode field: the one control larger than the body size, because eleven characters of
+ * `HH:MM:SS:FF` are what is being compared and what the whole product turns on. Wide-tracked,
+ * monospace, `tabular-nums`, centred so the colons line up between the two fields.
+ */
+input.timecode-field {
+  height: var(--timecode-height);
+  padding: 0 var(--space-5);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.1em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Buttons ---------------------------------------------------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  flex: none;
+  height: var(--field-height);
+  padding: 0 var(--space-5);
+  border: var(--rule) solid var(--rule-strong);
+  background: var(--substrate-300);
+  color: var(--phosphor-bright);
+  font-family: var(--font-data);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) var(--easing),
+    border-color var(--motion-fast) var(--easing),
+    color var(--motion-fast) var(--easing);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--substrate-400);
+  border-color: var(--phosphor-faint);
+}
+
+/* A 1 px press. The only movement any control in this window makes. */
+.btn:active:not(:disabled) {
+  background: var(--substrate-500);
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  background: var(--substrate-100);
+  border-color: var(--rule);
+  color: var(--phosphor-faint);
+  cursor: not-allowed;
+}
+
+/*
+ * The one primary action in the window. Solid hazard with inverse text — the same treatment as the mark
+ * in the title bar, so "the thing that does the work" reads the same everywhere.
+ */
+.btn--primary {
+  background: var(--hazard);
+  border-color: var(--hazard);
+  color: var(--phosphor-inverse);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--hazard-bright);
+  border-color: var(--hazard-bright);
+}
+
+.btn--primary:disabled {
+  background: var(--substrate-300);
+  border-color: var(--rule);
+  color: var(--phosphor-faint);
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--phosphor-dim);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: var(--substrate-400);
+  border-color: transparent;
+  color: var(--phosphor-bright);
+}
+
+.btn--icon {
+  width: var(--field-height);
+  padding: 0;
+}
+
+.btn--big {
+  height: 30px;
+  padding: 0 var(--space-8);
+  font-size: var(--text-xs);
+}
+
+.btn--small {
+  height: 18px;
+  padding: 0 var(--space-4);
+  letter-spacing: 0.1em;
+}
+
+.btn--danger {
+  border-color: var(--hazard-edge);
+  color: var(--hazard);
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: var(--hazard-wash);
+}
+
+/* ---- Rows, generically ------------------------------------------------------------------ */
 
 .row {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-4);
   min-width: 0;
 }
 
-.path-field {
+.spacer {
   flex: 1 1 auto;
-  min-width: 0;
-  height: 32px;
-  font-family: var(--font-figure);
-  font-size: var(--text-sm);
 }
 
-.path-field:read-only {
-  color: var(--text-muted);
-}
+/* ==========================================================================================
+   The range zone
+   ========================================================================================== */
 
-.row > .btn {
-  flex: none;
-}
-
-/*
- * The range rows: label, field, and the sentence that says what the field currently means. The help text
- * is in a fixed-width column so the two rows line up, which is what makes them comparable at a glance.
- */
 .range {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-4);
 }
 
 .range__row {
   display: grid;
-  grid-template-columns: 9ch minmax(0, 320px) minmax(0, 1fr);
+  grid-template-columns: 88px minmax(0, 220px) minmax(0, 1fr);
   align-items: center;
-  gap: var(--space-3);
-}
-
-.range__label {
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-}
-
-.range__help {
-  font-size: var(--text-xs);
-  color: var(--text-faint);
+  gap: var(--space-4);
 }
 
 /*
- * The timecode field: eleven characters of `HH:MM:SS:FF`, in the figure face, wide-tracked, at the one
- * size in the window that is larger than the body. This is the field the product turns on.
- */
-input.timecode-field {
-  height: 38px;
-  padding: 0 var(--space-3);
-  font-family: var(--font-figure);
-  font-size: var(--text-lg);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.06em;
-}
-
-/*
- * The plan line under the marks. Monospace and quiet, like the original's, because it is a line of data
- * that changes as you type and a proportional face makes it jump.
+ * The plan line: what the marks currently mean, in the data face, quiet until it has something to say.
+ * It sits under the two fields and is the most consequential line in the window — it is where "lossless
+ * copy" appears before anything is cut.
  */
 .range__plan {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-1);
-  font-family: var(--font-figure);
+  gap: var(--space-4);
+  min-height: 16px;
+  padding-top: var(--space-4);
+  border-top: var(--rule-hair) solid var(--rule-hair);
   font-size: var(--text-xs);
-  color: var(--text-muted);
+  color: var(--phosphor-dim);
 }
 
 .range__plan .ok {
-  color: var(--signal-ok);
+  color: var(--data-readout);
 }
 
 .range__plan .warn {
-  color: var(--signal-warn);
+  color: var(--caution);
 }
 
 .range__plan .danger {
-  color: var(--signal-danger);
+  color: var(--hazard);
 }
 
 .range__sep {
-  width: 3px;
-  height: 3px;
-  border-radius: var(--radius-pill);
-  background: var(--line-strong);
-}
-
-/* ==========================================================================================
-   Options
-   ========================================================================================== */
-
-.options {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-/*
- * The same label column as the range rows, so `Delivery`, `Handles` and `Verify` all start on the same
- * left edge as `In point` and `Out point` above them. One label column for the whole form is what makes
- * it scannable; a second alignment breaks the run.
- */
-.options__row {
-  display: grid;
-  grid-template-columns: 9ch auto minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.options__label {
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-}
-
-.options__wide {
-  width: min(100%, 520px);
-}
-
-.options__narrow {
-  width: 72px;
-  text-align: center;
-}
-
-.options__note {
-  font-size: var(--text-xs);
-  color: var(--text-faint);
+  width: var(--rule);
+  height: 10px;
+  background: var(--rule-strong);
 }
 
 /* ==========================================================================================
@@ -305,82 +525,90 @@ input.timecode-field {
 .actions {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) 0;
+  gap: var(--space-4);
+  flex: none;
+  min-height: 40px;
+  padding: 0 var(--space-5);
+  background: var(--substrate-300);
+  border-top: var(--rule) solid var(--rule-strong);
 }
 
 /* ==========================================================================================
-   The cut table
+   The queue table
    ========================================================================================== */
 
 .cut-table {
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 /*
- * One grid template, used by the header row and by every body row: column *n* is the same width in both.
- * A flex row per row aligns only by luck and stops aligning the moment one cell is wider than the rest.
+ * One grid template, used by the header and by every row: column *n* is the same width in both. A flex
+ * row per row aligns only by luck and stops aligning the moment one cell is wider than the rest.
  */
 .cut-table__head,
 .cut-table__row {
   display: grid;
   grid-template-columns:
     26px
-    26px
-    minmax(120px, 1fr)
-    104px
-    104px
-    68px
-    96px
-    28px;
+    24px
+    minmax(0, 1fr)
+    92px
+    92px
+    60px
+    88px
+    24px;
   align-items: center;
-  gap: var(--space-3);
-  padding: 0 var(--space-4);
+  gap: var(--space-4);
+  padding: 0 var(--space-5);
   min-width: 0;
 }
 
 .cut-table__head {
-  height: var(--head-height);
-  background: var(--surface-inset);
-  border-bottom: 1px solid var(--line-subtle);
+  flex: none;
+  height: var(--zone-head-height);
+  background: var(--substrate-300);
+  border-bottom: var(--rule) solid var(--rule-strong);
   font-size: var(--text-2xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.07em;
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--text-muted);
+  color: var(--phosphor-faint);
+}
+
+.cut-table__body {
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .cut-table__row {
   height: var(--row-height);
-  border-bottom: 1px solid var(--line-subtle);
+  border-bottom: var(--rule-hair) solid var(--rule-hair);
   cursor: default;
   transition: background var(--motion-fast) var(--easing);
 }
 
-.cut-table__row:last-child {
-  border-bottom: none;
-}
-
 .cut-table__row:hover {
-  background: var(--surface-hover);
+  background: var(--substrate-400);
 }
 
 /*
- * The selection is a 2 px inset bar in the accent plus a faint wash — not a filled row. A filled row in a
- * table of timecodes makes the figures harder to read exactly when you are looking at them.
+ * Selection is a 2 px hazard edge plus a wash — not an inverted row. Inverting a row of timecodes makes
+ * the figures harder to read at exactly the moment the operator is reading them.
  */
 .cut-table__row--selected {
-  background: var(--accent-subtle);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: var(--hazard-wash);
+  box-shadow: inset 2px 0 0 var(--hazard);
 }
 
 .cut-table__row--disabled {
-  opacity: 0.45;
+  opacity: 0.4;
 }
 
+/* A range that cannot be cut keeps a hazard edge whether or not it is selected. */
 .cut-table__row--blocked {
-  box-shadow: inset 2px 0 0 var(--signal-danger);
+  box-shadow: inset 2px 0 0 var(--hazard);
 }
 
 .cut-table__cell {
@@ -397,85 +625,248 @@ input.timecode-field {
 .cut-table__cell--index,
 .cut-table__cell--tc,
 .cut-table__cell--num {
-  font-family: var(--font-figure);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
 }
 
 .cut-table__cell--index {
-  color: var(--text-faint);
+  color: var(--phosphor-faint);
   font-size: var(--text-xs);
 }
 
 .cut-table__cell--tc {
-  color: var(--text-primary);
+  color: var(--phosphor-bright);
 }
 
 .cut-table__cell--num {
-  color: var(--text-secondary);
+  color: var(--phosphor);
   font-size: var(--text-xs);
 }
 
 .cut-table__cell--name {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-4);
 }
 
 .cut-table__name {
-  color: var(--text-primary);
-  font-weight: var(--weight-medium);
-}
-
-.cut-table__problem {
-  flex: none;
+  color: var(--phosphor-bright);
 }
 
 .cut-table__cell--actions {
   text-align: right;
 }
 
-.side__empty {
-  padding: var(--space-4);
+.empty-state {
+  padding: var(--space-6) var(--space-5);
+  font-family: var(--font-ui);
   font-size: var(--text-xs);
-  color: var(--text-muted);
-  line-height: 1.6;
+  color: var(--phosphor-dim);
+  line-height: var(--leading-loose);
+}
+
+/* ==========================================================================================
+   Badges and lamps: shape and a word, never colour alone
+   ========================================================================================== */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: 15px;
+  padding: 0 var(--space-3);
+  border: var(--rule) solid currentcolor;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.badge--ok {
+  color: var(--data-readout);
+}
+
+.badge--head,
+.badge--warn {
+  color: var(--caution);
+}
+
+.badge--danger {
+  color: var(--hazard);
+}
+
+.badge--info {
+  color: var(--phosphor-dim);
+}
+
+/*
+ * A status is a filled or hollow square — a lamp, not a dot — plus its word. The square survives forced
+ * colours and a monochrome print; the word survives colour blindness.
+ */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.status::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: currentcolor;
+}
+
+.status--ok {
+  color: var(--data-readout);
+}
+
+.status--warn {
+  color: var(--caution);
+}
+
+.status--danger {
+  color: var(--hazard);
+}
+
+.status--info {
+  color: var(--phosphor-dim);
+}
+
+/* Hollow for "no", so it is distinguishable without colour at all. */
+.status--idle {
+  color: var(--phosphor-faint);
+}
+
+.status--idle::before {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px currentcolor;
+}
+
+/* ==========================================================================================
+   The transcript zone
+   ========================================================================================== */
+
+.transcript {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: var(--space-5);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.transcript__find {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.transcript__list {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hits {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--substrate-000);
+  border: var(--rule) solid var(--rule-hair);
+}
+
+.hit {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-4);
+  text-align: left;
+  font-size: var(--text-xs);
+  color: var(--phosphor);
+  cursor: pointer;
+}
+
+.hit:hover {
+  background: var(--substrate-400);
+}
+
+.hit--selected {
+  background: var(--hazard-wash);
+  box-shadow: inset 2px 0 0 var(--hazard);
+  color: var(--phosphor-bright);
+}
+
+.hit__time {
+  flex: none;
+  width: 8ch;
+  color: var(--phosphor-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.hit__text {
+  min-width: 0;
+}
+
+.hits__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: var(--rule-hair) solid var(--rule-hair);
+}
+
+.hits__preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--phosphor-dim);
 }
 
 /* ==========================================================================================
    Progress and the log
    ========================================================================================== */
 
-.card--log .card__body {
-  gap: var(--space-3);
-}
-
 .progress-strip {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--space-5);
+  flex: none;
+  height: 24px;
+  padding: 0 var(--space-5);
+  background: var(--substrate-300);
+  border-bottom: var(--rule-hair) solid var(--rule-hair);
 }
 
 /*
- * Indeterminate: a 3 px track with a bright segment travelling along it. The engine reports per-step
- * timing but not a fraction of the whole, and a bar that filled to 40 % and stopped would be inventing a
- * number. A travelling segment says "something is happening" and claims nothing more.
+ * Indeterminate: a track with a bright segment travelling it. The engine reports per-step timing but not
+ * a fraction of the whole, and a bar that filled to 40 % and stopped would be inventing a number.
  */
 .progress-bar {
-  height: 3px;
-  background: var(--line);
-  border-radius: var(--radius-pill);
+  position: relative;
+  flex: none;
+  width: 180px;
+  height: 4px;
+  background: var(--substrate-000);
+  border: var(--rule) solid var(--rule);
   overflow: hidden;
 }
 
 .progress-bar--running::after {
   content: "";
-  display: block;
-  width: 28%;
-  height: 100%;
-  background: var(--accent);
-  border-radius: var(--radius-pill);
-  animation: sweep 1.4s var(--easing) infinite;
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 30%;
+  background: var(--hazard);
+  animation: sweep 1.3s var(--easing) infinite;
 }
 
 @keyframes sweep {
@@ -483,84 +874,95 @@ input.timecode-field {
     transform: translateX(-100%);
   }
   100% {
-    transform: translateX(360%);
+    transform: translateX(340%);
   }
 }
 
 .progress-status {
-  font-family: var(--font-figure);
-  font-size: var(--text-xs);
-  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--phosphor-dim);
 }
 
 .log {
-  height: 150px;
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface-inset);
-  border: 1px solid var(--line-subtle);
-  border-radius: var(--radius-md);
-  font-family: var(--font-figure);
-  font-size: var(--text-2xs);
-  line-height: 1.6;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  padding: var(--space-4) var(--space-5);
+  background: var(--substrate-000);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
   user-select: text;
 }
 
 .log__empty {
-  color: var(--text-faint);
+  color: var(--phosphor-faint);
 }
 
 .log__line {
   white-space: pre-wrap;
   word-break: break-all;
-  color: var(--text-secondary);
+  color: var(--phosphor-dim);
 }
 
+/* A step is a heading for the lines under it. */
 .log__line--step {
-  color: var(--text-primary);
-  font-weight: var(--weight-medium);
+  color: var(--phosphor-bright);
+  font-weight: var(--weight-semibold);
 }
 
-/* The exact command line, dimmed: it is there to be read when something is slow or wrong. */
+/* The exact command line, dimmed: there to be read when something is slow or wrong. */
 .log__line--command {
-  color: var(--text-faint);
+  color: var(--phosphor-faint);
 }
 
 .log__line--error {
-  color: var(--signal-danger);
+  color: var(--hazard);
 }
 
 /* ==========================================================================================
-   The footer line
+   The footer
    ========================================================================================== */
 
 .footerline {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  min-height: 24px;
-  padding: 0 var(--space-1);
+  gap: var(--space-5);
+  padding: 0 var(--space-5);
+  background: var(--substrate-300);
+  border-top: var(--rule) solid var(--rule-strong);
   font-size: var(--text-2xs);
-  color: var(--text-muted);
+  letter-spacing: 0.06em;
+  color: var(--phosphor-faint);
   overflow: hidden;
-}
-
-.footerline__notice {
-  max-width: 56ch;
-  color: var(--text-secondary);
 }
 
 .footerline__item {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   min-width: 0;
   white-space: nowrap;
 }
 
 .footerline__detail {
-  max-width: 46ch;
-  color: var(--text-faint);
+  max-width: 44ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.footerline__sep {
+  width: var(--rule);
+  height: 10px;
+  background: var(--rule);
+}
+
+.footerline__notice {
+  max-width: 60ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--phosphor-dim);
 }
 
 /* ==========================================================================================
@@ -571,81 +973,58 @@ input.timecode-field {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .proof__item {
-  border-radius: var(--radius-sm);
-  background: var(--surface-inset);
-  overflow: hidden;
+  border-bottom: var(--rule-hair) solid var(--rule-hair);
 }
 
 .proof__head {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: var(--space-3);
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-4);
   width: 100%;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-4) var(--space-5);
   text-align: left;
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
+  cursor: pointer;
 }
 
 .proof__head:hover {
-  background: var(--surface-hover);
+  background: var(--substrate-400);
 }
 
 .proof__name {
-  font-weight: var(--weight-medium);
-  color: var(--text-primary);
+  color: var(--phosphor-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .proof__summary {
-  grid-column: 2 / -1;
-  color: var(--text-muted);
+  grid-column: 2;
+  color: var(--phosphor-faint);
   font-size: var(--text-2xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .proof__detail {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3) var(--space-3);
-  border-top: 1px solid var(--line-subtle);
-}
-
-.facts {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: baseline;
-  gap: var(--space-1) var(--space-4);
-  font-size: var(--text-xs);
-}
-
-.facts dt {
-  color: var(--text-muted);
-}
-
-.facts dd {
-  min-width: 0;
-  color: var(--text-secondary);
-}
-
-.facts .ok {
-  color: var(--signal-ok);
-}
-
-.facts .warn {
-  color: var(--signal-warn);
-}
-
-.facts .danger {
-  color: var(--signal-danger);
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+  background: var(--substrate-000);
+  border-top: var(--rule-hair) solid var(--rule-hair);
 }
 
 /*
  * The checks table: no vertical rules and no box. A hairline between rows is enough, and it keeps the
- * measured column next to the expected one so the eye can compare them.
+ * measured column beside the expected one so the eye can compare them.
  */
 .checks {
   width: 100%;
@@ -656,8 +1035,8 @@ input.timecode-field {
 .checks th,
 .checks td {
   text-align: left;
-  padding: 2px 0;
-  border-bottom: 1px solid var(--line-subtle);
+  padding: var(--space-2) 0;
+  border-bottom: var(--rule-hair) solid var(--rule-hair);
 }
 
 .checks tbody tr:last-child th,
@@ -666,25 +1045,57 @@ input.timecode-field {
 }
 
 .checks thead th {
-  color: var(--text-faint);
-  font-weight: var(--weight-semibold);
+  color: var(--phosphor-faint);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
 }
 
 .checks td:not(:first-child) {
-  padding-left: var(--space-3);
+  padding-left: var(--space-5);
 }
 
 .checks__name {
-  font-weight: var(--weight-medium);
-  color: var(--text-secondary);
+  color: var(--phosphor);
   white-space: nowrap;
 }
 
 .checks__detail {
-  color: var(--text-muted);
-  line-height: 1.5;
+  color: var(--phosphor-dim);
+  line-height: var(--leading-normal);
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-2) var(--space-6);
+  font-size: var(--text-xs);
+}
+
+.facts dt {
+  font-size: var(--text-2xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--phosphor-faint);
+}
+
+.facts dd {
+  min-width: 0;
+  color: var(--phosphor);
+  font-variant-numeric: tabular-nums;
+}
+
+.facts .ok {
+  color: var(--data-readout);
+}
+
+.facts .warn {
+  color: var(--caution);
+}
+
+.facts .danger {
+  color: var(--hazard);
 }
 
 .digest {
@@ -692,150 +1103,63 @@ input.timecode-field {
 }
 
 .digest__summary {
-  padding: 2px 0;
+  padding: var(--space-2) 0;
   cursor: pointer;
-  color: var(--text-muted);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--phosphor-faint);
 }
 
 .digest__help {
-  margin-bottom: var(--space-1);
-  color: var(--text-faint);
-  line-height: 1.6;
+  margin-bottom: var(--space-2);
+  color: var(--phosphor-faint);
+  line-height: var(--leading-loose);
 }
 
 .digest__value {
   display: block;
-  padding: var(--space-2);
+  padding: var(--space-4);
   word-break: break-all;
-  background: var(--surface-sunken);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
+  background: var(--substrate-100);
+  border: var(--rule) solid var(--rule-hair);
+  color: var(--phosphor);
 }
 
 /* ==========================================================================================
-   Notes, empty states
+   Notes
    ========================================================================================== */
 
+/*
+ * A note is a rule on the left and a wash, not a filled alert box. The wash is 10–12 % of the signal
+ * colour: enough to group the lines, not enough to shout over the text.
+ */
 .note {
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  border-left: 2px solid var(--line-strong);
-  background: var(--surface-inset);
+  padding: var(--space-4) var(--space-5);
+  border-left: 2px solid var(--rule-strong);
+  background: var(--substrate-100);
+  font-family: var(--font-ui);
   font-size: var(--text-xs);
-  line-height: 1.6;
-  color: var(--text-secondary);
+  line-height: var(--leading-loose);
+  color: var(--phosphor);
 }
 
 .note--ok {
-  border-left-color: var(--signal-ok);
-  background: var(--signal-ok-subtle);
+  border-left-color: var(--data-readout);
 }
 
 .note--warn {
-  border-left-color: var(--signal-warn);
-  background: var(--signal-warn-subtle);
+  border-left-color: var(--caution);
+  background: var(--caution-wash);
 }
 
 .note--danger {
-  border-left-color: var(--signal-danger);
-  background: var(--signal-danger-subtle);
+  border-left-color: var(--hazard);
+  background: var(--hazard-soft);
 }
 
 .note__list {
-  margin: var(--space-1) 0 0;
-  padding-left: var(--space-4);
-}
-
-.empty {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
-  max-width: 62ch;
-  font-size: var(--text-sm);
-  color: var(--text-muted);
-  line-height: 1.65;
-}
-
-.empty__title {
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-  color: var(--text-secondary);
-}
-
-.empty .btn {
-  margin-top: var(--space-1);
-}
-
-/* ==========================================================================================
-   Transcript
-   ========================================================================================== */
-
-.transcript {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.hits {
-  position: relative;
-  border: 1px solid var(--line-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-inset);
-}
-
-.hit {
-  position: absolute;
-  left: 0;
-  right: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-2);
-  text-align: left;
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-}
-
-.hit:hover {
-  background: var(--surface-hover);
-}
-
-.hit--selected {
-  background: var(--accent-subtle);
-  box-shadow: inset 2px 0 0 var(--accent);
-  color: var(--text-primary);
-}
-
-.hit__time {
-  flex: none;
-  width: 8ch;
-  color: var(--text-faint);
-  font-size: var(--text-2xs);
-}
-
-.hit__text {
-  min-width: 0;
-}
-
-.hits__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--line-subtle);
-}
-
-.hits__preview {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-}
-
-.panel-body__count {
-  font-size: var(--text-xs);
-  color: var(--text-muted);
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-6);
 }
 
 /* ==========================================================================================
@@ -853,135 +1177,129 @@ input.timecode-field {
 }
 
 /*
- * The one place a shadow is earned: a dialog genuinely floats above the application, and the shadow is
- * what says so. Tinted to the background hue rather than black, which stops it reading as a grey smudge.
+ * A dialog is a panel, not a card: hairline edge, no radius, no shadow. It floats because it is modal,
+ * and the scrim already says so — an elevation shadow would be a second way of saying the same thing.
  */
 .dialog {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  width: min(520px, calc(100vw - var(--space-7)));
-  max-height: calc(100vh - var(--space-7));
+  width: min(560px, calc(100vw - var(--space-9)));
+  max-height: calc(100vh - var(--space-9));
+  overflow: hidden;
+  background: var(--substrate-200);
+  border: var(--rule) solid var(--rule-strong);
+}
+
+.dialog__head {
+  flex: none;
+  height: var(--zone-head-height);
+  padding: 0 var(--space-5);
+  line-height: var(--zone-head-height);
+  background: var(--substrate-300);
+  border-bottom: var(--rule) solid var(--rule-strong);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--phosphor);
+}
+
+.dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-height: 0;
   padding: var(--space-5);
   overflow-y: auto;
-  background: var(--surface-overlay);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-overlay);
-}
-
-.dialog__title {
-  font-size: var(--text-lg);
-  font-weight: var(--weight-semibold);
-  letter-spacing: -0.01em;
-}
-
-.dialog__help {
-  font-size: var(--text-xs);
-  color: var(--text-muted);
-  line-height: 1.65;
 }
 
 .dialog__actions {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--line-subtle);
+  gap: var(--space-4);
+  flex: none;
+  padding: var(--space-5);
+  border-top: var(--rule) solid var(--rule-strong);
+}
+
+.dialog__help {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--phosphor-dim);
+  line-height: var(--leading-loose);
 }
 
 .source-list {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
 }
 
 .source-list__item {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-4);
   font-size: var(--text-xs);
-  color: var(--text-secondary);
+  color: var(--phosphor);
 }
 
 /* ==========================================================================================
    The export format choice
    ========================================================================================== */
 
+/*
+ * Radio options as rows rather than as a column of little circles with labels beside them: the whole row
+ * is the target, the label and the note are one line each, and the chosen row carries the hazard edge.
+ * This is a list you read to decide, so it is laid out as a list.
+ */
 .choice {
   display: flex;
   flex-direction: column;
-  gap: 2px;
   border: none;
   padding: 0;
   margin: 0;
-}
-
-.choice legend {
-  padding: 0 0 var(--space-2);
 }
 
 .choice__option {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: baseline;
-  gap: 2px var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-4);
   border-left: 2px solid transparent;
+  border-bottom: var(--rule-hair) solid var(--rule-hair);
   cursor: pointer;
   transition: background var(--motion-fast) var(--easing);
 }
 
 .choice__option:hover {
-  background: var(--surface-hover);
+  background: var(--substrate-400);
 }
 
 .choice__option:has(input:checked) {
-  background: var(--accent-subtle);
-  border-left-color: var(--accent);
+  background: var(--hazard-wash);
+  border-left-color: var(--hazard);
 }
 
 .choice__option input {
   grid-row: span 2;
   align-self: start;
   margin-top: 3px;
-  accent-color: var(--accent);
+  accent-color: var(--hazard);
 }
 
 .choice__label {
   font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  color: var(--text-primary);
+  color: var(--phosphor-bright);
 }
 
 .choice__note {
   grid-column: 2;
+  font-family: var(--font-ui);
   font-size: var(--text-2xs);
-  color: var(--text-muted);
-  line-height: 1.5;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.field__label {
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.field__help {
-  font-size: var(--text-2xs);
-  color: var(--text-faint);
-  line-height: 1.55;
+  color: var(--phosphor-dim);
+  line-height: var(--leading-normal);
 }
 
 /* ==========================================================================================
@@ -991,79 +1309,72 @@ input.timecode-field {
 .crash {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  max-width: 78ch;
+  gap: var(--space-5);
+  max-width: 90ch;
   margin: auto;
-  padding: var(--space-6);
+  padding: var(--space-9);
 }
 
 .crash__title {
   font-size: var(--text-xl);
-  font-weight: var(--weight-semibold);
-  color: var(--signal-danger);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--hazard);
 }
 
 .crash__lead {
-  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  color: var(--phosphor);
   line-height: var(--leading-loose);
 }
 
 .crash__detail {
-  padding: var(--space-3);
+  padding: var(--space-5);
   overflow-x: auto;
-  background: var(--surface-inset);
-  border: 1px solid var(--line-subtle);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-figure);
-  font-size: var(--text-2xs);
-  color: var(--text-secondary);
+  background: var(--substrate-000);
+  border: var(--rule) solid var(--rule-hair);
+  font-size: var(--text-xs);
+  color: var(--phosphor-dim);
 }
 
 .crash__actions {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-4);
 }
 
 /* ==========================================================================================
-   Narrow windows
+   Screen reader only, and the skip link
    ========================================================================================== */
 
-@media (max-width: 720px) {
-  .range__row,
-  .options__row {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-1);
-  }
-
-  /*
-   * The index, the frame count and the plan column go; the name and the two timecodes stay. A table that
-   * scrolls sideways on a narrow window is worse than a table that shows less.
-   */
-  .cut-table__head,
-  .cut-table__row {
-    grid-template-columns: 26px minmax(80px, 1fr) 92px 92px 26px;
-  }
-
-  .cut-table__cell--index,
-  .cut-table__cell--num,
-  .cut-table__cell--mode {
-    display: none;
-  }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
-/* ==========================================================================================
-   Forced colours
-   ========================================================================================== */
+/* The first tab stop, so a keyboard user can jump the chrome. */
+.skip-link {
+  position: absolute;
+  top: var(--space-4);
+  left: var(--space-4);
+  z-index: 60;
+  padding: var(--space-4) var(--space-5);
+  background: var(--hazard);
+  color: var(--phosphor-inverse);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transform: translateY(-300%);
+}
 
-@media (forced-colors: active) {
-  .cut-table__row--selected,
-  .hit--selected,
-  .choice__option:has(input:checked) {
-    outline: 2px solid Highlight;
-    outline-offset: -2px;
-  }
-
-  .progress-bar--running::after {
-    background: Highlight;
-  }
+.skip-link:focus-visible {
+  transform: none;
 }

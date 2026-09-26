@@ -45,7 +45,7 @@ export function CutTable({
 
   if (segments.length === 0) {
     return (
-      <p className="side__empty">
+      <p className="empty-state">
         Type an in point and an out point, then press <strong>Queue it</strong>. Every range you queue
         is trimmed in one run, and every finished file is measured against the source.
       </p>

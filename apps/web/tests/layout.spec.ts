@@ -1,34 +1,32 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * The layout, at the size the window opens at.
+ * The panel, at the size it opens at.
  *
- * A screenshot is not an assertion, so this makes none about pixels. What it does assert is what a
- * screenshot cannot show: nothing is clipped, nothing scrolls sideways, the label column is one column
- * for the whole form, and **every setting is visible without opening anything**.
+ * Two things this file exists to hold, and neither is about pixels.
  *
- * The screenshots land in `screens/` for a human to look at, which is the other half of reviewing a UI
- * and is not something a test can do.
+ * **The frame does not scroll.** This is a desktop application with a 1280x800 minimum that opens
+ * fullscreen, and a scrollbar on the window means a control is off screen. Only three zones get their
+ * own scroll — the queue, the transcript hits and the log — because only those can hold an unbounded
+ * number of rows, and an unbounded list gets its own well rather than moving the application around it.
+ *
+ * **Nothing is folded away.** Every setting is visible with its value. An earlier version hid the
+ * delivery preset, the handles and the verification policy behind three collapsed sections.
  */
 
-// The window opens fullscreen; this is a common desktop size to check it against.
-test.use({ viewport: { width: 1920, height: 1080 } });
+test.use({ viewport: { width: 1920, height: 1080 }, colorScheme: "dark" });
 
-/*
- * The window runs dark. The application follows the operating system, and a headless browser reports
- * light — so the theme is pinned here, because a screenshot of the light theme is not a screenshot of
- * what an editor sees.
- */
-test.use({ colorScheme: "dark" });
-
-test("the column is centred and capped, and every card fits with room to spare", async ({
-  page,
-}, testInfo) => {
-  await page.goto("/");
-
-  await page.getByRole("button", { name: "Browse…" }).click();
+/** Choose the fixture master. The stub answers the picker with a real path. */
+async function chooseMaster(page: import("@playwright/test").Page): Promise<void> {
+  await page.getByRole("button", { name: "Browse" }).click();
+  await expect(page.getByRole("dialog", { name: "Choose a video" })).toBeVisible();
   await page.getByRole("button", { name: "Choose a file…" }).click();
   await expect(page.getByLabel("Video file")).toHaveValue(/\.mov$/);
+}
+
+test("the panel fits the window, and the frame does not scroll", async ({ page }, testInfo) => {
+  await page.goto("/");
+  await chooseMaster(page);
 
   await page.getByLabel("In point").fill("00:00:01:00");
   await page.getByLabel("Out point").fill("00:00:02:00");
@@ -40,53 +38,94 @@ test("the column is centred and capped, and every card fits with room to spare",
     contentType: "image/png",
   });
 
-  const geometry = await page.evaluate(() => {
-    const column = document.querySelector(".app__column");
+  const frame = await page.evaluate(() => {
+    const root = document.documentElement;
+    const app = document.querySelector(".app");
     return {
-      docWidth: document.documentElement.scrollWidth,
-      winWidth: window.innerWidth,
-      columnWidth: column?.getBoundingClientRect().width ?? 0,
-      columnLeft: column?.getBoundingClientRect().left ?? 0,
+      docScrollW: root.scrollWidth,
+      docClientW: root.clientWidth,
+      docScrollH: root.scrollHeight,
+      docClientH: root.clientHeight,
+      appH: app?.getBoundingClientRect().height ?? 0,
+      winH: window.innerHeight,
     };
   });
 
-  // Nothing overflows horizontally, and the column is not a full-width form on a 1920 px display —
-  // a label 1500 px from its field is a label you read twice.
-  expect(geometry.docWidth).toBeLessThanOrEqual(geometry.winWidth);
-  expect(geometry.columnWidth).toBeLessThanOrEqual(940);
-  expect(geometry.columnWidth).toBeGreaterThan(700);
+  // The frame is exactly the viewport in both directions, and nothing overflows it.
+  expect(frame.docScrollW).toBeLessThanOrEqual(frame.docClientW);
+  expect(frame.docScrollH).toBeLessThanOrEqual(frame.docClientH);
+  expect(Math.abs(frame.appH - frame.winH)).toBeLessThanOrEqual(1);
 
-  // And it is centred, so the space either side is equal.
-  expect(Math.abs(geometry.columnLeft - (geometry.winWidth - geometry.columnLeft - geometry.columnWidth))).toBeLessThan(4);
-
-  // The label column is one column: `In point` and `Delivery` start on the same left edge.
-  const inLabel = await page.locator(".range__label").first().boundingBox();
-  const optionLabel = await page.locator(".options__label").first().boundingBox();
-  expect(inLabel).not.toBeNull();
-  expect(optionLabel).not.toBeNull();
-  if (inLabel !== null && optionLabel !== null) {
-    expect(Math.abs(inLabel.x - optionLabel.x)).toBeLessThan(2);
+  // Every zone is on screen: nothing below the fold, nothing clipped.
+  for (const zone of [
+    "Video",
+    "Caption file",
+    "Range",
+    "Options",
+    "Queue",
+    "Find in the transcript",
+    "Progress",
+  ]) {
+    const heading = page.getByRole("heading", { name: zone, exact: true });
+    await expect(heading).toBeVisible();
+    const box = await heading.boundingBox();
+    expect(box).not.toBeNull();
+    if (box !== null) {
+      expect(box.y).toBeGreaterThanOrEqual(0);
+      expect(box.y + box.height).toBeLessThanOrEqual(frame.winH);
+    }
   }
-
-  // One primary action on the window, and it is the one that cuts.
-  await expect(page.locator(".btn--primary")).toHaveCount(1);
 });
 
-test("the window does not need a 1920 px screen to fit", async ({ page }) => {
-  // The minimum the window allows itself. Everything still has to be reachable, because a tool that
-  // hides its own options on a laptop is a tool with two designs.
-  await page.setViewportSize({ width: 1000, height: 620 });
+test("every setting is visible without opening anything", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Browse…" }).click();
-  await page.getByRole("button", { name: "Choose a file…" }).click();
+  await chooseMaster(page);
 
   for (const control of ["In point", "Out point", "Delivery", "Handles", "Verify"]) {
     await expect(page.getByLabel(control)).toBeVisible();
   }
 
-  const overflow = await page.evaluate(() => ({
-    docWidth: document.documentElement.scrollWidth,
-    winWidth: window.innerWidth,
+  // No disclosure anywhere: the whole point is that the panel shows its own state.
+  await expect(page.locator("details")).toHaveCount(0);
+
+  // One primary action in the window, and it is the one that cuts.
+  await expect(page.locator(".btn--primary")).toHaveCount(1);
+});
+
+test("there is no breakpoint, because there is no second size", async ({ page }) => {
+  // The whole point, asserted directly. A professional panel does not rearrange itself: an operator's
+  // hand knows where the In field is, and the stylesheet must contain no viewport media query that
+  // could move it. Checking the source is what makes that a fact rather than a hope.
+  const layout = await (await page.request.get("/src/styles/app.css")).text();
+  const tokens = await (await page.request.get("/src/styles/tokens.css")).text();
+
+  for (const css of [layout, tokens]) {
+    expect(css).not.toMatch(/@media\s*\(\s*max-width/);
+    expect(css).not.toMatch(/@media\s*\(\s*min-width/);
+  }
+
+  // The media queries that *are* present are about the user's preferences, not about the viewport.
+  expect(tokens).toContain("prefers-reduced-motion");
+  expect(tokens).toContain("forced-colors");
+});
+
+test("the panel still fits at the window's own minimum", async ({ page }) => {
+  // 1280x800 is the minimum the window declares. The layout does not reflow — it is a grid that fills
+  // whatever it is given — so the test is that nothing overflows and every control is still reachable.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await chooseMaster(page);
+
+  for (const control of ["In point", "Out point", "Delivery", "Handles", "Verify"]) {
+    await expect(page.getByLabel(control)).toBeVisible();
+  }
+
+  const frame = await page.evaluate(() => ({
+    docScrollW: document.documentElement.scrollWidth,
+    docClientW: document.documentElement.clientWidth,
+    docScrollH: document.documentElement.scrollHeight,
+    docClientH: document.documentElement.clientHeight,
   }));
-  expect(overflow.docWidth).toBeLessThanOrEqual(overflow.winWidth);
+  expect(frame.docScrollW).toBeLessThanOrEqual(frame.docClientW);
+  expect(frame.docScrollH).toBeLessThanOrEqual(frame.docClientH);
 });

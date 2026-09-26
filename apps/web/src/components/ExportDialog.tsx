@@ -104,7 +104,7 @@ export function ExportDialog({
       }}
     >
       <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="export-title">
-        <h2 className="dialog__title" id="export-title">
+        <h2 className="dialog__head" id="export-title">
           Export the timeline
         </h2>
         <p className="dialog__help">

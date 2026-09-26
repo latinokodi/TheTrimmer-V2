@@ -78,7 +78,7 @@ export function SourceDialog({
       }}
     >
       <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="source-title">
-        <h2 className="dialog__title" id="source-title">
+        <h2 className="dialog__head" id="source-title">
           Choose a video
         </h2>
 
