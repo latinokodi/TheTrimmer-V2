@@ -10,8 +10,8 @@ members = [
     "crates/trimmer-store",
     "crates/trimmer-license",
     "crates/trimmer-daemon",
-    "crates/trimmer-cli",
-    # "apps/desktop/src-tauri",
+    # "crates/trimmer-cli",
+    "apps/desktop/src-tauri",
 ]
 
 [workspace.package]

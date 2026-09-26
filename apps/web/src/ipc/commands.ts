@@ -19,7 +19,6 @@ import type {
   BatchOutcomeWire,
   DoctorReportWire,
   IpcError,
-  LicenceStatusWire,
   PresetWire,
   ProjectListingWire,
   QueuePreview,
@@ -134,8 +133,6 @@ export const commands = {
   /** The environment report for the doctor panel. */
   doctor: () => call<DoctorReportWire>("doctor"),
 
-  /** The licence, for the status bar. */
-  licenceStatus: () => call<LicenceStatusWire>("licence_status"),
 
   /** The projects in the store. */
   listProjects: () => call<readonly ProjectListingWire[]>("list_projects"),

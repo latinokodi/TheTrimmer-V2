@@ -132,8 +132,10 @@ impl CancelFlag {
 /// Something a running job wants to say.
 ///
 /// `Eq` is deliberately not derived: [`Progress::Elapsed`] and [`Progress::Finished`] carry
-/// seconds as `f64`, and claiming total equality for a float would be a lie.
-#[derive(Debug, Clone, PartialEq)]
+/// seconds as `f64`, and claiming total equality for a float would be a lie. `Serialize` is
+/// derived because progress is forwarded to the interface as an event.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Progress {
     /// A new step has begun.
     Step {

@@ -34,7 +34,12 @@ pub struct SegmentCutRequest {
 ///
 /// Implemented by `trimmer-media`'s executor. Faked in tests.
 #[async_trait::async_trait]
-pub trait MediaEngine {
+/// # Thread safety
+///
+/// `Send + Sync` because an engine is shared behind an `Arc` between the workspace, the batch queue
+/// and every command that plans or cuts. The bound lives here so an implementation that cannot be
+/// shared is refused where it is written rather than at each use.
+pub trait MediaEngine: Send + Sync {
     /// Probe a file.
     ///
     /// # Errors

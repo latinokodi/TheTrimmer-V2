@@ -19,6 +19,12 @@ uuid.workspace = true
 time.workspace = true
 directories.workspace = true
 
+[dev-dependencies]
+# The run-history tests need a real `AuditManifest`, which is `trimmer-verify`'s type. It is a
+# dev-dependency rather than a dependency because the store only ever *carries* a manifest:
+# `BatchOutcome` already holds one, and nothing in `src/` names the type.
+trimmer-verify.workspace = true
+
 # Lint policy lives in `src/lib.rs` as crate-root attributes rather than here, for the same
 # reason `trimmer-core` states: attributes at the crate root are unambiguous and greppable,
 # while a `[lints]` table is a Cargo-level setting whose interaction with a virtual workspace

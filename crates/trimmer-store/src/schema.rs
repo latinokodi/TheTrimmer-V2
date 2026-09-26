@@ -132,12 +132,11 @@ pub fn migrate(conn: &mut Connection) -> StoreResult<i64> {
             row.get(0)
         })
         .ok();
-    let mut version = match recorded {
-        Some(version) => version,
-        None => {
-            conn.execute("INSERT INTO schema_version (version) VALUES (0)", [])?;
-            0
-        }
+    let mut version = if let Some(version) = recorded {
+        version
+    } else {
+        conn.execute("INSERT INTO schema_version (version) VALUES (0)", [])?;
+        0
     };
 
     for migration in MIGRATIONS {

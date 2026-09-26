@@ -184,18 +184,6 @@ export interface ProjectListingWire {
   readonly updatedAt: number;
 }
 
-/** What the licence allows. */
-export interface LicenceStatusWire {
-  readonly present: boolean;
-  readonly licensee: string | null;
-  readonly edition: string | null;
-  readonly seats: number | null;
-  readonly expiresAt: number | null;
-  readonly daysRemaining: number | null;
-  readonly features: readonly string[];
-  readonly machineId: string;
-  readonly error: string | null;
-}
 
 /** The doctor panel. */
 export interface DoctorReportWire {

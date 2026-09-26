@@ -12,7 +12,7 @@
  * │              │                                    │  transcript │
  * │              │                                    │  proof      │
  * ├──────────────┴────────────────────────────────────┴─────────────┤
- * │ status bar: ffmpeg · licence · segment count · busy            │
+ * │ status bar: ffmpeg · segment count · busy                      │
  * └─────────────────────────────────────────────────────────────────┘
  * ```
  *

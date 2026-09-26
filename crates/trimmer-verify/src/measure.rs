@@ -17,7 +17,12 @@ use crate::facts::{CutFacts, FrameHashes, Similarity};
 /// exactly what must not happen in the crate that decides whether a cut is good, because a
 /// rule that can be reached only through a subprocess is a rule that can be tested only by
 /// having the file. The rules live here; the measuring lives next door.
-pub trait MediaMeasurer {
+/// # Thread safety
+///
+/// The bound is `Send + Sync` because a measurer is held behind an `Arc` in shared application
+/// state and called from whichever thread the caller is on. Requiring it here rather than at each
+/// call site means an implementation that cannot be shared is refused when it is written.
+pub trait MediaMeasurer: Send + Sync {
     /// The facts one probe pass reports about a finished file.
     ///
     /// # Errors

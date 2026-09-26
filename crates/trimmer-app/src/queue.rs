@@ -36,7 +36,8 @@ use crate::workspace::Workspace;
 use crate::AppResult;
 
 /// A job's identity within one batch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[serde(transparent)]
 pub struct JobId(pub usize);
 
 impl std::fmt::Display for JobId {
@@ -46,7 +47,8 @@ impl std::fmt::Display for JobId {
 }
 
 /// Where a job is.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum JobState {
     /// Not started.
     Pending,
@@ -75,7 +77,8 @@ impl JobState {
 }
 
 /// How a job ended.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum JobStatus {
     /// Cut, and the checks passed or were switched off.
     Succeeded {
@@ -193,7 +196,10 @@ impl JobStatus {
 }
 
 /// Something that happened during a batch.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// `Serialize` because the daemon and the desktop shell both forward these to a client.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum QueueEvent {
     /// The batch began.
     Started {

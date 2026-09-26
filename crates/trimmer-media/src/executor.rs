@@ -164,8 +164,10 @@ impl CutOutcome {
 /// A prepared command: the builder's output, ready to run.
 ///
 /// Kept as its own type so that every argument builder can be *tested as data* without a
-/// process, and so that a caller who wants to show a user what will happen can do so.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// process, and so that a caller who wants to show a user what will happen can do so. `Serialize`
+/// because a dry run sends these to the interface.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Prepared {
     /// A short label.
     pub label: String,

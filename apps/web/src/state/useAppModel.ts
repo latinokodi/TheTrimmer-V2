@@ -19,7 +19,6 @@ import { IpcFailure, commands } from "../ipc/commands";
 import type {
   BatchOutcomeWire,
   DoctorReportWire,
-  LicenceStatusWire,
   PresetWire,
   ProjectListingWire,
   QueuePreview,
@@ -44,7 +43,6 @@ export interface AppModel {
   readonly previews: readonly QueuePreview[];
   readonly lastOutcome: BatchOutcomeWire | null;
   readonly doctor: DoctorReportWire | null;
-  readonly licence: LicenceStatusWire | null;
 
   readonly selectedSegment: string | null;
   readonly selectSegment: (id: string | null) => void;
@@ -113,7 +111,6 @@ export function useAppModel(): AppModel {
   const [previews, setPreviews] = useState<readonly QueuePreview[]>([]);
   const [lastOutcome, setLastOutcome] = useState<BatchOutcomeWire | null>(null);
   const [doctor, setDoctor] = useState<DoctorReportWire | null>(null);
-  const [licence, setLicence] = useState<LicenceStatusWire | null>(null);
   const [selectedSegment, setSelectedSegment] = useState<string | null>(null);
 
   // A ref rather than state: this is read inside callbacks that must not be re-created when it
@@ -178,22 +175,19 @@ export function useAppModel(): AppModel {
     [fail, refresh],
   );
 
-  // Startup: the doctor report and the licence are read once, because neither changes while the
-  // window is open.
+  // Startup: the doctor report is read once, because it does not change while the window is open.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [nextDoctor, nextLicence, nextProjects] = await Promise.all([
+        const [nextDoctor, nextProjects] = await Promise.all([
           commands.doctor(),
-          commands.licenceStatus(),
           commands.listProjects(),
         ]);
         if (cancelled) {
           return;
         }
         setDoctor(nextDoctor);
-        setLicence(nextLicence);
         setProjects(nextProjects);
       } catch (caught) {
         if (!cancelled) {
@@ -393,7 +387,6 @@ export function useAppModel(): AppModel {
       previews,
       lastOutcome,
       doctor,
-      licence,
       selectedSegment,
       selectSegment: setSelectedSegment,
       clearMessages,
@@ -428,7 +421,6 @@ export function useAppModel(): AppModel {
       previews,
       lastOutcome,
       doctor,
-      licence,
       selectedSegment,
       clearMessages,
       refresh,

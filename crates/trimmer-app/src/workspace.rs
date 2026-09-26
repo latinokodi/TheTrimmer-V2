@@ -28,7 +28,8 @@ use crate::ports::{Clock, MediaEngine, ProjectStore, TranscriptSource};
 use crate::{AppError, AppResult};
 
 /// One source, as the interface shows it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SourceView {
     /// The file.
     pub path: MediaPath,
@@ -51,7 +52,8 @@ pub struct SourceView {
 }
 
 /// One segment, as the interface shows it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SegmentView {
     /// The segment's identity.
     pub id: SegmentId,
@@ -80,7 +82,8 @@ pub struct SegmentView {
 }
 
 /// What one segment will cost, and what it will do.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct QueuePreview {
     /// The segment this is about.
     pub segment: SegmentId,
@@ -104,7 +107,8 @@ pub struct QueuePreview {
 }
 
 /// A count of what a batch would do, for the summary line above the run button.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkspaceSummary {
     /// Segments in the project.
     pub segments: usize,
