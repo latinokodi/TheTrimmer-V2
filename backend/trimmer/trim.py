@@ -103,6 +103,11 @@ class TrimPlan:
     head_frames: int
     body_frames: int
     notes: list[str] = field(default_factory=list)
+    #: The chosen keyframe's own presentation time, and the next keyframe's. They are here
+    #: because a stream copy cannot be aimed at a *frame number*: ffmpeg seeks by time, and
+    #: where it lands depends on the values below. See `body_seek`.
+    keyframe_seconds: float | None = None
+    next_keyframe_seconds: float | None = None
 
     @property
     def requested(self) -> int:
@@ -187,16 +192,28 @@ def plan_trim(spec: TrimSpec, media: MediaInfo) -> TrimPlan:
     marks = ff.keyframes(media.path, max(0.0, in_seconds - 1.0), window_end)
     after = [t for t in marks if t >= in_seconds - 1e-6]
 
-    if not after or round(after[0] * float(rate)) >= spec.out_frame:
+    if not after or round((after[0] - media.start_time) * float(rate)) >= spec.out_frame:
         notes.append(
             "no keyframe inside the segment: the whole segment is re-encoded, because a "
             "stream-copied body has to begin on a keyframe"
         )
         return TrimPlan(media, "reencode", -1, spec.frames, 0, notes)
 
-    keyframe = round(after[0] * float(rate))
+    # The keyframe that opens the copied body, and the one after it. The gap between them is
+    # the GOP, which is how far inside the keyframe a stream copy has to be aimed.
+    opens = after[0]
+    following = after[1] if len(after) > 1 else None
+
+    # The frame a keyframe holds is measured from the source's **own** first timestamp, not
+    # from zero. A master that starts at 0.021 s -- 0.63 of a frame at 30 fps -- puts every
+    # keyframe a frame later than `pts * rate` says, so this read 13493 for a keyframe that is
+    # really 13492, and the copied body began a frame early. `verify` has always measured from
+    # `media.start_time`, so the two disagreed by exactly that frame and the alignment check
+    # reported it on every sample.
+    keyframe = round((opens - media.start_time) * float(rate))
     if keyframe == spec.in_frame:
-        return TrimPlan(media, "copy", keyframe, 0, spec.frames, notes)
+        return TrimPlan(media, "copy", keyframe, 0, spec.frames, notes,
+                        keyframe_seconds=opens, next_keyframe_seconds=following)
 
     offset = spec.concat_offset
     head_frames = keyframe - spec.in_frame - offset
@@ -208,9 +225,10 @@ def plan_trim(spec: TrimSpec, media: MediaInfo) -> TrimPlan:
         )
         head_frames = max(1, clamped)
         if head_frames == 0:
-            return TrimPlan(media, "copy", keyframe, 0, spec.frames, notes)
+            return TrimPlan(media, "copy", keyframe, 0, spec.frames, notes,
+                            keyframe_seconds=opens, next_keyframe_seconds=following)
     return TrimPlan(media, "headpatch", keyframe, head_frames, spec.out_frame - keyframe,
-                    notes)
+                    notes, keyframe_seconds=opens, next_keyframe_seconds=following)
 
 
 def trim(
@@ -253,7 +271,7 @@ def trim(
         if plan.mode == "reencode":
             commands.append(_reencode(media, spec, spec.output, log, cancel, progress, whole))
         elif plan.mode == "copy":
-            commands.append(_copy(media, spec, spec.output, log, cancel, progress, whole))
+            commands.append(_copy(media, spec, plan, spec.output, log, cancel, progress, whole))
         else:
             commands.append(_encode_head(media, spec, plan, head, log, cancel, progress))
             commands += _copy_body(media, spec, plan, body, log, cancel, progress)
@@ -350,6 +368,37 @@ def _encode_head(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, head: Path,
     return args
 
 
+def body_seek(plan: TrimPlan, rate, frames: int) -> tuple[str, float]:
+    """Where to aim a stream copy of the body, and how long to let it run.
+
+    ## The defect this exists to fix
+
+    With ``-ss`` before ``-i`` and ``-c copy``, ffmpeg begins the copy at the keyframe at or
+    before the target and counts ``-t`` from the **target**. Aimed at a keyframe's own
+    timestamp it takes the keyframe *before* it, so the copy comes out a whole GOP too long
+    and its content sits a whole GOP early. On a 30 fps master with a 250-frame GOP that is
+    8.33 seconds: the picture ends up 8.33 s ahead of the sound, and the alignment check
+    finds none of its samples in the source because every one of them is 250 frames from
+    where the marks say it is. Measured on real material, both halves of that.
+
+    Aimed *inside* the GOP, ffmpeg takes the keyframe that opens it, and the preroll it
+    writes is then exactly ``target - keyframe`` — a known quantity, which comes off ``-t``.
+    The middle of the GOP is far from both the keyframe and the next one, so the choice is
+    not near a boundary, and the measurements hold from a ninth of a GOP to two thirds of
+    one.
+
+    The result is one frame long rather than 250, which is the packet-boundary overshoot the
+    product already reports and never fails on.
+    """
+    duration = frames / float(rate)
+    opens, following = plan.keyframe_seconds, plan.next_keyframe_seconds
+    if opens is None or following is None or following <= opens:
+        # No GOP to aim inside, so the arithmetic the engine has always used is kept.
+        return f"{plan.keyframe / float(rate):.6f}", duration
+    preroll = (following - opens) / 2.0
+    return f"{opens + preroll:.6f}", duration - preroll
+
+
 def _copy_body(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, body: Path,
                log, cancel, progress=None) -> list[list[str]]:
     """Copy the segment's tail from the keyframe to the out point.
@@ -366,8 +415,12 @@ def _copy_body(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, body: Path,
     back together.
     """
     body_frames = spec.out_frame + 1 - plan.keyframe
-    duration = body_frames / float(media.rate)
-    start = f"{media.seconds_of(plan.keyframe):.6f}"
+    whole = body_frames / float(media.rate)
+    # The picture seeks inside the GOP and gives the preroll back, so the copy begins on the
+    # keyframe that opens the body. The sound keeps the engine's output seek at the mark
+    # itself: audio has no GOP, so it lands exactly and needs none of that care.
+    start, duration = body_seek(plan, media.rate, body_frames)
+    audio_start = f"{media.seconds_of(plan.keyframe):.6f}"
     commands: list[list[str]] = []
 
     video = body.with_name("body-picture.mp4")
@@ -387,7 +440,7 @@ def _copy_body(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, body: Path,
     sound = body.with_name("body-sound.m4a")
     audio = [
         ff.tool("ffmpeg"), *_common_input(),
-        "-i", str(media.path), "-ss", start, "-t", f"{duration:.6f}",
+        "-i", str(media.path), "-ss", audio_start, "-t", f"{whole:.6f}",
         "-map", "0:a:0", "-c", "copy", str(sound),
     ]
     mux = [
@@ -398,11 +451,12 @@ def _copy_body(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, body: Path,
     ]
     log(f"body        copying frames {plan.keyframe}.. from the original packets "
         f"(picture and sound separately)")
-    for number, step in enumerate((picture, audio, mux), start=1):
-        # The mux writes the same span as the two copies before it, so all three share an
-        # expectation: a bar that measured the mux against a different length would jump.
+    for number, (step, span) in enumerate(
+        ((picture, duration), (audio, whole), (mux, whole)), start=1
+    ):
+        # Each pass says how long it should take, so the bar measures the pass it is drawing.
         log(f"body        step {number} of 3")
-        ff.run(step, cancel=cancel, log=log, progress=progress, expected_seconds=duration)
+        ff.run(step, cancel=cancel, log=log, progress=progress, expected_seconds=span)
     commands += [audio, mux]
     return commands
 
@@ -434,7 +488,7 @@ def _join(listing: Path, joined: Path, log, cancel, progress=None,
     return args
 
 
-def _copy(media: MediaInfo, spec: TrimSpec, output: Path, log, cancel,
+def _copy(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, output: Path, log, cancel,
           progress=None, expected_seconds: float | None = None) -> list[str]:
     """The in point is a keyframe, so nothing needs re-encoding at all.
 
@@ -444,12 +498,16 @@ def _copy(media: MediaInfo, spec: TrimSpec, output: Path, log, cancel,
     the end that has not been handed over yet and keeps one that comes after the out
     point. Measured on a 91-frame cut: the last frame kept was the source's 151st while
     the 150th that was asked for had gone. Time-based stops cannot do that.
+
+    Aimed through :func:`body_seek`, because this is the same input-seek-and-copy that used
+    to start a whole GOP early whenever the target was a keyframe's own timestamp.
     """
+    start, duration = body_seek(plan, media.rate, spec.frames + 1)
     args = [
         ff.tool("ffmpeg"), *_common_input(),
-        "-ss", f"{media.seconds_of(spec.in_frame):.6f}", "-i", str(media.path),
+        "-ss", start, "-i", str(media.path),
         *_video_map(media), "-c", "copy",
-        "-t", f"{(spec.frames + 1) / float(media.rate):.6f}",
+        "-t", f"{duration:.6f}",
         "-movflags", "+faststart", str(output),
     ]
     log("copy        the in point is a keyframe: no re-encode at all")

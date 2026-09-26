@@ -410,17 +410,22 @@ def trim_with_calibration(
     cancel: CancelToken | None = None,
     samples: int = 2,
     attempts: int = 2,
+    progress=None,
 ) -> tuple[TrimReport, list[OffsetCheck]]:
     """Trim, measure, and re-cut once if the body landed off the mark.
 
     Returns the report of the file that was kept, and the alignment checks for it. The
     correction is applied to ``concat_offset``: the measurement says how far ahead or
     behind the content is, and the head absorbs exactly that many frames.
+
+    This is the path both of V1's front ends took and the default of its command line. The
+    migration to this backend called :func:`trim` directly, which is why a whole-GOP error in
+    the copied body went unnoticed: nothing measured it before the run was reported done.
     """
     media = ff.probe(spec.source)
     last_offsets: list[OffsetCheck] = []
     for attempt in range(1, attempts + 1):
-        report = trim(spec, log=log, cancel=cancel, media=media)
+        report = trim(spec, log=log, cancel=cancel, media=media, progress=progress)
         # The output's timestamps are read inside the measurement, once per attempt: the
         # file has just been rewritten. The source's come from the probe above.
         last_offsets = measure_offsets(spec.source, spec.output, spec, report.plan, media,

@@ -60,12 +60,16 @@ class Transcript:
 
 @dataclass
 class RetimeResult:
-    """What a retime kept, trimmed and threw away."""
+    """What a retime kept, trimmed and threw away -- and where it wrote it."""
 
     cues: list[Cue] = field(default_factory=list)
     clamped: list[Cue] = field(default_factory=list)
     dropped: list[Cue] = field(default_factory=list)
     outside: int = 0
+    #: The caption file written beside the segment, or ``None`` when nothing fell inside the
+    #: window. :func:`retime_file` already knew this; it was being thrown away, so a caller
+    #: wanting to report the written file had to guess at the naming rule.
+    written: Path | None = None
 
     def __len__(self) -> int:
         return len(self.cues)
@@ -213,4 +217,5 @@ def retime_file(source_srt: Path, output_srt: Path, start: float, end: float,
     if not result.cues:
         return result, None
     write(output_srt, result.cues, transcript.newline, transcript.bom)
+    result.written = output_srt
     return result, output_srt

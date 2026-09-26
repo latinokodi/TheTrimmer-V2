@@ -261,7 +261,13 @@ def _run_job(job: Job) -> None:
         media = ff.probe(spec.source)
         publish({"type": "source", "media": _describe(media)})
 
-        report = cutter.trim(spec, log=log, cancel=job.cancel, progress=progress, media=media)
+        # Through the calibration path, which is what both of V1's front ends used and what
+        # its command line did by default: the copy is measured against the source and re-cut
+        # once if the body landed off the mark. Calling `trim` directly skipped that, so a
+        # whole-GOP error in the copied body reached the report unmeasured.
+        report, offsets = verifier.trim_with_calibration(
+            spec, log=log, cancel=job.cancel, samples=3, progress=progress
+        )
         for command in report.commands:
             publish({"type": "command", "args": command})
 
@@ -292,8 +298,11 @@ def _run_job(job: Job) -> None:
         if report.subtitles is not None:
             outcome["subtitles"] = {
                 "cues": len(report.subtitles.cues),
-                "written": str(report.subtitles.path) if report.subtitles.path else None,
-                "clamped": report.subtitles.clamped,
+                "written": None if report.subtitles.written is None
+                           else str(report.subtitles.written),
+                # A count, not the cues themselves: the window asks "were any clamped" and
+                # an array answers a different question.
+                "clamped": len(report.subtitles.clamped),
             }
 
         job.outcome = outcome
