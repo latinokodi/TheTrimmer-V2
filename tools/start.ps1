@@ -74,9 +74,14 @@ function Newest-File {
 # Is anything out of date?
 # ---------------------------------------------------------------------------------------------
 
-$webSources = Newest-File -Folder (Join-Path $web 'src') -Include @('*.ts', '*.tsx', '*.css')
+$webSources = Newest-File -Folder (Join-Path $web 'src') -Include @(
+    '*.ts', '*.tsx', '*.css', '*.woff2', '*.svg', '*.png'
+)
 $webConfig = Newest-File -Folder $web -Include @('package.json', 'vite.config.ts', 'index.html')
-$newestWeb = @($webSources, $webConfig) | Where-Object { $null -ne $_ } |
+# `tools/check-bundle.mjs` is part of the build — `npm run build` ends by running it — so a change to it
+# has to force a build, or the new check never runs against anything.
+$webTools = Newest-File -Folder (Join-Path $web 'tools') -Include @('*.mjs')
+$newestWeb = @($webSources, $webConfig, $webTools) | Where-Object { $null -ne $_ } |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 
 $needsInterface = $true
@@ -103,9 +108,25 @@ if (Test-Path $dist) {
 # rebuilt *by* this script. The first version of this check did exactly that and relinked the whole
 # binary on every launch, which is the two-minute start it was written to prevent. A web source file
 # newer than the bundle is what means the assets changed; the bundle's own timestamp means nothing.
-$newestRust = Newest-File -Folder (Join-Path $root 'crates') -Include @('*.rs')
-$newestDesktop = Newest-File -Folder (Join-Path $root 'apps\desktop\src-tauri') -Include @('*.rs', '*.json', '*.toml')
-$newestInput = @($newestRust, $newestDesktop, $newestWeb) | Where-Object { $null -ne $_ } |
+#
+# The **manifests** are inputs as much as the sources are, and this check used to omit them. A dependency
+# bumped or a feature turned off in a `Cargo.toml` changes the binary; watching `*.rs` alone would report
+# the window up to date and launch the previous one, with no error — which is fault 1 in the note at the
+# top of this file, in a different file type. `Cargo.lock` for the same reason: a lockfile change is a
+# dependency change. Read directly rather than through `Newest-File`, because that recurses and the
+# repository root contains `target/`.
+$newestRust = Newest-File -Folder (Join-Path $root 'crates') -Include @('*.rs', '*.toml')
+$newestManifest = @('Cargo.toml', 'Cargo.lock') |
+    ForEach-Object { Join-Path $root $_ } |
+    Where-Object { Test-Path $_ } |
+    ForEach-Object { Get-Item $_ } |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+$newestDesktop = Newest-File -Folder (Join-Path $root 'apps\desktop\src-tauri') -Include @(
+    '*.rs', '*.json', '*.toml', '*.ico', '*.png'
+)
+$newestInput = @($newestRust, $newestManifest, $newestDesktop, $newestWeb) |
+    Where-Object { $null -ne $_ } |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 
 $needsWindow = $true
