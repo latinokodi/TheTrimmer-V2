@@ -17,6 +17,7 @@ time.workspace = true
 
 [dev-dependencies]
 proptest = "1"
+serde_json.workspace = true
 
 # Lint policy lives in `src/lib.rs` as crate-root attributes rather than here: an
 # `[lints]` table is a Cargo-level setting whose interaction with a virtual workspace root
