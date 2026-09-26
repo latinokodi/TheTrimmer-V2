@@ -743,7 +743,7 @@ export function App(): JSX.Element {
               </button>
             ) : null}
           </header>
-          <ProgressLog lines={log.lines} step={log.step} running={running} />
+          <ProgressLog lines={log.lines} progress={log.progress} running={running} />
         </section>
 
         {/* ---- footer -------------------------------------------------------------------- */}

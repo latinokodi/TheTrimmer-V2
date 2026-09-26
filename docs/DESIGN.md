@@ -29,3 +29,4 @@ decision no longer applies, it is *superseded* and the reason is stated — neve
 - [ADR-019 — The browser stub never ships, and a check a fixture can satisfy is not a check](adr/019-the-stub-never-ships.md) *(new in V2)*
 - [ADR-020 — The window opens maximized, not fullscreen, and the check asks Windows](adr/020-the-window-has-a-titlebar.md) *(new in V2)*
 - [ADR-021 — A fixture that cannot express the state a fault lives in will not find it](adr/021-the-fixture-could-not-hold-two.md) *(new in V2)*
+- [ADR-022 — What a progress bar is allowed to mean](adr/022-what-a-progress-bar-may-mean.md) *(new in V2)*

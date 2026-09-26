@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { chooseMaster, mark, pickInstead, removeThePicker } from "./support";
+
 /**
  * The panel, at the size it opens at, and at the size it is allowed to be smallest.
  *
@@ -27,51 +29,6 @@ test.use({ viewport: { width: 1920, height: 1080 }, colorScheme: "dark" });
 
 /** The size the window is allowed to be smallest, mirrored from `tauri.conf.json`. */
 const MINIMUM = { width: 1440, height: 960 };
-
-/**
- * Choose the fixture master.
- *
- * `Browse` opens the file picker, and in a browser the picker is the stub — it answers with a real path
- * immediately, so this is one click. That is also the behaviour in the window: one click, the operating
- * system's own dialog, done.
- */
-async function chooseMaster(page: import("@playwright/test").Page): Promise<void> {
-  await page.getByRole("button", { name: "Browse" }).click();
-  await expect(page.getByLabel("Video file")).toHaveValue(/\.mov$/);
-}
-
-/**
- * Take the picker away, so `Browse` has nothing to open.
- *
- * The stub installs `window.__TAURI__.dialog` itself, which means the fallback path — the case that
- * matters when a build has no dialog plugin — is unreachable in a browser test unless it is removed on
- * purpose. `__TAURI_INTERNALS__` is absent in a browser too, so `pickFile` reports `unavailable` and the
- * in-app dialog is what should appear.
- */
-async function removeThePicker(page: import("@playwright/test").Page): Promise<void> {
-  await page.evaluate(() => {
-    delete (window as unknown as { __TAURI__?: { dialog?: unknown } }).__TAURI__?.dialog;
-  });
-}
-
-/** Answer the next picker call with a chosen path, so a test can put a second master in the session. */
-async function pickInstead(page: import("@playwright/test").Page, path: string): Promise<void> {
-  await page.evaluate((chosen) => {
-    (window as unknown as { __TAURI__: { dialog: { open: unknown } } }).__TAURI__.dialog.open =
-      async () => chosen;
-  }, path);
-}
-
-/** Type a range, and wait for the plan line to agree that both marks parse. */
-async function mark(
-  page: import("@playwright/test").Page,
-  inPoint: string,
-  outPoint: string,
-): Promise<void> {
-  await page.getByLabel("In point").fill(inPoint);
-  await page.getByLabel("Out point").fill(outPoint);
-  await expect(page.locator(".range__plan")).not.toContainText("Type both timecodes");
-}
 
 /** The shape the clipping probe returns, one entry per problem found. */
 interface Clip {

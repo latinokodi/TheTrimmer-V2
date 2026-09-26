@@ -19,11 +19,43 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatBytes,
+  formatClock,
   formatDuration,
   formatPercent,
   formatRate,
   formatTimestamp,
 } from "./format";
+
+describe("formatClock", () => {
+  it("is a fixed-width clock rather than a magnitude", () => {
+    // The distinction is the whole reason this function exists beside `formatDuration`: a log's left
+    // column and a countdown are read by scanning, and a column whose width changes as it counts is a
+    // column the eye has to find again on every line.
+    expect(formatClock(0)).toBe("0:00");
+    expect(formatClock(8.4)).toBe("0:08");
+    expect(formatClock(59.9)).toBe("0:59");
+    expect(formatClock(60)).toBe("1:00");
+    expect(formatClock(192)).toBe("3:12");
+    expect(formatClock(3600)).toBe("1:00:00");
+    expect(formatClock(3723)).toBe("1:02:03");
+  });
+
+  it("truncates rather than rounding, so it never counts up to a minute it has not reached", () => {
+    // Rounding would make `0:59.6` read `1:00` while the run is still in the last second of the minute.
+    expect(formatClock(59.6)).toBe("0:59");
+  });
+
+  it("refuses a nonsense duration rather than printing one", () => {
+    expect(formatClock(-1)).toBe("—");
+    expect(formatClock(Number.NaN)).toBe("—");
+    expect(formatClock(Number.POSITIVE_INFINITY)).toBe("—");
+  });
+
+  it("pads the seconds but not the minutes, which is how a clock is written", () => {
+    expect(formatClock(65)).toBe("1:05");
+    expect(formatClock(605)).toBe("10:05");
+  });
+});
 
 describe("formatBytes", () => {
   it("steps through the units at 1024 and never shows a bare fraction of a byte", () => {

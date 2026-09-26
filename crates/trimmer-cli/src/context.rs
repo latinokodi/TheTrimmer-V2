@@ -141,6 +141,8 @@ impl Context {
                 verbose: self.verbose,
             }),
             label: label.into(),
+            // The passes ask for themselves; see `trimmer_media::Watch`.
+            watch: None,
         }
     }
 }
@@ -154,21 +156,64 @@ struct StderrSink {
     verbose: bool,
 }
 
+impl StderrSink {
+    /// One line, counting up in place.
+    ///
+    /// A pipeline gets a line per tick, which is what a log wants; a terminal gets a single line that
+    /// counts up, which is what a person watching wants. Both are the same information, and `\r` on a
+    /// non-terminal is a harmless control character rather than a mangled line.
+    fn tick(ticks: &trimmer_media::ProgressTicks) {
+        let fraction = ticks
+            .expected_seconds
+            .filter(|total| *total > 0.0)
+            .map(|total| (ticks.out_seconds / total).clamp(0.0, 1.0));
+        let bar = match fraction {
+            Some(value) => {
+                // Twenty cells is wide enough to read and narrow enough to fit an 80-column terminal
+                // beside the percentage and the rate.
+                let filled = (value * 20.0).round() as usize;
+                format!(
+                    "  [{}{}] {:>3.0}%",
+                    "#".repeat(filled),
+                    "-".repeat(20 - filled),
+                    value * 100.0
+                )
+            }
+            None => "  [····················]".to_owned(),
+        };
+        let speed = ticks
+            .speed
+            .map_or_else(String::new, |rate| format!("  {rate:.2}x"));
+        eprint!("\r{bar}  {:.1}s{}   ", ticks.out_seconds, speed);
+        if std::io::Write::flush(&mut std::io::stderr()).is_err() {
+            // A closed stderr is not a reason to fail a cut.
+        }
+    }
+}
+
 impl ProgressSink for StderrSink {
     fn report(&self, progress: Progress) {
         match progress {
-            Progress::Step { label } => eprintln!("  · {label}"),
+            Progress::Step { label } => {
+                // Close the tick line before starting a new step, or the label lands on top of it.
+                eprintln!();
+                eprintln!("  · {label}");
+            }
             Progress::Command { text, .. } => {
                 if self.verbose {
                     eprintln!("  $ {text}");
                 }
             }
             Progress::Elapsed { seconds } => eprintln!("  … {seconds:.0}s"),
-            Progress::Finished { label, seconds, ok } => eprintln!(
-                "  {} {label} ({seconds:.1}s)",
-                if ok { "ok" } else { "FAILED" }
-            ),
+            Progress::Finished { label, seconds, ok } => {
+                eprintln!();
+                eprintln!(
+                    "  {} {label} ({seconds:.1}s)",
+                    if ok { "ok" } else { "FAILED" }
+                );
+            }
             Progress::Message { text } => eprintln!("  {text}"),
+            Progress::Ticks { ticks } => Self::tick(&ticks),
         }
     }
 }

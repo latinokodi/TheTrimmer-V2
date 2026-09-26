@@ -318,10 +318,26 @@ impl MediaEngine for MediaAdapter {
             }
             trimmer_core::CutMode::HeadPatch => {
                 let mut steps = vec![trimmer_media::executor::prepare_head(media, plan, config)];
-                steps.extend(trimmer_media::executor::prepare_body(media, plan, config));
-                steps.push(trimmer_media::executor::prepare_join(std::path::Path::new(
-                    "concat.txt",
-                )));
+                // A preview shows the commands, not a run, so the body's two halves are named rather
+                // than located — angle-bracketed, so nobody mistakes them for files.
+                steps.extend(trimmer_media::executor::prepare_body(
+                    media,
+                    plan,
+                    config,
+                    &trimmer_media::executor::BodyHalves::placeholders(),
+                ));
+                // The listing names two files and nothing in it says how long they are together, so the
+                // expectation comes from the plan — the same frames-over-rate the head and body use.
+                let rate = if plan.rate_numerator == 0 {
+                    0.0
+                } else {
+                    plan.requested_frames() as f64 * plan.rate_denominator as f64
+                        / plan.rate_numerator as f64
+                };
+                steps.push(trimmer_media::executor::prepare_join(
+                    std::path::Path::new("concat.txt"),
+                    rate,
+                ));
                 steps
             }
         };

@@ -127,6 +127,49 @@ fn generate_clip(tools: &ToolPaths, target: &Path) {
     );
 }
 
+/// A clip **with a soundtrack**, which is what a master actually is.
+///
+/// The video-only fixture above is deliberate: the frame-exactness assertions hash decoded frames, and an
+/// audio track makes the muxer's behaviour harder to read. But using *only* that fixture is how the worst
+/// defect in this project shipped — the head-patch body is one copy without sound and three passes with
+/// it, and the third of those had never been executed by any test. See
+/// `a_head_patch_of_a_master_with_sound_muxes_the_two_halves`.
+fn generate_clip_with_sound(tools: &ToolPaths, target: &Path) {
+    ffmpeg(
+        tools,
+        &[
+            "-hide_banner",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=640x360:rate=25:duration=12",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=12",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "18",
+            "-g",
+            "25",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "96k",
+            "-shortest",
+            target.to_str().expect("a UTF-8 path"),
+        ],
+    );
+}
+
 /// The MD5 of each decoded frame in a window, as ffmpeg reports it.
 ///
 /// `-map 0:v:0 -an` is not optional: without it the muxer hashes audio frames too and one audio
@@ -305,10 +348,17 @@ async fn a_head_patch_cut_is_lossless_exact_and_lands_on_the_mark() {
     );
 
     // Cut it.
+    //
+    // The sink is collected rather than discarded, because the *progress* a cut reports is part of what
+    // this test is for: the interface shows a bar from it, and a bar needs a position, an expectation
+    // and a rate. A cut that produced a perfect file while reporting nothing would leave a four-minute
+    // job looking like a window that had stopped.
     let output = scratch.join("cut.mp4");
     let preset = trimmer_core::delivery::standard_preset("master").expect("the master preset");
+    let sink = std::sync::Arc::new(trimmer_media::CollectingSink::new());
     let options = RunOptions {
         policy: PollPolicy::long(),
+        sink: sink.clone(),
         ..RunOptions::default()
     };
     let outcome = executor
@@ -322,6 +372,52 @@ async fn a_head_patch_cut_is_lossless_exact_and_lands_on_the_mark() {
         )
         .await
         .expect("the cut runs");
+
+    // ---- 0. The cut said where it had got to. ------------------------------------------
+    //
+    // ffmpeg's `-progress` stream, turned into a fraction the interface can draw. Asserted here rather
+    // than only in a unit test of the parser, because the parser being right is not the same claim as
+    // the parser being *fed* — the flags have to reach ffmpeg and its output has to reach the sink.
+    let ticks: Vec<trimmer_media::ProgressTicks> = sink
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            trimmer_media::Progress::Ticks { ticks } => Some(ticks),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !ticks.is_empty(),
+        "the cut reported no progress at all: {:?}",
+        sink.events()
+    );
+    assert!(
+        ticks.iter().any(|tick| tick.out_seconds > 0.0),
+        "every tick was at zero, so nothing moved: {ticks:?}"
+    );
+    assert!(
+        ticks
+            .windows(2)
+            .all(|pair| pair[1].out_seconds >= pair[0].out_seconds),
+        "the position went backwards, which would make the bar jump: {ticks:?}"
+    );
+    assert!(
+        ticks
+            .iter()
+            .all(|tick| tick.expected_seconds.is_some_and(|total| total > 0.0)),
+        "a step ran without telling the interface how long it should take: {ticks:?}"
+    );
+    assert!(
+        ticks
+            .iter()
+            .filter_map(|tick| tick.speed)
+            .any(|rate| rate > 0.0),
+        "no tick carried a rate, so the interface could not estimate anything: {ticks:?}"
+    );
+    assert!(
+        ticks.iter().any(|tick| tick.frame.is_some()),
+        "no tick carried a frame count: {ticks:?}"
+    );
 
     assert!(
         output.is_file() && output.metadata().expect("metadata").len() > 1_000,
@@ -485,6 +581,138 @@ async fn a_head_patch_cut_is_lossless_exact_and_lands_on_the_mark() {
     assert!(
         !args.contains("-frames:v"),
         "the cut used -frames:v, which counts packets in decode order and can drop a wanted frame"
+    );
+}
+
+/// A head patch of a master **with a soundtrack**, which is the case that had never run.
+///
+/// ## What this test is for
+///
+/// With sound, the body is three passes rather than one: the picture copied out of the original packets,
+/// the sound copied out of them, and a mux that joins the two. The mux step's inputs were the literal
+/// strings `PICTURE` and `SOUND`, and nothing ever replaced them — so **every head patch of a real
+/// master** failed on its last body step:
+///
+/// ```text
+/// [in#0 @ ...] Error opening input: No such file or directory
+/// Error opening input file PICTURE.
+/// ```
+///
+/// It shipped because the fixture the other end-to-end test uses has no audio track, so the three-pass
+/// body was never executed anywhere in the suite. That is the fixture lesson again — a double that
+/// cannot represent the state cannot fail because of it — and this time the state was "a video with
+/// sound", which is every video.
+///
+/// The assertions are deliberately about the *outcome* rather than the arguments: a cut that produced a
+/// file with both streams, at the right length, with the two halves each having been written. The
+/// argument-level test is `the_mux_step_opens_the_two_halves_it_was_given` in the unit suite.
+#[tokio::test]
+async fn a_head_patch_of_a_master_with_sound_muxes_the_two_halves() {
+    let Some(tools) = tools() else {
+        println!(
+            "SKIPPED the sound head patch: ffmpeg or ffprobe is not resolvable on this machine."
+        );
+        return;
+    };
+
+    let scratch = Scratch::new("soundpatch");
+    let source = scratch.join("with-sound.mp4");
+    generate_clip_with_sound(&tools, &source);
+
+    let executor = CutExecutor::new(tools.clone());
+    let media = executor
+        .prober()
+        .probe(&source)
+        .await
+        .expect("the fixture probes");
+    assert!(
+        media.audio.is_some(),
+        "this fixture is supposed to have a soundtrack; without one it is the other test"
+    );
+
+    // 37 is between the keyframes at 25 and 50, so this takes the head-patch path — the one with three
+    // body passes.
+    let segment = Segment::new(media.path.clone(), "sound", 37, 137);
+    let keyframes = executor
+        .prober()
+        .keyframes(&media, 37, 137)
+        .await
+        .expect("keyframes list");
+    let plan = plan_cut(&media, &segment, &keyframes).expect("the range plans");
+    assert_eq!(
+        plan.mode,
+        trimmer_core::CutMode::HeadPatch,
+        "37 is not a keyframe, so this must be a head patch"
+    );
+    assert!(plan.has_audio, "the plan should see the soundtrack");
+
+    let output = scratch.join("patch.mp4");
+    let preset = trimmer_core::delivery::standard_preset("master").expect("the master preset");
+    let outcome = executor
+        .cut_with_plan(
+            &media,
+            &plan,
+            &preset,
+            &CutConfig::default(),
+            &output,
+            &RunOptions::default(),
+        )
+        .await
+        .expect("a head patch of a master with sound must complete");
+
+    // The three body passes all ran, which is what the placeholder bug stopped from happening.
+    let labels: Vec<&str> = outcome
+        .steps
+        .iter()
+        .map(|step| step.label.as_str())
+        .collect();
+    for expected in [
+        "head encode",
+        "body picture copy",
+        "body sound copy",
+        "body mux",
+        "join",
+    ] {
+        assert!(
+            labels.iter().any(|label| label.contains(expected)),
+            "no step mentions {expected:?}: {labels:?}"
+        );
+    }
+
+    // And the deliverable has both streams, at the length that was asked for.
+    let streams = ffprobe(
+        &tools,
+        &[
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "csv=p=0",
+            path_of(&output),
+        ],
+    );
+    assert!(streams.contains("video"), "no video stream: {streams}");
+    assert!(streams.contains("audio"), "no audio stream: {streams}");
+
+    let duration: f64 = ffprobe(
+        &tools,
+        &[
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
+            path_of(&output),
+        ],
+    )
+    .trim()
+    .parse()
+    .unwrap_or(-1.0);
+    assert!(
+        (duration - 4.0).abs() < 0.4,
+        "100 frames at 25 fps is 4.0s; the cut is {duration:.3}s"
     );
 }
 

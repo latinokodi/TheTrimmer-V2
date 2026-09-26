@@ -83,7 +83,7 @@ pub use executor::{CutConfig, CutExecutor, CutOutcome, ExecutionStep, Prepared};
 pub use probe::{FactsMeasurer, Prober};
 pub use process::{
     CancelFlag, CollectingSink, NullSink, PollPolicy, ProcessRunner, Progress, ProgressSink,
-    RunOptions,
+    ProgressTicks, RunOptions, Watch,
 };
 pub use tool::{ToolPaths, ToolSet};
 

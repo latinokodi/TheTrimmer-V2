@@ -289,6 +289,10 @@ was done.
 ### Automation
 
 * **Batch queue**, sequential by design, with per-item outcomes, progress, and cancellation.
+* **Real progress while it works**: `out_time_us` from ffmpeg's own `-progress` stream, against a length
+  the pass already knows, so the bar is a measurement rather than an animation — plus ffmpeg's own
+  throughput, which is where the estimate comes from, and a log stamped with when each pass ran and how
+  long it took. See [ADR-022](docs/adr/022-what-a-progress-bar-may-mean.md).
 * **Watch folders** (`notify`-based rules): what to do when a file and a marker list appear — cut,
   cut and verify, or queue for review.
 * **Headless API** so a studio's pipeline can drive the same engine the window drives (below).

@@ -166,13 +166,42 @@ impl CutOutcome {
 /// Kept as its own type so that every argument builder can be *tested as data* without a
 /// process, and so that a caller who wants to show a user what will happen can do so. `Serialize`
 /// because a dry run sends these to the interface.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+/// A prepared command: the builder's output, ready to run.
+///
+/// Kept as its own type so that every argument builder can be *tested as data* without a
+/// process, and so that a caller who wants to show a user what will happen can do so. `Serialize`
+/// because a dry run sends these to the interface.
+///
+/// `PartialEq` without `Eq`, because `expected_seconds` is a float: claiming total equality for one
+/// would be a lie, exactly as it is for [`crate::Progress`].
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Prepared {
     /// A short label.
     pub label: String,
     /// The arguments to pass to ffmpeg.
     pub args: Vec<String>,
+    /// Seconds of output this step is expected to produce, when the builder knows.
+    ///
+    /// It almost always does: the value is already being handed to ffmpeg as `-t`, because that is what
+    /// makes the step the right length. Saying it once more, here, is what turns ffmpeg's
+    /// `out_time_us` into a fraction instead of a number nobody can place. `None` for a step whose
+    /// length is genuinely unknown, which then reports counters without a percentage rather than
+    /// inventing one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_seconds: Option<f64>,
+}
+
+impl Prepared {
+    /// A step of the given length.
+    #[must_use]
+    fn timed(label: String, args: Vec<String>, expected_seconds: f64) -> Self {
+        Self {
+            label,
+            args,
+            expected_seconds: Some(expected_seconds),
+        }
+    }
 }
 
 impl Prepared {
@@ -420,18 +449,27 @@ impl CutExecutor {
         //    the body on that earlier audio packet, so the picture would begin 80 ms into its own
         //    file and the joined segment would sit about three frames early. This is V1 ADR-002
         //    and it is the single most valuable lesson in the codebase.
-        let body_steps = prepare_body(media, plan, config);
+        let picture = work.path().join("body-picture.mp4");
+        let sound = work.path().join("body-sound.m4a");
+        let body_steps = prepare_body(
+            media,
+            plan,
+            config,
+            &BodyHalves {
+                picture: &picture,
+                sound: &sound,
+            },
+        );
         if body_steps.len() == 1 {
             // No audio: the picture copy is the body.
             self.run_step(&body_steps[0], &body, options, &mut steps)
                 .await?;
         } else {
-            let picture = work.path().join("body-picture.mp4");
-            let sound = work.path().join("body-sound.m4a");
             self.run_step(&body_steps[0], &picture, options, &mut steps)
                 .await?;
             self.run_step(&body_steps[1], &sound, options, &mut steps)
                 .await?;
+            // The mux was built with those two paths, so it cannot be pointing at nothing.
             self.run_step(&body_steps[2], &body, options, &mut steps)
                 .await?;
         }
@@ -446,7 +484,7 @@ impl CutExecutor {
                 reason: error.to_string(),
             }
         })?;
-        let prepared = prepare_join(&listing);
+        let prepared = prepare_join(&listing, segment_seconds(plan));
         self.run_step(&prepared, &joined, options, &mut steps)
             .await?;
 
@@ -646,6 +684,10 @@ impl CutExecutor {
     ) -> MediaResult<()> {
         let step_options = RunOptions {
             label: prepared.label.clone(),
+            // The step says how long it should be, so ffmpeg can be asked for its position against a
+            // real expectation. A step that does not know is run without a watch rather than given a
+            // guess: a bar with a made-up denominator is worse than no bar.
+            watch: prepared.expected_seconds.map(crate::process::Watch::of),
             ..options.clone()
         };
         // The output path is appended here rather than by each builder. A builder is a pure function
@@ -805,13 +847,47 @@ pub fn prepare_head(media: &MediaInfo, plan: &CutPlan, config: &CutConfig) -> Pr
         args.extend(["-movflags".to_owned(), "+faststart".to_owned()]);
     }
     // The output path is appended by the caller, which is the only thing that knows it.
-    Prepared {
-        label: format!(
+    Prepared::timed(
+        format!(
             "head encode, frames {}..{}",
             plan.start_frame,
             plan.keyframe.unwrap_or(plan.start_frame)
         ),
         args,
+        plan.head_seconds(),
+    )
+}
+
+/// Where the body's two halves are written, for the mux step that joins them.
+///
+/// `prepare_body` is a pure function of the plan and does not know where the caller will put its
+/// intermediates, which is why these are arguments rather than something it makes up.
+///
+/// **It used to make them up.** The mux step's two inputs were the literal strings `PICTURE` and `SOUND`
+/// and nothing ever replaced them, so every head patch of a source **with a soundtrack** died on the last
+/// body step with `Error opening input file PICTURE`. It survived because the only fixture in the suite
+/// that ever ran a head patch had no audio track — and a master with no audio is not a master anybody
+/// cuts. Taking the paths as arguments is what makes a mux step that names nothing real *unrepresentable*
+/// rather than merely unlikely.
+#[derive(Debug, Clone, Copy)]
+pub struct BodyHalves<'a> {
+    /// The picture copied out of the original packets.
+    pub picture: &'a Path,
+    /// The sound copied out of the original packets.
+    pub sound: &'a Path,
+}
+
+impl BodyHalves<'_> {
+    /// Names a preview can show, for a caller that is only rendering the commands.
+    ///
+    /// Deliberately angle-bracketed rather than plausible: a placeholder that looked like a path would be
+    /// the same trap again, one refactor later.
+    #[must_use]
+    pub fn placeholders() -> BodyHalves<'static> {
+        BodyHalves {
+            picture: Path::new("<body picture>"),
+            sound: Path::new("<body sound>"),
+        }
     }
 }
 
@@ -820,9 +896,15 @@ pub fn prepare_head(media: &MediaInfo, plan: &CutPlan, config: &CutConfig) -> Pr
 /// With audio, this returns **three** prepared commands: picture copied with an *input* seek on
 /// the keyframe, sound copied with an *output* seek so the packets before the mark are dropped
 /// rather than hunted for, and a mux of the two. See the module documentation for why one pass
-/// is not acceptable.
+/// is not acceptable. `halves` is where the caller will write the first two, because the third
+/// cannot run without them.
 #[must_use]
-pub fn prepare_body(media: &MediaInfo, plan: &CutPlan, _config: &CutConfig) -> Vec<Prepared> {
+pub fn prepare_body(
+    media: &MediaInfo,
+    plan: &CutPlan,
+    _config: &CutConfig,
+    halves: &BodyHalves<'_>,
+) -> Vec<Prepared> {
     let Some(keyframe) = plan.keyframe else {
         return Vec::new();
     };
@@ -849,10 +931,11 @@ pub fn prepare_body(media: &MediaInfo, plan: &CutPlan, _config: &CutConfig) -> V
     };
 
     if !plan.has_audio {
-        return vec![Prepared {
-            label: format!("body copy, frames {keyframe}.. from the original packets"),
-            args: picture_args,
-        }];
+        return vec![Prepared::timed(
+            format!("body copy, frames {keyframe}.. from the original packets"),
+            picture_args,
+            duration,
+        )];
     }
 
     let sound_args = {
@@ -878,9 +961,9 @@ pub fn prepare_body(media: &MediaInfo, plan: &CutPlan, _config: &CutConfig) -> V
         let mut args = common_head_args();
         args.extend([
             "-i".to_owned(),
-            "PICTURE".to_owned(),
+            halves.picture.display().to_string(),
             "-i".to_owned(),
-            "SOUND".to_owned(),
+            halves.sound.display().to_string(),
             "-map".to_owned(),
             "0:v:0".to_owned(),
             "-map".to_owned(),
@@ -894,24 +977,26 @@ pub fn prepare_body(media: &MediaInfo, plan: &CutPlan, _config: &CutConfig) -> V
     };
 
     vec![
-        Prepared {
-            label: format!("body picture copy, frames {keyframe}.."),
-            args: picture_args,
-        },
-        Prepared {
-            label: "body sound copy, cut on an output seek".to_owned(),
-            args: sound_args,
-        },
-        Prepared {
-            label: "body mux, picture and sound".to_owned(),
-            args: mux_args,
-        },
+        Prepared::timed(
+            format!("body picture copy, frames {keyframe}.."),
+            picture_args,
+            duration,
+        ),
+        Prepared::timed(
+            "body sound copy, cut on an output seek".to_owned(),
+            sound_args,
+            duration,
+        ),
+        Prepared::timed("body mux, picture and sound".to_owned(), mux_args, duration),
     ]
 }
 
 /// Build the concat join.
+///
+/// `expected_seconds` is the whole segment, which only the caller knows: the listing names two files
+/// and nothing in it says how long they are together.
 #[must_use]
-pub fn prepare_join(listing: &Path) -> Prepared {
+pub fn prepare_join(listing: &Path, expected_seconds: f64) -> Prepared {
     let mut args = common_head_args();
     args.extend([
         "-f".to_owned(),
@@ -925,10 +1010,25 @@ pub fn prepare_join(listing: &Path) -> Prepared {
         "-movflags".to_owned(),
         "+faststart".to_owned(),
     ]);
-    Prepared {
-        label: "join head and body".to_owned(),
+    Prepared::timed(
+        "join head and body".to_owned(),
         args,
+        // The join copies both halves into the deliverable, so it is expected to take as long as the
+        // segment is. It is nearly always the fastest step — a copy of two local files — which is why
+        // the fraction is per step and never dressed up as the progress of the whole cut.
+        expected_seconds,
+    )
+}
+
+/// How long the whole segment is, in seconds.
+///
+/// The plan carries frames and a rate rather than a duration, because frames are what the cut is
+/// specified in and converting early is how a rounding error gets into the middle of an edit.
+fn segment_seconds(plan: &CutPlan) -> f64 {
+    if plan.rate_numerator == 0 {
+        return 0.0;
     }
+    plan.requested_frames() as f64 * plan.rate_denominator as f64 / plan.rate_numerator as f64
 }
 
 /// Build the whole-segment copy, for an in point that lands on a keyframe.
@@ -962,10 +1062,11 @@ pub fn prepare_copy(media: &MediaInfo, plan: &CutPlan, config: &CutConfig) -> Pr
     if config.faststart {
         args.extend(["-movflags".to_owned(), "+faststart".to_owned()]);
     }
-    Prepared {
-        label: "lossless copy, no re-encode".to_owned(),
+    Prepared::timed(
+        "lossless copy, no re-encode".to_owned(),
         args,
-    }
+        segment_seconds(plan),
+    )
 }
 
 /// Build the whole-segment re-encode, including any geometry the preset asks for.
@@ -1043,10 +1144,11 @@ pub fn prepare_reencode(
     if config.faststart && preset.container.supports_faststart() {
         args.extend(["-movflags".to_owned(), "+faststart".to_owned()]);
     }
-    Prepared {
-        label: "encode the whole segment".to_owned(),
+    Prepared::timed(
+        "encode the whole segment".to_owned(),
         args,
-    }
+        segment_seconds(plan),
+    )
 }
 
 /// The concat list, with the head's duration **stated** rather than inferred.
@@ -1200,18 +1302,70 @@ mod tests {
     fn the_body_is_copied_as_three_separate_steps_when_there_is_sound() {
         let media = media();
         let plan = plan_for(1_000, 1_600);
-        let steps = prepare_body(&media, &plan, &CutConfig::default());
+        let steps = prepare_body(
+            &media,
+            &plan,
+            &CutConfig::default(),
+            &BodyHalves::placeholders(),
+        );
         assert_eq!(steps.len(), 3, "picture, sound and mux");
         assert!(steps[0].label.contains("picture"));
         assert!(steps[1].label.contains("sound"));
         assert!(steps[2].label.contains("mux"));
     }
 
+    /// The mux step muxes the two files the previous two steps wrote, and it must name them.
+    ///
+    /// This is the test that was missing, and the fault it exists for is the worst in the project: the
+    /// mux args carried the literals `PICTURE` and `SOUND` and nothing replaced them, so **every head
+    /// patch of a source with a soundtrack** failed on the last body step with `Error opening input file
+    /// PICTURE`. It shipped because the only fixture that ever ran a head patch had no audio track.
+    ///
+    /// Asserted on the *arguments*, so it needs no media and no process: whatever the mux is told to open
+    /// has to be something the caller supplied.
+    #[test]
+    fn the_mux_step_opens_the_two_halves_it_was_given() {
+        let media = media();
+        let plan = plan_for(1_000, 1_600);
+        let halves = BodyHalves {
+            picture: Path::new(r"H:\work\body-picture.mp4"),
+            sound: Path::new(r"H:\work\body-sound.m4a"),
+        };
+        let steps = prepare_body(&media, &plan, &CutConfig::default(), &halves);
+        let mux = &steps[2].args;
+
+        let inputs: Vec<&String> = mux
+            .iter()
+            .enumerate()
+            .filter(|(_, arg)| arg.as_str() == "-i")
+            .filter_map(|(index, _)| mux.get(index + 1))
+            .collect();
+        assert_eq!(
+            inputs,
+            vec![
+                &r"H:\work\body-picture.mp4".to_owned(),
+                &r"H:\work\body-sound.m4a".to_owned()
+            ],
+            "the mux must open the picture and the sound it was given"
+        );
+        for placeholder in ["PICTURE", "SOUND"] {
+            assert!(
+                !mux.iter().any(|arg| arg == placeholder),
+                "the mux still names the placeholder {placeholder}: {mux:?}"
+            );
+        }
+    }
+
     #[test]
     fn the_body_picture_is_seeked_as_an_input_and_the_sound_as_an_output() {
         let media = media();
         let plan = plan_for(1_000, 1_600);
-        let steps = prepare_body(&media, &plan, &CutConfig::default());
+        let steps = prepare_body(
+            &media,
+            &plan,
+            &CutConfig::default(),
+            &BodyHalves::placeholders(),
+        );
 
         // Picture: `-ss` before `-i`.
         let picture = &steps[0].args;
@@ -1235,7 +1389,12 @@ mod tests {
         let mut media = media();
         media.audio = None;
         let plan = plan_for_media(&media, 1_000, 1_600);
-        let steps = prepare_body(&media, &plan, &CutConfig::default());
+        let steps = prepare_body(
+            &media,
+            &plan,
+            &CutConfig::default(),
+            &BodyHalves::placeholders(),
+        );
         assert_eq!(steps.len(), 1);
         assert!(steps[0].args.contains(&"0:v:0".to_owned()));
         assert!(!steps[0].args.contains(&"0:a:0".to_owned()));
@@ -1298,7 +1457,7 @@ mod tests {
 
     #[test]
     fn the_join_copies_rather_than_re_encodes() {
-        let prepared = prepare_join(Path::new(r"H:\work\concat.txt"));
+        let prepared = prepare_join(Path::new(r"H:\work\concat.txt"), 4.0);
         assert_eq!(find(&prepared.args, "-c").as_deref(), Some("copy"));
         assert_eq!(find(&prepared.args, "-f").as_deref(), Some("concat"));
         assert_eq!(find(&prepared.args, "-safe").as_deref(), Some("0"));
@@ -1345,7 +1504,7 @@ mod tests {
         let plan = plan_for(1_000, 1_600);
         let prepared = [
             prepare_head(&media, &plan, &CutConfig::default()),
-            prepare_join(Path::new("x")),
+            prepare_join(Path::new("x"), 24.0),
             prepare_copy(&media, &plan, &CutConfig::default()),
             prepare_reencode(
                 &media,

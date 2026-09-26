@@ -121,6 +121,57 @@ interface StubState {
   fullscreen: boolean;
 }
 
+/**
+ * The event bridge, faked so a test can drive the progress display.
+ *
+ * ## Why this is test scaffolding rather than a simulation
+ *
+ * In the window, progress arrives from Rust: the shell emits `cut-progress` as the engine works, and the
+ * interface renders a bar and a log from it. There is no Rust in a browser, so without this the entire
+ * progress display — the bar, the fraction, the rate, the estimate, the log's shape — could only ever be
+ * checked by running a real cut in the window. That is the gap that hid the last two faults: a fixture
+ * that cannot represent the state leaves the code that handles it untested (see ADR-021).
+ *
+ * What this deliberately does **not** do is invent the events. `emit` hands the caller's payload to the
+ * listeners verbatim; it is a wire, not a producer. The *shape* of the payload is asserted against the
+ * real Rust serialisation in `apps/desktop/src-tauri/tests/ipc_contract.rs`, which is what keeps a test
+ * that drives this bridge from passing on a shape Rust does not send.
+ */
+class StubEvents {
+  private readonly listeners = new Map<string, ((event: { payload: unknown }) => void)[]>();
+
+  async listen<T>(
+    name: string,
+    handler: (event: { readonly payload: T }) => void,
+  ): Promise<() => void> {
+    const existing = this.listeners.get(name) ?? [];
+    existing.push(handler as (event: { payload: unknown }) => void);
+    this.listeners.set(name, existing);
+    // Tauri's `listen` resolves to the function that stops listening, and the interface relies on that.
+    return () => {
+      const current = this.listeners.get(name) ?? [];
+      this.listeners.set(
+        name,
+        current.filter((candidate) => candidate !== handler),
+      );
+    };
+  }
+
+  /** Deliver a payload to whatever is listening. The test driver; the window gets this from Rust. */
+  emit(name: string, payload: unknown): void {
+    for (const handler of this.listeners.get(name) ?? []) {
+      handler({ payload });
+    }
+  }
+}
+
+const stubEvents = new StubEvents();
+
+/** Wait, so a narrated run takes a moment rather than a tick. */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function freshState(): StubState {
   return {
     projects: [],
@@ -667,7 +718,7 @@ const handlers: Record<CommandName, (args: Record<string, unknown>) => unknown> 
     refuse("cutting one segment at a time is not wired in the browser harness; use the CLI or the window");
   },
 
-  run_batch: (args) => {
+  run_batch: async (args) => {
     if (state.openProject === null) {
       refuse("no project is open");
     }
@@ -676,6 +727,92 @@ const handlers: Record<CommandName, (args: Record<string, unknown>) => unknown> 
       refuse("nothing to run: no segment is enabled");
     }
     state.runs += 1;
+
+    /*
+     * The run, narrated.
+     *
+     * A cut in the window emits `cut-progress` throughout — a step boundary per ffmpeg pass, its command
+     * line, a position every half-second, the pass's own verdict, then the segment's. The stub used to
+     * answer `run_batch` with a value and say nothing, which meant **a browser could not produce a single
+     * progress event**: the bar, the fraction, the rate, the estimate and the shape of the log could only
+     * be checked by running a real cut in the window, and were therefore not checked at all. That is the
+     * fixture lesson from ADR-021, and this is the fix for it.
+     *
+     * The payloads are the shape Rust sends, which
+     * `apps/desktop/src-tauri/tests/ipc_contract.rs` asserts key by key — a narration that drifted from
+     * the real one would make these tests pass on a display the window never produces.
+     *
+     * Compressed: under a second per segment rather than minutes. The fractions, the order and the
+     * relationships are real; only the clock is not. The tempo is chosen so that a test can *observe* a
+     * run in progress — the readout only exists while working, so a narration that finished in
+     * milliseconds would leave the whole display unassertable.
+     */
+    const PASSES = [
+      { label: "head encode, frames 25..50", seconds: 1.0 },
+      { label: "body picture copy, frames 50..", seconds: 2.0 },
+      { label: "body sound copy, cut on an output seek", seconds: 2.0 },
+      { label: "body mux, picture and sound", seconds: 2.0 },
+      { label: "join head and body", seconds: 3.0 },
+    ];
+    const TICKS_PER_PASS = 4;
+    const TICK_MS = 45;
+
+    stubEvents.emit("cut-progress", { kind: "started", total: runnable.length });
+
+    for (const [index, segment] of runnable.entries()) {
+      const frames = Math.max(0, (segment.endFrame ?? FIXTURE_FRAMES) - segment.startFrame) + 1;
+      stubEvents.emit("cut-progress", {
+        kind: "state",
+        job: index,
+        name: segment.name,
+        state: "cutting",
+      });
+
+      for (const pass of PASSES) {
+        stubEvents.emit("cut-progress", { kind: "step", label: pass.label });
+        stubEvents.emit("cut-progress", {
+          kind: "command",
+          text: `ffmpeg -hide_banner -nostdin -v error -y -progress pipe:1 ${pass.label}`,
+          args: ["-hide_banner", "-nostdin", "-v", "error", "-y"],
+        });
+        for (let tick = 1; tick <= TICKS_PER_PASS; tick += 1) {
+          const share = tick / TICKS_PER_PASS;
+          stubEvents.emit("cut-progress", {
+            kind: "ticks",
+            ticks: {
+              outSeconds: pass.seconds * share,
+              frame: Math.round((frames / PASSES.length) * share),
+              speed: 4.5,
+              bytes: Math.round(1_200_000 * share),
+              expectedSeconds: pass.seconds,
+            },
+          });
+          await delay(TICK_MS);
+        }
+        stubEvents.emit("cut-progress", {
+          kind: "finished",
+          label: pass.label,
+          seconds: pass.seconds / 4,
+          ok: true,
+        });
+      }
+
+      stubEvents.emit("cut-progress", {
+        kind: "finished",
+        job: index,
+        name: segment.name,
+        status: {
+          kind: "succeeded",
+          output: outputPath(segment),
+          frames,
+          overshoot: 1,
+          seconds: 0.42 + index * 0.31,
+          steps: PASSES.length,
+          checks: checksFor(segment),
+        },
+      });
+    }
+
     const jobs = runnable.map((segment, index) => ({
       job: index,
       segment: segment.id,
@@ -690,6 +827,15 @@ const handlers: Record<CommandName, (args: Record<string, unknown>) => unknown> 
         checks: checksFor(segment),
       },
     }));
+
+    stubEvents.emit("cut-progress", {
+      kind: "completed",
+      succeeded: jobs.length,
+      unverified: 0,
+      failed: 0,
+      skipped: state.segments.length - runnable.length,
+    });
+
     const deliveredFrames = jobs.reduce((sum, job) => sum + job.status.frames, 0);
     return {
       jobs,
@@ -837,6 +983,7 @@ export function installStub(): boolean {
   globals.__TAURI__ = {
     mocks: true,
     core: { invoke },
+    event: stubEvents,
     /*
      * The window handle, faked the same way everything else is.
      *

@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { chooseMaster, mark, pickInstead } from "./support";
+
 /**
  * The whole product, driven as a person drives it.
  *
@@ -9,24 +11,10 @@ import { expect, test } from "@playwright/test";
  *
  * There is no project setup step: the window opens a session by itself, because a dialog asking what to
  * call something is ceremony in front of a form that has nothing to do with it.
+ *
+ * The moves shared with the other spec files live in `support.ts`, so there is one copy of `chooseMaster`
+ * rather than three that drift.
  */
-
-/** Choose the fixture master. `Browse` opens the picker, and the stub is the picker in a browser. */
-async function chooseMaster(page: import("@playwright/test").Page): Promise<void> {
-  await page.getByRole("button", { name: "Browse" }).click();
-  await expect(page.getByLabel("Video file")).toHaveValue(/A007C012_250312_R1QK\.mov$/);
-}
-
-/** Type a range and wait for the plan line to agree it parses. */
-async function mark(
-  page: import("@playwright/test").Page,
-  inPoint: string,
-  outPoint: string,
-): Promise<void> {
-  await page.getByLabel("In point").fill(inPoint);
-  await page.getByLabel("Out point").fill(outPoint);
-  await expect(page.locator(".range__plan")).not.toContainText("Type both timecodes");
-}
 
 test("the zones are in the order the work happens, and the first says what to do", async ({
   page,
@@ -53,19 +41,6 @@ test("the zones are in the order the work happens, and the first says what to do
   await expect(page.getByLabel("Video file")).toHaveValue("");
   await expect(page.locator(".zone__note").first()).toContainText("no file");
 });
-
-/**
- * Answer the next picker call with a chosen path, so a test can pick a *different* file.
- *
- * The stub's picker returns the fixture master every time, which is the right default and the wrong
- * thing for testing what happens when the operator changes their mind.
- */
-async function pickInstead(page: import("@playwright/test").Page, path: string): Promise<void> {
-  await page.evaluate((chosen) => {
-    (window as unknown as { __TAURI__: { dialog: { open: unknown } } }).__TAURI__.dialog.open =
-      async () => chosen;
-  }, path);
-}
 
 test("picking a different video switches to it instead of sticking on the first", async ({ page }) => {
   /*

@@ -41,10 +41,30 @@ export function formatDuration(seconds: number): string {
 }
 
 /**
+ * Seconds as a **fixed-width clock**: `0:08`, `3:12`, `1:02:03`.
+ *
+ * Deliberately not {@link formatDuration}. That one answers "how big is this", and says `8.4s` or
+ * `3m 12s` because an editor reading a magnitude does not need a colon. This one answers "where in the
+ * run", and is read by scanning a column — off a log's left edge, or down a countdown. A column whose
+ * width changes as it counts is a column the eye has to find again on every line.
+ */
+export function formatClock(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return "—";
+  }
+  const total = Math.floor(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  const tail = `${minutes}:${String(secs).padStart(2, "0")}`;
+  return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}` : tail;
+}
+
+/**
  * A fraction as a percentage, at a resolution that does not lie.
  *
- * Below one percent the useful statement is "under 1%", not "0.04%": the estimate behind the number
- * is a rough one, and printing four significant figures of a rough number is false precision.
+ * Below one percent the useful statement is "under 1%", not "0.04%": the estimate behind the number is a
+ * rough one, and printing four significant figures of a rough number is false precision.
  */
 export function formatPercent(fraction: number): string {
   if (!Number.isFinite(fraction) || fraction < 0) {

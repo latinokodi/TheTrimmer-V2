@@ -715,6 +715,9 @@ impl Queue {
             cancel: self.cancel.clone(),
             sink: step_sink,
             label: format!("cut {name}"),
+            // The passes inside a cut ask for themselves: each one knows what it is expected to
+            // produce, and a run whose length is not known yet cannot be given a fraction here.
+            watch: None,
         };
 
         let cut = match self.engine.cut(&request, &run_options).await {

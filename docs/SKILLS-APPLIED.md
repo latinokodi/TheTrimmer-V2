@@ -60,6 +60,9 @@ work, executed by separate agents with the audit skill loaded as their brief.
 
 | 43 | `systematic-debugging` | `apps/web/src/ipc/stub.ts`, `App.tsx`, `panel.spec.ts` | Used on "when I select a file with browse, then try to select a different one, the first file gets stuck": Phase 1's "find the root cause before attempting fixes" is what turned up the fact that `draft.setSource` was called from **nowhere in the interface** — a grep, not a theory — and Phase 4's "create a failing test case before fixing" produced a test that failed with the user's own symptom (`Received string: "H:\masters\reel 2\A007C012_250312_R1QK.mov"` after asking for a different file). The same phase is what caught the fixture: the stub's `sources` returned one row behind a boolean, so the state the fault lives in could not be built in a browser at all. |
 
+| 44 | `performance-profiling` | `crates/trimmer-media/src/process.rs`, `apps/web/src/components/ProgressLog.tsx` | Applied to the request for progress bars: "measure, do not estimate" is the whole of this skill, and the first thing it ruled out was a bar driven by elapsed time against a guessed duration. It also produced the cadence — `-stats_period 0.5` is two events a second, which is often enough to look live and rare enough to be free — and the rule that each figure is *omitted* when unknown rather than shown as a zero, because a readout that says `0:00 left` at the start of a nine-minute job is a measurement of nothing pretending to be one. |
+| 45 | `systematic-debugging` | `apps/web/src/state/useCutLog.ts` | Used on the fault found while writing this feature: both event vocabularies have a `finished`, and the listener sent every one to the queue handler, so the log never showed a single ffmpeg pass's timing and counted passes as segments. Phase 1's rule — read the code that produces the data before proposing a fix — is what turned that up, and Phase 4's is why the discriminator was then removed on purpose to prove the new test fails: it reports **zero** pass verdicts where it expects five. |
+
 ### Skills consulted and deliberately *not* applied
 
 Recording a rejection is as useful as recording an adoption.
@@ -103,7 +106,7 @@ no trace of it cannot tell whether it was considered and rejected or never consi
 
 ## Counting
 
-Forty-eight distinct skills are named above. Forty-three changed a decision in the shipped code or its
+Forty-eight distinct skills are named above. Forty-five changed a decision in the shipped code or its
 documentation, and seven are independent audits. The requirement was twenty.
 
 Numbers 38–40 were applied to the visual revision recorded in
@@ -115,4 +118,6 @@ browser stub; [ADR-020](adr/020-the-window-has-a-titlebar.md), where it turned o
 and [ADR-021](adr/021-the-fixture-could-not-hold-two.md), where a second video could be added and not
 selected. All three are the same mistake in different clothing: a proxy was asked about the system it
 stands in for, and described its own intentions instead — so every check in the project was green while
-the product did not work.
+the product did not work. Numbers 44 and 45 were applied to the progress work recorded in
+[ADR-022](adr/022-what-a-progress-bar-may-mean.md), which found the same class of fault once more: the
+browser stub emitted no progress events at all, so the entire progress display was exercised by nothing.

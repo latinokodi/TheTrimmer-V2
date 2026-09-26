@@ -758,6 +758,9 @@ async fn run_one<R: Runtime>(
         cancel,
         sink,
         label: "cut".to_owned(),
+        // Each pass inside the cut knows what it is expected to produce and asks to be watched for
+        // itself; this outer label is only what the whole cut is called.
+        watch: None,
     };
     let outcome = engine.cut(&request, &options).await.map_err(explain)?;
 

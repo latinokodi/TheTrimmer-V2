@@ -755,6 +755,144 @@ fn a_project_holds_several_masters_and_removing_one_takes_its_segments() -> Resu
     Ok(())
 }
 
+/// The progress events, key by key, exactly as the interface reads them.
+///
+/// ## Why an event shape needs asserting against the real thing
+///
+/// The browser suite drives the whole progress display — the determinate bar, the percentage, the rate,
+/// the estimate, the log's structure — from events emitted by the *stub*, because a browser has no
+/// engine to emit them. That is only sound if the stub's payloads have the shape Rust sends, and this is
+/// the only place that can be checked: `apps/web/tests/progress.spec.ts` cannot tell a well-shaped
+/// payload from a plausible one.
+///
+/// Every key named below is read in `apps/web/src/state/useCutLog.ts`. A rename on the Rust side that the
+/// TypeScript did not follow is a progress bar that silently shows nothing — a failure with no error in
+/// it, which is the same shape as the two faults that shipped before it.
+///
+/// Synchronous and needs no media, so it runs in the ordinary suite rather than behind `--ignored`.
+#[test]
+fn the_progress_events_carry_the_keys_the_interface_reads() {
+    use trimmer_media::{Progress, ProgressTicks};
+
+    // ---- the media vocabulary, one ffmpeg process at a time --------------------------------
+    let step = serde_json::to_value(Progress::Step {
+        label: "head encode, frames 25..50".to_owned(),
+    })
+    .expect("step serialises");
+    assert_eq!(step["kind"], "step");
+    assert_eq!(step["label"], "head encode, frames 25..50");
+
+    let command = serde_json::to_value(Progress::Command {
+        text: "ffmpeg -i a.mp4 out.mp4".to_owned(),
+        args: vec!["-i".to_owned()],
+    })
+    .expect("command serialises");
+    assert_eq!(command["kind"], "command");
+    assert!(command["text"].is_string(), "{command}");
+
+    let ticks = serde_json::to_value(Progress::Ticks {
+        ticks: ProgressTicks {
+            out_seconds: 2.2,
+            frame: Some(57),
+            speed: Some(4.27),
+            bytes: Some(158_476),
+            expected_seconds: Some(4.4),
+        },
+    })
+    .expect("ticks serialise");
+    assert_eq!(ticks["kind"], "ticks");
+    // The nested object is camelCase, and the interface reads `outSeconds` — not `out_seconds`.
+    assert_eq!(ticks["ticks"]["outSeconds"], 2.2, "{ticks}");
+    assert_eq!(ticks["ticks"]["expectedSeconds"], 4.4, "{ticks}");
+    assert_eq!(ticks["ticks"]["frame"], 57);
+    assert_eq!(ticks["ticks"]["speed"], 4.27);
+    assert_eq!(ticks["ticks"]["bytes"], 158_476);
+
+    // A step that does not know its own length reports a null expectation, which is how the interface
+    // knows to draw an indeterminate bar rather than measure against the previous step's length.
+    let unknown = serde_json::to_value(Progress::Ticks {
+        ticks: ProgressTicks {
+            out_seconds: 1.0,
+            frame: None,
+            speed: None,
+            bytes: None,
+            expected_seconds: None,
+        },
+    })
+    .expect("ticks serialise");
+    assert!(unknown["ticks"]["expectedSeconds"].is_null(), "{unknown}");
+
+    let finished = serde_json::to_value(Progress::Finished {
+        label: "join head and body".to_owned(),
+        seconds: 0.4,
+        ok: true,
+    })
+    .expect("finished serialises");
+    assert_eq!(finished["kind"], "finished");
+    assert!(finished["label"].is_string(), "{finished}");
+    assert!(finished["ok"].is_boolean(), "{finished}");
+    // Deliberately no `job`: that absence is exactly what tells the interface this is a pass ending and
+    // not a segment ending, and both vocabularies use `finished`.
+    assert!(finished.get("job").is_none(), "{finished}");
+
+    let message = serde_json::to_value(Progress::Message {
+        text: "DTS out of order".to_owned(),
+    })
+    .expect("message");
+    assert_eq!(message["kind"], "message");
+    assert!(message["text"].is_string(), "{message}");
+
+    // ---- the batch vocabulary, one segment at a time ---------------------------------------
+    let started =
+        serde_json::to_value(trimmer_app::QueueEvent::Started { total: 3 }).expect("started");
+    assert_eq!(started["kind"], "started");
+    assert_eq!(started["total"], 3);
+
+    let state = serde_json::to_value(trimmer_app::QueueEvent::State {
+        job: trimmer_app::JobId(1),
+        name: "Segment at 00:00:01:00".to_owned(),
+        state: trimmer_app::JobState::Cutting,
+    })
+    .expect("state");
+    assert_eq!(state["kind"], "state");
+    assert!(state["name"].is_string(), "{state}");
+    assert!(
+        state.get("job").is_some(),
+        "the interface tells the two vocabularies apart by `job`"
+    );
+    assert!(state.get("status").is_none(), "{state}");
+
+    let job_finished = serde_json::to_value(trimmer_app::QueueEvent::Finished {
+        job: trimmer_app::JobId(1),
+        name: "Segment at 00:00:01:00".to_owned(),
+        status: trimmer_app::JobStatus::Skipped {
+            reason: "not enabled".to_owned(),
+        },
+    })
+    .expect("finished");
+    assert_eq!(job_finished["kind"], "finished");
+    assert_eq!(
+        job_finished["job"], 1,
+        "a queue `finished` names its job and a media one does not"
+    );
+    assert!(job_finished["name"].is_string(), "{job_finished}");
+
+    let completed = serde_json::to_value(trimmer_app::QueueEvent::Completed {
+        succeeded: 2,
+        unverified: 0,
+        failed: 1,
+        skipped: 0,
+    })
+    .expect("completed");
+    assert_eq!(completed["kind"], "completed");
+    for key in ["succeeded", "unverified", "failed", "skipped"] {
+        assert!(
+            completed.get(key).is_some(),
+            "`{key}` is missing: {completed}"
+        );
+    }
+}
+
 /// Every command the interface can name is registered in the handler.
 ///
 /// ## Why this test had to exist and why it is new

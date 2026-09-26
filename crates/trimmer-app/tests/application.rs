@@ -158,7 +158,12 @@ impl MediaEngine for FakeEngine {
             )],
             CutMode::HeadPatch => {
                 let mut steps = vec![trimmer_media::executor::prepare_head(media, plan, &config)];
-                steps.extend(trimmer_media::executor::prepare_body(media, plan, &config));
+                steps.extend(trimmer_media::executor::prepare_body(
+                    media,
+                    plan,
+                    &config,
+                    &trimmer_media::executor::BodyHalves::placeholders(),
+                ));
                 steps
             }
         })

@@ -171,6 +171,140 @@ pub enum Progress {
         /// The line.
         text: String,
     },
+    /// Where the running step has got to, as ffmpeg reported it.
+    ///
+    /// Emitted every `-stats_period` seconds while a step runs, but **only for a run that asked for
+    /// it** — see [`Watch`]. The fraction is `out_seconds / expected_seconds` when the caller knew the
+    /// expectation, and a caller that did not still gets the counters.
+    Ticks {
+        /// What ffmpeg said.
+        ticks: ProgressTicks,
+    },
+}
+
+/// Where a running step has got to, as **ffmpeg itself** reports it.
+///
+/// ## Why this exists
+///
+/// Until this was added, a four-minute cut reported a step label and a heartbeat and nothing else: no
+/// fraction, no rate, no estimate. The interface showed an indeterminate sweep, correctly, because
+/// there was genuinely no number to show — and "we are doing something" is not progress.
+///
+/// ffmpeg will say exactly how far along it is, if asked. `-progress pipe:1` makes it write a block of
+/// `key=value` lines to standard output every `-stats_period` seconds and a final one after
+/// `progress=end`:
+///
+/// ```text
+/// frame=57
+/// fps=0.00
+/// total_size=158476
+/// out_time_us=2200000
+/// speed=4.27x
+/// progress=continue
+/// ```
+///
+/// `out_time_us` is microseconds of *output timeline written*, which against a known expected duration
+/// is a real fraction. `speed` is ffmpeg's own throughput as a multiple of real time, which is where
+/// the estimate comes from — measured by the program doing the work, rather than extrapolated from how
+/// long we have been waiting.
+///
+/// The unit is deliberately **raw**: this crate runs one process and has no idea what the process is
+/// for. It reports what it was told; dividing by an expectation is the caller's business, and
+/// `expected_seconds` is carried along only because the caller already knew it and passing it back
+/// saves the consumer from looking it up again.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgressTicks {
+    /// Seconds of output written so far, from ffmpeg's `out_time_us`.
+    pub out_seconds: f64,
+    /// Frames muxed so far, when ffmpeg reported a number.
+    pub frame: Option<u64>,
+    /// Throughput as a multiple of real time: `4.27` is `4.27x`. `None` when ffmpeg said `N/A`.
+    pub speed: Option<f64>,
+    /// Bytes written so far.
+    pub bytes: Option<u64>,
+    /// What the step was expected to produce, when the plan knew. `None` for a step of unknown length.
+    pub expected_seconds: Option<f64>,
+}
+
+/// One parsed block of ffmpeg's progress stream, before the expectation is attached.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct Tick {
+    out_seconds: Option<f64>,
+    frame: Option<u64>,
+    speed: Option<f64>,
+    bytes: Option<u64>,
+}
+
+/// Turn ffmpeg's `-progress` stream into ticks, one per block.
+///
+/// Incremental by necessity: the stream arrives in whatever chunks the pipe delivers, so a `key=value`
+/// pair can be split across two reads and a naive `lines()` over each chunk would drop it. Bytes are
+/// buffered until a newline arrives, and a block is emitted when `progress=` ends it.
+///
+/// A pure function of the text, so every awkward case — `N/A`, a half-delivered line, a block with no
+/// `out_time_us`, an unknown key, the `progress=end` terminator — is tested without a process.
+#[derive(Debug, Default)]
+struct TickReader {
+    /// The tail of the last chunk, which has not seen its newline yet.
+    partial: String,
+    /// The block being assembled.
+    block: Tick,
+}
+
+impl TickReader {
+    /// Feed a chunk of the child's standard output, and take whatever complete ticks it produced.
+    fn feed(&mut self, chunk: &[u8]) -> Vec<Tick> {
+        self.partial.push_str(&String::from_utf8_lossy(chunk));
+        let mut ticks = Vec::new();
+
+        // `split_inclusive` keeps the newline, so what is left after the loop is the unterminated tail.
+        let complete = self.partial.rfind('\n').map_or(0, |index| index + 1);
+        let text = self.partial[..complete].to_owned();
+        self.partial.drain(..complete);
+
+        for line in text.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let value = value.trim();
+            match key.trim() {
+                "out_time_us" | "out_time_ms" => {
+                    // ffmpeg's `out_time_ms` is microseconds too — the name is a long-standing bug in
+                    // ffmpeg, not a misreading here. Both are the same number, and both are `N/A` until
+                    // the first frame is written.
+                    if let Ok(micros) = value.parse::<f64>() {
+                        self.block.out_seconds = Some(micros / 1_000_000.0);
+                    }
+                }
+                "frame" => self.block.frame = value.parse::<u64>().ok(),
+                "speed" => {
+                    self.block.speed = value
+                        .trim_end_matches('x')
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|value| value.is_finite() && *value >= 0.0);
+                }
+                "total_size" => self.block.bytes = value.parse::<u64>().ok(),
+                "progress" => {
+                    // A block is only worth reporting if it says **where** the step has got to. ffmpeg's
+                    // opening block carries `out_time_us=N/A` and `frame=0`, and a block at the end of a
+                    // step that produced no timestamp carries none at all — reporting either would put a
+                    // zero on the bar, which reads as the job having restarted. Dropping them means
+                    // `out_seconds` is always a real position, and never the previous block's number
+                    // carried over.
+                    if self.block.out_seconds.is_some() {
+                        ticks.push(self.block);
+                    }
+                    self.block = Tick::default();
+                }
+                _ => {}
+            }
+        }
+
+        ticks
+    }
 }
 
 /// Receives progress. Implemented by the CLI's log, the GUI's event channel and the daemon's
@@ -219,6 +353,42 @@ impl ProgressSink for CollectingSink {
     }
 }
 
+/// Ask a run to report where it has got to.
+///
+/// Opt-in, and deliberately **not** the default. `-progress pipe:1` takes standard output, and one
+/// caller already owns it: the frame-hash and SSIM passes read `framemd5` output from stdout and would
+/// be corrupted by a progress stream mixed into it. A run that wants ticks asks for them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Watch {
+    /// How long the step is expected to produce, when the plan knows. `None` still reports counters,
+    /// without a fraction — which is the honest answer for a step whose length is not known in advance.
+    pub expected_seconds: Option<f64>,
+    /// How often ffmpeg should report, in seconds. Half a second is often enough to look live and rare
+    /// enough to be free: a ten-minute copy costs twelve hundred events.
+    pub period_seconds: f64,
+}
+
+impl Watch {
+    /// Watch a step expected to produce `expected_seconds` of output.
+    #[must_use]
+    pub fn of(expected_seconds: f64) -> Self {
+        Self {
+            expected_seconds: Some(expected_seconds),
+            period_seconds: 0.5,
+        }
+    }
+
+    /// The flags that make ffmpeg report, exactly as they appear in the recorded command line.
+    #[must_use]
+    pub fn args(&self) -> Vec<String> {
+        ["-nostats", "-progress", "pipe:1", "-stats_period"]
+            .iter()
+            .map(|arg| (*arg).to_owned())
+            .chain(std::iter::once(format!("{:.2}", self.period_seconds)))
+            .collect()
+    }
+}
+
 /// Everything a caller may configure about one process run.
 #[derive(Clone)]
 pub struct RunOptions {
@@ -230,6 +400,8 @@ pub struct RunOptions {
     pub sink: Arc<dyn ProgressSink>,
     /// A label for the step, used in progress events.
     pub label: String,
+    /// Ask the run to report where it has got to. `None` runs it silently, as before.
+    pub watch: Option<Watch>,
 }
 
 impl Default for RunOptions {
@@ -239,6 +411,7 @@ impl Default for RunOptions {
             cancel: CancelFlag::new(),
             sink: Arc::new(NullSink),
             label: String::new(),
+            watch: None,
         }
     }
 }
@@ -249,6 +422,7 @@ impl std::fmt::Debug for RunOptions {
             .field("policy", &self.policy)
             .field("cancel", &self.cancel.is_cancelled())
             .field("label", &self.label)
+            .field("watch", &self.watch)
             .finish_non_exhaustive()
     }
 }
@@ -339,13 +513,27 @@ impl ProcessRunner {
         options: &RunOptions,
     ) -> Result<Output, MediaError> {
         options.cancel.check()?;
-        let display = display_command(program, args);
+
+        // The watch flags go in front of everything else. They are ffmpeg's own global options, so their
+        // position does not matter to ffmpeg — and putting them first means the recorded command line
+        // starts with the fact that this run is being watched, which is the useful thing to read back.
+        let watched: Vec<OsString> = match &options.watch {
+            Some(watch) => watch
+                .args()
+                .iter()
+                .map(std::ffi::OsString::from)
+                .chain(args.iter().cloned())
+                .collect(),
+            None => args.to_vec(),
+        };
+
+        let display = display_command(program, &watched);
         options.sink.report(Progress::Step {
             label: options.label.clone(),
         });
         options.sink.report(Progress::Command {
             text: display.clone(),
-            args: args
+            args: watched
                 .iter()
                 .map(|arg| arg.to_string_lossy().into_owned())
                 .collect(),
@@ -354,7 +542,7 @@ impl ProcessRunner {
         let started = Instant::now();
         let mut command = Command::new(program);
         command
-            .args(args)
+            .args(&watched)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -376,6 +564,22 @@ impl ProcessRunner {
         let mut stderr_chunk = [0u8; 16 * 1024];
         let mut next_heartbeat = options.policy.heartbeat;
 
+        // The progress stream, assembled across reads. Only ever fed when the run asked to be watched.
+        let mut reader = TickReader::default();
+        let expected = options
+            .watch
+            .as_ref()
+            .and_then(|watch| watch.expected_seconds);
+
+        // Standard error, forwarded as it arrives rather than only in a tail once the step has ended.
+        // `-v error` means a successful step usually says nothing, so this costs nothing on the common
+        // path and turns a failure into something the operator can read *while* it is happening instead
+        // of after the window has decided the step is over. Bounded, because a pathological run must not
+        // be able to fill the log with its own noise.
+        let mut forwarded = 0usize;
+        let mut messages = 0usize;
+        const MAX_LIVE_MESSAGES: usize = 200;
+
         // Drain both pipes and reap the child in one loop. `try_read` on a pipe we own, plus a
         // timed `join`, means the loop wakes on the poll interval whether or not the child has
         // written anything — which is what makes cancellation and the heartbeat possible on a
@@ -386,6 +590,21 @@ impl ProcessRunner {
             if let Some(pipe) = stdout_pipe.as_mut() {
                 let (read, eof) = pump(pipe, &mut stdout, &mut stdout_chunk).await;
                 progressed |= read > 0;
+                if read > 0 && options.watch.is_some() {
+                    // Only the newly read bytes, so a tick is reported once rather than once per read.
+                    let fresh = &stdout[stdout.len() - read..];
+                    for tick in reader.feed(fresh) {
+                        options.sink.report(Progress::Ticks {
+                            ticks: ProgressTicks {
+                                out_seconds: tick.out_seconds.unwrap_or(0.0),
+                                frame: tick.frame,
+                                speed: tick.speed,
+                                bytes: tick.bytes,
+                                expected_seconds: expected,
+                            },
+                        });
+                    }
+                }
                 if eof {
                     stdout_pipe = None;
                 }
@@ -394,6 +613,24 @@ impl ProcessRunner {
             if let Some(pipe) = stderr_pipe.as_mut() {
                 let (read, eof) = pump(pipe, &mut stderr, &mut stderr_chunk).await;
                 progressed |= read > 0;
+                if read > 0 && messages < MAX_LIVE_MESSAGES {
+                    // Only whole lines: a half-delivered line is not a message yet, and reporting it
+                    // would put a truncated sentence in the log a moment before the whole one.
+                    let fresh = String::from_utf8_lossy(&stderr[forwarded..]).into_owned();
+                    if let Some(last_newline) = fresh.rfind('\n') {
+                        for line in fresh[..last_newline].lines() {
+                            let line = line.trim();
+                            if line.is_empty() || messages >= MAX_LIVE_MESSAGES {
+                                continue;
+                            }
+                            messages += 1;
+                            options.sink.report(Progress::Message {
+                                text: line.to_owned(),
+                            });
+                        }
+                        forwarded += last_newline + 1;
+                    }
+                }
                 if eof {
                     stderr_pipe = None;
                 }
@@ -470,8 +707,10 @@ impl ProcessRunner {
             seconds: elapsed,
             ok: output.ok(),
         });
-        if !output.ok() {
-            // The tail is where ffmpeg says why. Showing the whole of it buries the reason.
+        if !output.ok() && messages == 0 {
+            // The tail is where ffmpeg says why. Showing the whole of it buries the reason — and when
+            // the lines have already been forwarded live, showing them again would put the same
+            // sentence in the log twice.
             options.sink.report(Progress::Message {
                 text: output.stderr_tail(12),
             });
@@ -597,6 +836,7 @@ mod tests {
             cancel: cancel.clone(),
             sink: Arc::new(NullSink),
             label: "long".to_owned(),
+            watch: None,
         };
         let handle = tokio::spawn(async move { runner.run(&program("sh"), &args, &options).await });
         tokio::time::sleep(Duration::from_millis(120)).await;
@@ -670,6 +910,7 @@ mod tests {
             cancel: CancelFlag::new(),
             sink: sink.clone(),
             label: "copy body".to_owned(),
+            watch: None,
         };
         runner
             .run(&program("sh"), &args, &options)
@@ -775,5 +1016,109 @@ mod tests {
         assert!(PollPolicy::long().timeout.is_none());
         assert!(PollPolicy::long().heartbeat.is_some());
         assert!(PollPolicy::silent().heartbeat.is_none());
+    }
+
+    /// One block of ffmpeg's progress output, as it appears on the wire.
+    const A_BLOCK: &str = "frame=57\nfps=0.00\nstream_0_0_q=-1.0\nbitrate= 310.7kbits/s\n\
+                           total_size=158476\nout_time_us=2200000\nout_time_ms=2200000\n\
+                           out_time=00:00:02.200000\ndup_frames=0\ndrop_frames=0\nspeed=4.27x\n\
+                           progress=continue\n";
+
+    #[test]
+    fn a_progress_block_becomes_a_tick() {
+        let mut reader = TickReader::default();
+        let ticks = reader.feed(A_BLOCK.as_bytes());
+        assert_eq!(ticks.len(), 1, "one block is one tick");
+        let tick = ticks[0];
+        assert_eq!(tick.out_seconds, Some(2.2), "out_time_us is microseconds");
+        assert_eq!(tick.frame, Some(57));
+        assert_eq!(
+            tick.speed,
+            Some(4.27),
+            "the x is a suffix, not part of the number"
+        );
+        assert_eq!(tick.bytes, Some(158_476));
+    }
+
+    #[test]
+    fn a_block_split_across_reads_is_still_one_tick() {
+        // The pipe delivers whatever it delivers. A `key=value` pair landing across two reads is the
+        // ordinary case on a slow step, and a `lines()` per chunk would drop half of it.
+        let mut reader = TickReader::default();
+        let (first, second) = A_BLOCK.split_at(40);
+        assert!(
+            reader.feed(first.as_bytes()).is_empty(),
+            "no newline yet, so no block"
+        );
+        let ticks = reader.feed(second.as_bytes());
+        assert_eq!(ticks.len(), 1);
+        assert_eq!(ticks[0].out_seconds, Some(2.2));
+        assert_eq!(ticks[0].frame, Some(57));
+    }
+
+    #[test]
+    fn several_blocks_in_one_read_become_several_ticks() {
+        let mut reader = TickReader::default();
+        let text = format!("{A_BLOCK}{}", A_BLOCK.replace("2200000", "4080000"));
+        let ticks = reader.feed(text.as_bytes());
+        assert_eq!(ticks.len(), 2);
+        assert_eq!(ticks[0].out_seconds, Some(2.2));
+        assert_eq!(ticks[1].out_seconds, Some(4.08), "each block starts clean");
+    }
+
+    #[test]
+    fn a_block_with_no_position_is_dropped_rather_than_read_as_zero() {
+        // ffmpeg's first block carries `out_time_us=N/A`, and a step that produced no timestamp carries
+        // none at all. Reporting either as `0.0` would put the bar back to the start mid-job, so a block
+        // with no position is dropped — and the block after it still reports the *new* position rather
+        // than inheriting the old one.
+        let mut reader = TickReader::default();
+        let ticks = reader.feed(
+            b"frame=0\nfps=0.00\nout_time_us=N/A\nout_time_ms=N/A\nspeed=N/A\nprogress=continue\n",
+        );
+        assert!(ticks.is_empty(), "{ticks:?}");
+
+        let ticks = reader.feed(A_BLOCK.as_bytes());
+        assert_eq!(ticks.len(), 1);
+        assert_eq!(ticks[0].out_seconds, Some(2.2));
+
+        // A later block with no timestamp at all must not repeat 2.2.
+        let ticks = reader.feed(b"frame=80\nspeed=1.0x\nprogress=continue\n");
+        assert!(ticks.is_empty(), "{ticks:?}");
+    }
+
+    #[test]
+    fn an_end_block_is_reported_like_any_other() {
+        let mut reader = TickReader::default();
+        let ticks = reader.feed(A_BLOCK.replace("continue", "end").as_bytes());
+        assert_eq!(ticks.len(), 1, "the final block carries the real total");
+    }
+
+    #[test]
+    fn nonsense_in_the_stream_is_ignored_rather_than_fatal() {
+        let mut reader = TickReader::default();
+        // A line with no `=`, an unknown key, a value that is not a number, and a negative speed: none
+        // of these is a reason to lose the tick that follows.
+        let ticks = reader.feed(
+            b"not a pair\nframe_number=9\nframe=abc\nspeed=-3x\nout_time_us=1500000\nprogress=continue\n",
+        );
+        assert_eq!(ticks.len(), 1);
+        assert_eq!(ticks[0].out_seconds, Some(1.5));
+        assert_eq!(ticks[0].frame, None, "`abc` is not a frame count");
+        assert_eq!(ticks[0].speed, None, "a negative rate is not a rate");
+    }
+
+    #[test]
+    fn the_watch_flags_name_the_stream_and_the_period() {
+        let args = Watch::of(12.5).args();
+        assert_eq!(
+            args[0], "-nostats",
+            "otherwise ffmpeg also writes its own status line"
+        );
+        assert_eq!(args[1], "-progress");
+        assert_eq!(args[2], "pipe:1", "stdout, so stderr keeps the diagnostics");
+        assert_eq!(args[3], "-stats_period");
+        assert_eq!(args[4], "0.50");
+        assert_eq!(Watch::of(1.0).expected_seconds, Some(1.0));
     }
 }
