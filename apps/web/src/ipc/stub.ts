@@ -111,7 +111,8 @@ interface StubSegment {
 interface StubState {
   projects: { id: string; name: string; updatedAt: number }[];
   openProject: string | null;
-  hasSource: boolean;
+  /** The masters in this session, in the order they were added. A project holds as many as it is given. */
+  sources: StubSource[];
   segments: StubSegment[];
   runs: number;
   /** The last path `reveal` was asked for. A browser cannot open Explorer; this records the intent. */
@@ -124,7 +125,7 @@ function freshState(): StubState {
   return {
     projects: [],
     openProject: null,
-    hasSource: false,
+    sources: [],
     segments: [],
     runs: 0,
     revealed: null,
@@ -171,14 +172,45 @@ function id(): string {
   return `01a0de58-609a-7018-99bb-${tail}`;
 }
 
-const sourceView = () => ({
-  path: FIXTURE_PATH,
-  name: FIXTURE_NAME,
+/**
+ * One master in the fixture session.
+ *
+ * ## Why the session holds a list rather than a single source
+ *
+ * It held one, behind a `hasSource` boolean, and that is why a real defect shipped: the window's Browse
+ * button added a second master to the project and the panel went on showing the first, with no way to
+ * switch. In a browser the same sequence produced *one* source — because the stub could not represent
+ * two — so the panel displaying "the" source looked perfectly correct. A fixture that cannot express the
+ * state a bug lives in will not find that bug.
+ *
+ * Every fixture source reports the same media, differing in path, name and caption file, which is
+ * exactly enough to tell them apart and to drive the source switcher.
+ */
+interface StubSource {
+  path: string;
+  name: string;
+  transcript: string | null;
+  transcriptCues: number;
+}
+
+/** The master the picker hands back, and the shape every fixture source is built from. */
+const FIXTURE_TRANSCRIPT = "H:\\masters\\reel 2\\A007C012_250312_R1QK.srt";
+const FIXTURE_CUES = 214;
+
+/** The base name of a Windows path, for a second source added by a test. */
+function baseName(path: string): string {
+  const parts = path.split(/[\\/]/);
+  return parts[parts.length - 1] ?? path;
+}
+
+const sourceView = (source: StubSource) => ({
+  path: source.path,
+  name: source.name,
   present: true,
   media: mockMedia,
   summary: `3840x2160 prores yuv422p10le, 25 fps, ${FIXTURE_FRAMES} frames, pcm_s24le 48000 Hz 2ch`,
-  transcript: "H:\\masters\\reel 2\\A007C012_250312_R1QK.srt",
-  transcriptCues: 214,
+  transcript: source.transcript,
+  transcriptCues: source.transcript === null ? null : source.transcriptCues,
   label: null,
   variableRate: false,
 });
@@ -189,7 +221,7 @@ function segmentView(segment: StubSegment): unknown {
   return {
     id: segment.id,
     name: segment.name,
-    sourceName: FIXTURE_NAME,
+    sourceName: baseName(segment.source),
     inTimecode: stamp(segment.startFrame),
     outTimecode: stamp(Math.max(segment.startFrame, end - 1)),
     endFrame: segment.endFrame,
@@ -319,7 +351,8 @@ function summary(): unknown {
     fullEncodes: 0,
     totalFrames,
     totalSeconds: totalFrames / 25,
-    missingSources: state.hasSource ? 0 : 0,
+    // Nothing in the fixture is ever missing, so this is a real zero rather than a placeholder.
+    missingSources: 0,
   };
 }
 
@@ -430,7 +463,7 @@ const handlers: Record<CommandName, (args: Record<string, unknown>) => unknown> 
     state.projects = state.projects.filter((project) => project.id !== wanted);
     if (state.openProject === wanted) {
       state.openProject = null;
-      state.hasSource = false;
+      state.sources = [];
       state.segments = [];
     }
     return null;
@@ -443,6 +476,14 @@ const handlers: Record<CommandName, (args: Record<string, unknown>) => unknown> 
 
   save_project: () => null,
 
+  /**
+   * Add a master to the session.
+   *
+   * An **upsert**, which is what the domain does: a path already in the project is re-probed rather than
+   * duplicated. The caption file is attached only to the fixture master, so a test that adds a second
+   * video can tell "this one has a transcript" from "this one does not" — which is how the transcript
+   * panel's own source select is exercised.
+   */
   add_source: (args) => {
     const path = String(args["path"] ?? "");
     if (path.trim() === "") {
@@ -451,19 +492,38 @@ const handlers: Record<CommandName, (args: Record<string, unknown>) => unknown> 
     if (!path.toLowerCase().endsWith(".mov") && !path.toLowerCase().endsWith(".mp4")) {
       refuse(`${path} is not a video TheTrimmer recognises`);
     }
-    state.hasSource = true;
-    return sourceView();
+    const isFixture = path === FIXTURE_PATH;
+    const source: StubSource = {
+      path,
+      name: baseName(path),
+      transcript: isFixture ? FIXTURE_TRANSCRIPT : null,
+      transcriptCues: isFixture ? FIXTURE_CUES : 0,
+    };
+    const existing = state.sources.findIndex((item) => item.path === path);
+    if (existing === -1) {
+      state.sources.push(source);
+    } else {
+      state.sources[existing] = source;
+    }
+    return sourceView(state.sources[state.sources.length - 1] as StubSource);
   },
 
   refresh_sources: () => null,
 
-  remove_source: () => {
-    state.hasSource = false;
-    state.segments = [];
+  /**
+   * Remove a master, and the segments that were marked against it.
+   *
+   * The segments go with it because a segment whose source is not in the project cannot be planned or
+   * cut; leaving them would be a queue of rows that can only fail.
+   */
+  remove_source: (args) => {
+    const path = String(args["path"] ?? "");
+    state.sources = state.sources.filter((source) => source.path !== path);
+    state.segments = state.segments.filter((segment) => segment.source !== path);
     return null;
   },
 
-  sources: () => (state.hasSource ? [sourceView()] : []),
+  sources: () => state.sources.map(sourceView),
 
   segments: () => state.segments.map(segmentView),
 

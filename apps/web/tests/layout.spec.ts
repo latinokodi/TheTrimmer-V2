@@ -54,6 +54,14 @@ async function removeThePicker(page: import("@playwright/test").Page): Promise<v
   });
 }
 
+/** Answer the next picker call with a chosen path, so a test can put a second master in the session. */
+async function pickInstead(page: import("@playwright/test").Page, path: string): Promise<void> {
+  await page.evaluate((chosen) => {
+    (window as unknown as { __TAURI__: { dialog: { open: unknown } } }).__TAURI__.dialog.open =
+      async () => chosen;
+  }, path);
+}
+
 /** Type a range, and wait for the plan line to agree that both marks parse. */
 async function mark(
   page: import("@playwright/test").Page,
@@ -304,6 +312,31 @@ test("no text is clipped with a full queue and an outcome to report", async ({ p
   await expect(page.locator(".proof__item")).toHaveCount(3);
   await page.locator(".proof__head").first().click();
   await expect(page.locator(".checks__name").first()).toHaveText("Frames");
+
+  expectNothingClipped(await findClipping(page));
+});
+
+test("no text is clipped with two masters in the session", async ({ page }, testInfo) => {
+  /*
+   * The session list appears only when there is more than one master, and it is the tightest the Video
+   * row ever gets: a select, a path, the Browse button and a remove button on one line, at the window's
+   * own minimum width. Before this test the stub could not hold two sources at all, so the row had never
+   * been rendered in a browser.
+   */
+  await page.setViewportSize(MINIMUM);
+  await page.goto("/");
+  await chooseMaster(page);
+  await pickInstead(page, "H:\\masters\\reel 3\\B014C003_250401_R2QK.mov");
+  await page.getByRole("button", { name: "Browse" }).click();
+
+  await expect(page.getByLabel("Source in this session")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Remove this source" })).toBeVisible();
+  await page.waitForTimeout(200);
+
+  await testInfo.attach("session", {
+    body: await page.screenshot({ path: "screens/session.png", fullPage: false }),
+    contentType: "image/png",
+  });
 
   expectNothingClipped(await findClipping(page));
 });

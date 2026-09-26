@@ -156,6 +156,41 @@ fn make_master(scratch: &Scratch) -> Result<PathBuf, BoxError> {
     Ok(video)
 }
 
+/// A second, shorter master with no caption file beside it.
+///
+/// Deliberately different from [`make_master`] in two ways the interface reads: a different resolution,
+/// so a source list cannot be showing the same row twice, and no `.srt`, so "this one has a transcript"
+/// and "this one does not" are distinguishable.
+fn make_second_master(scratch: &Scratch) -> Result<PathBuf, BoxError> {
+    let video = scratch.join("second.mp4");
+    let tools = trimmer_media::ToolPaths::resolve()?;
+    let status = std::process::Command::new(&tools.ffmpeg)
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x240:rate=25:duration=2",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-g",
+            "25",
+            "-pix_fmt",
+            "yuv420p",
+        ])
+        .arg(&video)
+        .status()?;
+    if !status.success() {
+        return Err("ffmpeg could not generate the second fixture".into());
+    }
+    Ok(video)
+}
+
 /// A workspace pointed at a private store and a private scratch folder.
 ///
 /// The store path is passed in rather than put in `THE_TRIMMER_STORE`. It used to be the environment
@@ -605,6 +640,118 @@ fn commands_before_a_project_exists_fail_politely() -> Result<(), BoxError> {
         json!({ "policy": "forensic-ish" })
     )
     .is_err());
+    Ok(())
+}
+
+/// A project holds several masters, and removing one takes its segments with it.
+///
+/// The window works on one master at a time; the *project* does not, because `add_source` upserts into a
+/// map keyed by path. So a second video is a second source rather than a replacement, and the source list
+/// in the Video zone exists to move between them.
+///
+/// This is asserted here because the browser stub now claims the same two behaviours — an upsert, and a
+/// removal that drops the segments marked against the source — and a fixture that describes the real
+/// system wrongly is worse than no fixture. `remove_source` had no behavioural test at all before this.
+#[test]
+#[ignore = "generates and cuts media; run with --ignored"]
+fn a_project_holds_several_masters_and_removing_one_takes_its_segments() -> Result<(), BoxError> {
+    let (scratch, app) = harness("masters")?;
+    let webview = window(&app)?;
+
+    let project = invoke(
+        &webview,
+        "create_project",
+        json!({ "name": "two masters", "createdBy": "the test" }),
+    )?;
+    let id = project["id"].as_str().ok_or("no project id")?.to_string();
+    invoke(&webview, "open_project", json!({ "id": id }))?;
+
+    let first = make_master(&scratch)?;
+    let second = make_second_master(&scratch)?;
+    for path in [&first, &second] {
+        invoke(
+            &webview,
+            "add_source",
+            json!({ "path": path.to_string_lossy() }),
+        )?;
+    }
+
+    let sources = invoke(&webview, "sources", json!({}))?;
+    let listed = sources.as_array().ok_or("sources is not a list")?;
+    assert_eq!(
+        listed.len(),
+        2,
+        "a second master should be added, not replace the first"
+    );
+
+    // Different resolutions, so a list showing the same row twice is detectable rather than invisible.
+    let widths: Vec<u64> = listed
+        .iter()
+        .filter_map(|source| source["media"]["width"].as_u64())
+        .collect();
+    assert_eq!(widths.len(), 2, "both sources should have been probed");
+    assert_ne!(
+        widths[0], widths[1],
+        "the two masters should not describe the same media"
+    );
+
+    // One of them has a caption file beside it and the other does not, which is what the transcript
+    // panel filters on.
+    let with_transcript = listed
+        .iter()
+        .filter(|source| !source["transcript"].is_null())
+        .count();
+    assert_eq!(
+        with_transcript, 1,
+        "only the first master has a .srt beside it"
+    );
+
+    // A segment against the second master.
+    invoke(
+        &webview,
+        "add_segment",
+        json!({
+            "source": second.to_string_lossy(),
+            "name": "second master",
+            "startFrame": 0,
+            "endFrame": 25,
+            "preset": null,
+            "handleFrames": 0,
+        }),
+    )?;
+    assert_eq!(
+        invoke(&webview, "segments", json!({}))?
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+
+    // Removing it takes the segment with it: a segment whose source is gone cannot be planned or cut.
+    invoke(
+        &webview,
+        "remove_source",
+        json!({ "path": second.to_string_lossy() }),
+    )?;
+    assert_eq!(
+        invoke(&webview, "sources", json!({}))?
+            .as_array()
+            .map(Vec::len),
+        Some(1),
+        "the removed master should be gone and the other left alone"
+    );
+    assert_eq!(
+        invoke(&webview, "segments", json!({}))?
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "a segment pointing at a source that is no longer in the project cannot be planned"
+    );
+    assert_eq!(
+        invoke(&webview, "sources", json!({}))?[0]["path"].as_str(),
+        Some(first.to_string_lossy().as_ref()),
+        "the master that was left should be the one that was not removed"
+    );
+
     Ok(())
 }
 

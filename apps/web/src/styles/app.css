@@ -385,6 +385,17 @@ input[type="search"] {
   font-size: var(--text-xs);
 }
 
+/*
+ * The session's masters, when there is more than one. It sits *before* the path rather than above it,
+ * because the row already exists and a second row would come out of the panel's height budget — the
+ * window is maximized rather than fullscreen, so the vertical space is 80 px tighter than it was and
+ * every row is accounted for. It yields width before the path does: the path is the thing being read.
+ */
+.source-picker {
+  flex: 0 1 240px;
+  min-width: 150px;
+}
+
 select {
   /* A native indicator in a 30 px row needs its own slot or the text is clipped. */
   padding-right: var(--space-7);

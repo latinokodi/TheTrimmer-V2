@@ -58,6 +58,8 @@ work, executed by separate agents with the audit skill loaded as their brief.
 
 | 42 | `systematic-debugging` | `tauri.conf.json`, `tools/smoke-window.ps1`, `apps/web/src/ipc/window.ts` | Used again, on the fault a user reported as "Im unable to restore, minimize or close the app window". The Iron Law is what produced the measurement instead of the guess: rather than reasoning about what `fullscreen: true` does, the window's real `GWL_STYLE` was read from the process and came back `0x14000000` — `WS_VISIBLE \| WS_CLIPCHILDREN`, with no caption, no system menu, no minimize box, no maximize box and no resizable frame. That turned "the titlebar seems to be missing" into a list of five specific bits, each of which the fix restores and the smoke test now asserts. Phase 4's requirement is why the check was then proven able to fail by putting `fullscreen: true` back: it reported `GWL_STYLE is 0x14000000`, the same value the broken window had. |
 
+| 43 | `systematic-debugging` | `apps/web/src/ipc/stub.ts`, `App.tsx`, `panel.spec.ts` | Used on "when I select a file with browse, then try to select a different one, the first file gets stuck": Phase 1's "find the root cause before attempting fixes" is what turned up the fact that `draft.setSource` was called from **nowhere in the interface** — a grep, not a theory — and Phase 4's "create a failing test case before fixing" produced a test that failed with the user's own symptom (`Received string: "H:\masters\reel 2\A007C012_250312_R1QK.mov"` after asking for a different file). The same phase is what caught the fixture: the stub's `sources` returned one row behind a boolean, so the state the fault lives in could not be built in a browser at all. |
+
 ### Skills consulted and deliberately *not* applied
 
 Recording a rejection is as useful as recording an adoption.
@@ -101,15 +103,16 @@ no trace of it cannot tell whether it was considered and rejected or never consi
 
 ## Counting
 
-Forty-eight distinct skills are named above. Forty-two changed a decision in the shipped code or its
+Forty-eight distinct skills are named above. Forty-three changed a decision in the shipped code or its
 documentation, and seven are independent audits. The requirement was twenty.
 
 Numbers 38–40 were applied to the visual revision recorded in
 [ADR-018](adr/018-visual-language.md), which is also where the two silent defects those skills
 surfaced are written up: a class with no rule and a declared window minimum the content could not
-meet. Numbers 41 and 42 were applied to the two faults found after it —
+meet. Numbers 41–43 were applied to three faults found after it —
 [ADR-019](adr/019-the-stub-never-ships.md), where the shipped window turned out to be running the
-browser stub, and [ADR-020](adr/020-the-window-has-a-titlebar.md), where it turned out to have no
-titlebar. Both are the same mistake in different clothing: a component was asked about the system it
-fronts and described its own intentions instead, so every test was green while the product was
-unusable.
+browser stub; [ADR-020](adr/020-the-window-has-a-titlebar.md), where it turned out to have no titlebar;
+and [ADR-021](adr/021-the-fixture-could-not-hold-two.md), where a second video could be added and not
+selected. All three are the same mistake in different clothing: a proxy was asked about the system it
+stands in for, and described its own intentions instead — so every check in the project was green while
+the product did not work.

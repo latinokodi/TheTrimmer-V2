@@ -28,3 +28,4 @@ decision no longer applies, it is *superseded* and the reason is stated — neve
 - [ADR-018 — Colour is state, the faces are bundled, and no string is clipped](adr/018-visual-language.md) *(new in V2)*
 - [ADR-019 — The browser stub never ships, and a check a fixture can satisfy is not a check](adr/019-the-stub-never-ships.md) *(new in V2)*
 - [ADR-020 — The window opens maximized, not fullscreen, and the check asks Windows](adr/020-the-window-has-a-titlebar.md) *(new in V2)*
+- [ADR-021 — A fixture that cannot express the state a fault lives in will not find it](adr/021-the-fixture-could-not-hold-two.md) *(new in V2)*

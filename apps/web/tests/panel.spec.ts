@@ -54,6 +54,57 @@ test("the zones are in the order the work happens, and the first says what to do
   await expect(page.locator(".zone__note").first()).toContainText("no file");
 });
 
+/**
+ * Answer the next picker call with a chosen path, so a test can pick a *different* file.
+ *
+ * The stub's picker returns the fixture master every time, which is the right default and the wrong
+ * thing for testing what happens when the operator changes their mind.
+ */
+async function pickInstead(page: import("@playwright/test").Page, path: string): Promise<void> {
+  await page.evaluate((chosen) => {
+    (window as unknown as { __TAURI__: { dialog: { open: unknown } } }).__TAURI__.dialog.open =
+      async () => chosen;
+  }, path);
+}
+
+test("picking a different video switches to it instead of sticking on the first", async ({ page }) => {
+  /*
+   * Reported: "When I select a file with browse, then try to select a different one, the first file gets
+   * stuck and cannot change."
+   *
+   * It was not the picker. `browse()` added the master to the project and never selected it, and nothing
+   * in the interface ever called the draft's `setSource` — so the panel showed `sources[0]` for ever. The
+   * project ended up holding both files while the window showed the first one, twice.
+   *
+   * That this shipped is also a fixture problem: the stub's `sources` command returned a single fixture
+   * behind a `hasSource` boolean, so a browser could not represent "two masters in this session" and the
+   * panel displaying *the* source looked correct. The stub holds a list now, which is what makes this
+   * test possible at all.
+   */
+  await page.goto("/");
+  await chooseMaster(page);
+  await expect(page.getByLabel("Video file")).toHaveValue(/A007C012_250312_R1QK\.mov$/);
+
+  await pickInstead(page, "H:\\masters\\reel 3\\B014C003_250401_R2QK.mov");
+  await page.getByRole("button", { name: "Browse" }).click();
+
+  // The panel follows the file that was just chosen.
+  await expect(page.getByLabel("Video file")).toHaveValue(/B014C003_250401_R2QK\.mov$/);
+
+  // And the first one is not stranded: the session appears as a list, and going back works.
+  const session = page.getByLabel("Source in this session");
+  await expect(session).toBeVisible();
+  await expect(session.locator("option")).toHaveCount(2);
+  await session.selectOption("H:\\masters\\reel 2\\A007C012_250312_R1QK.mov");
+  await expect(page.getByLabel("Video file")).toHaveValue(/A007C012_250312_R1QK\.mov$/);
+
+  // Removing a master takes it out of the session, and the panel falls back to the one that is left.
+  await session.selectOption("H:\\masters\\reel 3\\B014C003_250401_R2QK.mov");
+  await page.getByRole("button", { name: "Remove this source" }).click();
+  await expect(page.getByLabel("Video file")).toHaveValue(/A007C012_250312_R1QK\.mov$/);
+  await expect(page.getByLabel("Source in this session")).toBeHidden();
+});
+
 test("every setting is on the panel, with its value visible", async ({ page }) => {
   await page.goto("/");
 

@@ -137,6 +137,25 @@ export function App(): JSX.Element {
   }, [draft, model]);
 
   /**
+   * Add a master, and make it the one being worked on.
+   *
+   * Both halves matter and the second was missing. `add_source` is an upsert into the project's sources,
+   * which is a map — so picking a second video added it and left the panel pointing at the first, for
+   * ever, because nothing in the interface ever called the draft's `setSource`. The project held two
+   * masters and the window showed one of them, twice, with no way to reach the other.
+   *
+   * If the add is refused, `setSource` names a path that is not in the session and the draft's own effect
+   * falls back to the first one that is, so a failure here cannot strand the panel either.
+   */
+  const addSource = useCallback(
+    async (path: string) => {
+      await model.addSource(path);
+      draft.setSource(path);
+    },
+    [draft, model],
+  );
+
+  /**
    * Browse: the operating system's own file dialog, on the first click.
    *
    * It used to open the in-app dialog and leave the operator to find a second button inside it, which is
@@ -151,14 +170,14 @@ export function App(): JSX.Element {
     const picked = await pickFile({ title: "Choose a video", filters: VIDEO_FILTERS });
     if (picked.kind === "picked") {
       setPickerNotice(null);
-      await model.addSource(picked.path);
+      await addSource(picked.path);
       return;
     }
     if (picked.kind === "unavailable") {
       setPickerNotice(picked.reason);
       setSourceOpen(true);
     }
-  }, [model]);
+  }, [addSource]);
 
   /**
    * Fullscreen, the one window state this interface owns.
@@ -321,6 +340,32 @@ export function App(): JSX.Element {
               </header>
               <div className="zone__body zone__body--tight">
                 <div className="row">
+                  {/*
+                    The session's masters, once there is more than one.
+
+                    A project holds as many sources as it is given — a reel split across files is the
+                    ordinary case — but the window works on one at a time, and until this existed there
+                    was no way to reach the second one: Browse added it and the panel went on showing the
+                    first. It appears only when it has something to offer, and it costs no height,
+                    because the row it sits in was already there.
+                  */}
+                  {model.sources.length > 1 ? (
+                    <select
+                      id="video-source"
+                      className="source-picker"
+                      value={chosen?.path ?? ""}
+                      aria-label="Source in this session"
+                      title="The videos in this session"
+                      onChange={(event) => draft.setSource(event.target.value)}
+                    >
+                      {model.sources.map((source) => (
+                        <option key={source.path} value={source.path}>
+                          {source.present ? source.name : `${source.name} — not on disk`}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
+
                   <input
                     id="video-path"
                     key={chosen?.path ?? "none"}
@@ -332,7 +377,7 @@ export function App(): JSX.Element {
                     aria-label="Video file"
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
-                        void model.addSource(event.currentTarget.value.trim());
+                        void addSource(event.currentTarget.value.trim());
                       }
                     }}
                   />
@@ -345,6 +390,22 @@ export function App(): JSX.Element {
                   >
                     Browse
                   </button>
+                  {model.sources.length > 1 ? (
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--icon"
+                      aria-label="Remove this source"
+                      disabled={running || chosen === undefined}
+                      title="Take this video out of the session, and the segments marked against it"
+                      onClick={() => {
+                        if (chosen !== undefined) {
+                          void model.removeSource(chosen.path);
+                        }
+                      }}
+                    >
+                      ×
+                    </button>
+                  ) : null}
                 </div>
                 <p className="zone__note">
                   {chosen === undefined
@@ -756,7 +817,7 @@ export function App(): JSX.Element {
               setSourceOpen(false);
               setPickerNotice(null);
             }}
-            onAdd={(path) => model.addSource(path)}
+            onAdd={(path) => addSource(path)}
           />
         ) : null}
         {exportOpen ? (
