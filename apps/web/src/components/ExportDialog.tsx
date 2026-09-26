@@ -13,6 +13,7 @@
 import { useState } from "react";
 
 import { pickSave } from "../ipc/dialog";
+import { useModal } from "../state/useModal";
 
 /** The formats, and the sentence that says who wants each one. */
 const FORMATS = [
@@ -61,6 +62,8 @@ export function ExportDialog({
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<readonly string[]>([]);
   const [saving, setSaving] = useState(false);
+  // Focus in, focus trapped, focus returned, Escape closes. See `state/useModal.ts`.
+  const dialogRef = useModal<HTMLDivElement>(onClose);
 
   const chosen = FORMATS.find((entry) => entry.id === format) ?? FORMATS[0];
   const ready = path.trim().length > 0 && sequenceName.trim().length > 0 && !saving;
@@ -103,10 +106,18 @@ export function ExportDialog({
         }
       }}
     >
-      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="export-title">
+      <div
+        className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="export-title"
+        tabIndex={-1}
+        ref={dialogRef}
+      >
         <h2 className="dialog__head" id="export-title">
           Export the timeline
         </h2>
+        <div className="dialog__body">
         <p className="dialog__help">
           The segments, as a timeline another application can open. The files this project has already
           cut are not touched.
@@ -180,6 +191,7 @@ export function ExportDialog({
             {error}
           </p>
         ) : null}
+        </div>
 
         <div className="dialog__actions">
           <div className="spacer" />

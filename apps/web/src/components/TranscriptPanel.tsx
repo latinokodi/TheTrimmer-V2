@@ -24,9 +24,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IpcFailure, commands } from "../ipc/commands";
 import type { SourceView, TranscriptHit } from "../ipc/types";
 
-const ROW_HEIGHT = 26;
+/** Matches `--row-height` in `tokens.css`: the list and the stylesheet must agree on the pitch. */
+const ROW_HEIGHT = 28;
 const OVERSCAN = 6;
-const VIEWPORT_HEIGHT = 320;
 
 export function TranscriptPanel({
   sources,
@@ -56,6 +56,33 @@ export function TranscriptPanel({
   const [scrollTop, setScrollTop] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  /*
+   * The height of the list is **measured, not declared**.
+   *
+   * It was a constant — 320 px — which was correct only at the one window size the constant was chosen
+   * at. Anywhere smaller the box overflowed its own zone and the last hits were sliced off by the
+   * `overflow: hidden` above them, which is exactly the kind of clipped text this revision exists to
+   * remove. A ResizeObserver costs one observer and makes the virtual window right at every size,
+   * including the fractional band heights in the frame grid.
+   */
+  const [viewport, setViewport] = useState(ROW_HEIGHT * 4);
+
+  useEffect(() => {
+    const element = listRef.current;
+    if (element === null) {
+      return;
+    }
+    const observer = new ResizeObserver((entries) => {
+      const measured = entries[0]?.contentRect.height ?? 0;
+      if (measured > 0) {
+        setViewport(measured);
+      }
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   // Focus the search box when the shortcut asks for it. The token changes on every Ctrl+F, so a
   // second press re-focuses rather than doing nothing because the value did not change.
@@ -102,7 +129,7 @@ export function TranscriptPanel({
   }, [phrase, runSearch]);
 
   const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
-  const visible = Math.ceil(VIEWPORT_HEIGHT / ROW_HEIGHT) + OVERSCAN * 2;
+  const visible = Math.ceil(viewport / ROW_HEIGHT) + OVERSCAN * 2;
   const window_ = hits.slice(first, first + visible);
 
   return (
@@ -180,7 +207,7 @@ export function TranscriptPanel({
       <div className="transcript__list">
         <div
           className="hits"
-          style={{ height: `${VIEWPORT_HEIGHT}px` }}
+          ref={listRef}
           onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
           role="listbox"
           aria-label="Transcript matches"
@@ -263,11 +290,18 @@ function plain(highlighted: string): string {
   return highlighted.replaceAll("[[", "").replaceAll("]]", "");
 }
 
-/** A frame count as seconds, at the rate the transcript was read against. */
+/**
+ * A frame count as `mm:ss:ff` at the rate the transcript was read against.
+ *
+ * Minutes rather than hours, and frames rather than a rounded second: a hit list exists to be turned
+ * into an edit, and an editor who reads `0:05` still has to go and find the frame. Two digits per field
+ * also makes every time in the column the same width, so the column is a column.
+ */
 function formatFrames(frame: number): string {
   const rate = 25;
-  const total = Math.round(frame / rate);
-  const minutes = Math.floor(total / 60);
-  const seconds = total % 60;
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  const totalSeconds = Math.floor(frame / rate);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const frames = frame % rate;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}:${String(frames).padStart(2, "0")}`;
 }

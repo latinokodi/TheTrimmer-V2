@@ -197,3 +197,69 @@ test("the interface works with no window behind it, which is the whole point", a
   expect(bridged).toBe(true);
   await expect(page.locator(".app")).toBeVisible();
 });
+
+test("a dialog takes the keyboard, keeps it, and gives it back", async ({ page }) => {
+  /*
+   * `aria-modal="true"` is a claim, and both dialogs made it while enforcing nothing. Tab from the last
+   * control went to the Cancel button in the panel *behind* the scrim, so a keyboard user could operate
+   * an application they could not see past — and Escape, the first thing every Windows user tries, did
+   * nothing. A claim nothing enforces is worse than no claim: a screen reader then refuses to read
+   * content that is in fact reachable.
+   */
+  await page.goto("/");
+  await page.getByRole("button", { name: "Browse" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Choose a video" });
+  await expect(dialog).toBeVisible();
+
+  // Focus moved in, to the dialog's first control rather than to whatever was behind it.
+  await expect(dialog.getByRole("button", { name: "Choose a file…" })).toBeFocused();
+
+  // Tab cycles within. Six presses from the first control is more than the number of controls it has,
+  // so a leak would have shown up.
+  for (let step = 0; step < 6; step += 1) {
+    await page.keyboard.press("Tab");
+    const inside = await page.evaluate(
+      () => document.querySelector(".dialog")?.contains(document.activeElement) ?? false,
+    );
+    expect(inside, `Tab ${step + 1} left the dialog`).toBe(true);
+  }
+
+  // Shift+Tab from the first control wraps to the last rather than escaping.
+  await dialog.getByRole("button", { name: "Choose a file…" }).focus();
+  await page.keyboard.press("Shift+Tab");
+  const stillInside = await page.evaluate(
+    () => document.querySelector(".dialog")?.contains(document.activeElement) ?? false,
+  );
+  expect(stillInside).toBe(true);
+
+  // Escape closes it, and the keyboard goes back to the control that opened it.
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("button", { name: "Browse" })).toBeFocused();
+});
+
+test("motion is feedback, and the system can switch it off", async ({ page }) => {
+  const sweep = async (): Promise<string> => {
+    return await page.evaluate(() => {
+      const bar = document.createElement("div");
+      bar.className = "progress-bar progress-bar--running";
+      document.body.append(bar);
+      const name = getComputedStyle(bar, "::after").animationName;
+      bar.remove();
+      return name;
+    });
+  };
+
+  await page.goto("/");
+  // The bar is indeterminate while a run is in flight: the engine reports per-step timing, not a
+  // fraction of the whole, and a bar that filled to 40 % and stopped would be inventing a number.
+  expect(await sweep()).toBe("sweep");
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  // A 1.3 s infinite sweep is exactly the motion the preference exists to stop. It is a token so the
+  // preference can reach it, and the animation is switched off outright rather than set to zero — an
+  // `infinite` animation with a zero duration still schedules work.
+  expect(await sweep()).toBe("none");
+});

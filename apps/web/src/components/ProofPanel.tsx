@@ -36,7 +36,7 @@ export function ProofPanel({
   if (outcome === null) {
     return (
       <div className="panel-body">
-        <p className="empty">
+        <p className="empty-state">
           Nothing has been run yet. Plan the batch to see what it will do, then run it; every segment
           is reported here with the checks that were made against it.
         </p>
@@ -93,7 +93,7 @@ export function ProofPanel({
         </details>
       ) : null}
 
-      <ul className="proof scroll">
+      <ul className="proof">
         {outcome.jobs.map((job) => {
           const open = expanded === job.job;
           return (

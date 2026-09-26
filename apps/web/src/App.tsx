@@ -28,11 +28,22 @@
  *
  * ## What it is, in design terms
  *
- * *Tactical telemetry*: a rack panel. Zones are separated by solid hairlines and a change of substrate
- * rather than by cards on a background, every corner is 90 degrees, the data face is monospace, and
- * there is **one** accent — hazard red — used for the focus ring, the selected row's edge and a
- * failure. One signal colour, terminal green, appears on exactly one element: the ffmpeg lamp in the
- * footer. A single instrument that reads as live; used anywhere else it would stop meaning anything.
+ * *Instrument panel*: a rack unit. Zones are separated by solid hairlines and a change of substrate
+ * rather than by cards on a background, and every corner is 90 degrees.
+ *
+ * **Colour is state, never decoration.** There is one filled primary control — the button that cuts —
+ * and it is near-white on dark, with no hue at all, so it is the highest-contrast object in the window
+ * without ever being confusable with a verdict. Hue appears in exactly four places, each with a meaning:
+ * `--verified` green for a measurement that matched, `--caution` amber for something a person should
+ * look at, `--hazard` red for a failure or an impossible range, and `--select` blue for where the
+ * keyboard is and which row is selected.
+ *
+ * An earlier revision made hazard red the *primary action*, which is why the Trim button used to be the
+ * same red as a failure. Red means stop. A tool that shouts STOP on the button you press to work is a
+ * tool that fights its user.
+ *
+ * **Two faces, both bundled.** Inter for everything read as language, JetBrains Mono for everything
+ * compared as data — timecodes, frame counts, paths, the log. See `styles/fonts.css`.
  *
  * Three earlier versions of this shell were a three-column dashboard, a two-column workbench and a
  * column of cards. Each tried to arrange a form that did not need arranging, and each made a simple
@@ -41,8 +52,8 @@
  *
  * ## Density
  *
- * A 26 px row. Small on purpose: the window sits beside a video monitor and the operator is comparing
- * two timecodes, three column values and a plan badge at once.
+ * A 28 px row, a 30 px field, a 26 px zone header. Small on purpose: the window sits beside a video
+ * monitor and the operator is comparing two timecodes, three column values and a plan badge at once.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -295,7 +306,7 @@ export function App(): JSX.Element {
             </section>
 
             {/* ---- RANGE ---------------------------------------------------------------- */}
-            <section className="zone zone--grow">
+            <section className="zone">
               <header className="zone__head">
                 <h2 className="zone__title">Range</h2>
                 <span className="spacer" />
@@ -511,7 +522,7 @@ export function App(): JSX.Element {
 
           {/* ---- the queue column ------------------------------------------------------- */}
           <div className="app__col app__col--queue">
-            <section className="zone zone--grow">
+            <section className="zone">
               <header className="zone__head">
                 <h2 className="zone__title">Queue</h2>
                 {queued > 0 ? <span className="zone__count figures">{queued}</span> : null}
@@ -534,7 +545,7 @@ export function App(): JSX.Element {
             </section>
 
             {model.lastOutcome !== null ? (
-              <section className="zone zone--grow">
+              <section className="zone">
                 <header className="zone__head">
                   <h2 className="zone__title">What came out</h2>
                   <span className="spacer" />

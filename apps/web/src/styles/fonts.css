@@ -1,0 +1,100 @@
+/*
+ * The bundled typefaces.
+ *
+ * ============================================================================================
+ * Why they are bundled and not resolved from the system
+ * ============================================================================================
+ *
+ * The first version of this stylesheet used `"Segoe UI Variable Text"` and `Cascadia Mono` on the
+ * argument that a Windows application should look native and should not ship a font. That argument is
+ * wrong for a product that is *sold*:
+ *
+ * * **Cascadia Mono is not on every supported machine.** It ships with Windows Terminal and with
+ *   Windows 11; a Windows 10 workstation without either falls back to Consolas, and the interface
+ *   changes shape under the operator. Consolas is 9 units wide per character; Cascadia Mono is 8. A
+ *   column of timecodes that reflows is a column that stops lining up.
+ * * **Segoe UI Variable is Windows 11**. On Windows 10 it falls back to Segoe UI, which is a different
+ *   typeface with different metrics.
+ * * **"Native" is not a compliment in a tool.** Every application that has not thought about its type
+ *   uses the system face. A product asking a professional price can afford 158 KB of its own.
+ *
+ * So both faces are bundled as WOFF2 subsets. Both are **SIL Open Font License 1.1**, which permits
+ * bundling in a commercial product, modified or not, provided the notice travels with the file — see
+ * `src/fonts/LICENCE.md`.
+ *
+ * ============================================================================================
+ * The pair, and why this pair
+ * ============================================================================================
+ *
+ * * **Inter** — the interface face. Drawn for screens, with a tall x-height and open apertures that
+ *   stay legible at the 11–13 px this window uses, and it has a genuine tabular-figure feature. It is
+ *   the face a modern professional tool uses, and it reads as neutral rather than as a statement.
+ * * **JetBrains Mono** — the data face. Every timecode, frame count, path, hash and log line. It is a
+ *   monospace with a deliberate *taller* x-height than usual in a code font and disambiguated
+ *   `0/O`, `1/l/I`, which matters here more than in most places: this application prints
+ *   `00:00:01:00` and `00:00:01:0O` is a different frame.
+ *
+ * Only the **latin** subset of each is shipped. The interface has no localisation, and a desktop
+ * application that carries eleven scripts for a product that has one is carrying nine it will never
+ * render.
+ */
+
+/* ---- Inter: the interface face ---------------------------------------------------------- */
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("../fonts/inter-400.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url("../fonts/inter-500.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: block;
+  src: url("../fonts/inter-600.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url("../fonts/inter-700.woff2") format("woff2");
+}
+
+/* ---- JetBrains Mono: the data face ------------------------------------------------------ */
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("../fonts/jetbrainsmono-400.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url("../fonts/jetbrainsmono-500.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url("../fonts/jetbrainsmono-700.woff2") format("woff2");
+}

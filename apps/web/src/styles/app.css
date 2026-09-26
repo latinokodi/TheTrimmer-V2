@@ -10,36 +10,46 @@
  * that rearranges itself is a tool that cannot be learned by muscle memory. An operator's hand knows
  * where the In field is; it must stay there.
  *
- * The window has a 1280x800 minimum, declared in `tauri.conf.json`. The layout is a grid that fills
- * whatever it is given, and inside it every zone is `min-height: 0` with its own scroll if its own
- * contents can be arbitrarily long. **The frame never scrolls.** A scrollbar on the window means the
- * operator cannot see a control, and a control they cannot see does not exist.
+ * The window has a 1440x960 minimum, declared in `tauri.conf.json` and budgeted in `tokens.css`. The
+ * layout is a grid that fills whatever it is given, and inside it the only things that scroll are the
+ * three zones that can hold an unbounded number of rows: the queue, the transcript hits, and the log.
+ * **The frame never scrolls.** A scrollbar on the window means the operator cannot see a control, and a
+ * control they cannot see does not exist.
  *
  * ============================================================================================
  * The frame
  * ============================================================================================
  *
  * ```
- * ┌ title bar ────────────────────────────────────────────────────────────────────────────┐ 30
+ * ┌ title bar ────────────────────────────────────────────────────────────────────────────┐ 34
  * ├──────────────────────────────┬────────────────────────────────────────────────────────┤
- * │ VIDEO / TRANSCRIPT / RANGE   │ QUEUE                                                  │
- * │ OPTIONS                      │  table (scrolls internally when long)                  │ 1fr
- * │ ── actions ──                │ ── WHAT CAME OUT ──                                    │
+ * │ VIDEO                        │ QUEUE                                                  │
+ * │ CAPTION FILE                 │  table (scrolls internally when long)                  │ 1fr
+ * │ RANGE                        │ ── WHAT CAME OUT ──                                    │
+ * │ OPTIONS                      │                                                        │
+ * │ ── [Queue] [Export] [Trim] ──│                                                        │
  * ├──────────────────────────────┴────────────────────────────────────────────────────────┤
- * │ TRANSCRIPT: find + hits                                                               │ 0.42fr
+ * │ FIND IN THE TRANSCRIPT: find + hits                                     min 150, 0.30fr│
  * ├───────────────────────────────────────────────────────────────────────────────────────┤
- * │ PROGRESS: bar, status, log (scrolls internally)                                        │ 0.62fr
+ * │ PROGRESS: bar, status, log (scrolls internally)                         min 140, 0.26fr│
  * ├───────────────────────────────────────────────────────────────────────────────────────┤
- * │ ffmpeg lamp · queue counts · notice · theme                                            │ 24
+ * │ ffmpeg lamp · queue counts · notice · theme                                            │ 26
  * └───────────────────────────────────────────────────────────────────────────────────────┘
  * ```
+ *
+ * The two bands are fractional rather than fixed so that a 2560x1440 operator gets a transcript list
+ * three times as long, and they carry a **minimum** so that a 1440x960 operator still gets two rows of
+ * hits and four of log. Every form zone then grows by the same amount to absorb whatever is left, so
+ * there is no single compartment holding a hole. Below 960 px of height the form column takes an
+ * overflow of its own rather than amputating a control — a degradation outside the supported range,
+ * never a scrollbar inside it.
  *
  * ============================================================================================
  * Compartmentalisation
  * ============================================================================================
  *
  * Zones are separated by **solid hairlines and a change of substrate**, not by cards floating on a
- * background. A zone is a labelled compartment in a rack panel: a header strip with a 9 px uppercase
+ * background. A zone is a labelled compartment in a rack panel: a header strip with a 10 px uppercase
  * title, a rule under it, and a body. That is the whole visual language, and it is what makes forty
  * controls in one window read as a panel rather than as clutter.
  *
@@ -47,12 +57,26 @@
  * and the log well.
  *
  * ============================================================================================
- * Density
+ * Type, and where each face goes
  * ============================================================================================
  *
- * A 26 px row, a 26 px field, a 22 px zone header. Small on purpose: the window sits beside a video
- * monitor and the operator is comparing two timecodes, three column values and a plan badge at once.
- * Every figure is in the data face with `tabular-nums`, so a column lines up digit for digit.
+ * Inter everywhere a character is **read**, JetBrains Mono everywhere a character is **compared**:
+ * timecodes, frame counts, paths, durations, the log, the checks table, and any column of figures that
+ * has to line up with the row above it. `.figures` in `global.css` is the utility for the second case;
+ * the selectors below apply it where the content is data by nature rather than by markup.
+ *
+ * Buttons and zone titles are Inter. A button is a word, not a datum, and a panel whose every label is
+ * monospace uppercase reads as a terminal emulator rather than as software.
+ *
+ * ============================================================================================
+ * No clipped text
+ * ============================================================================================
+ *
+ * `layout.spec.ts` walks every leaf element in the rendered window and fails if `scrollWidth` exceeds
+ * `clientWidth` (or the vertical equivalent) on an element whose overflow is hidden. Every string in
+ * this file that can be arbitrarily long therefore ends in one of exactly two ways: an explicit
+ * `text-overflow: ellipsis` with `min-width: 0`, or a `white-space: pre-wrap` that is allowed to wrap.
+ * There is no third option, because the third option is text running off the edge of the panel.
  */
 
 .app {
@@ -60,13 +84,13 @@
   grid-template-rows:
     var(--titlebar-height)
     minmax(0, 1fr)
-    minmax(0, 0.42fr)
-    minmax(0, 0.62fr)
+    minmax(150px, 0.3fr)
+    minmax(140px, 0.26fr)
     var(--footer-height);
   height: 100%;
   overflow: hidden;
   background: var(--substrate-000);
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
 }
 
 /* ==========================================================================================
@@ -76,47 +100,58 @@
 .titlebar {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-5);
   padding: 0 var(--space-5);
   background: var(--substrate-300);
   border-bottom: var(--rule) solid var(--rule-strong);
 }
 
 /*
- * The mark is a filled hazard block with the product's initial reversed out of it. No logo file, no
- * icon font, and it is one of the only places the accent appears.
+ * The mark is a filled block with the product's initial reversed out of it. No logo file and no icon
+ * font — and it is light rather than coloured, because the accent in this application means "this is
+ * the action" and the mark is not an action.
  */
 .titlebar__mark {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  background: var(--hazard);
-  color: var(--phosphor-inverse);
-  font-size: var(--text-2xs);
+  flex: none;
+  width: 18px;
+  height: 18px;
+  background: var(--primary);
+  color: var(--primary-ink);
+  font-size: var(--text-xs);
   font-weight: var(--weight-bold);
   line-height: 1;
 }
 
 .titlebar__product {
+  flex: none;
   font-size: var(--text-sm);
   font-weight: var(--weight-bold);
-  letter-spacing: 0.16em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--phosphor-bright);
 }
 
 .titlebar__tagline {
+  /* The one arbitrary-length string in the bar. It shrinks and ellipsises; it never runs under the
+     theme switch. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--text-2xs);
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--phosphor-faint);
 }
 
 .titlebar__rule {
+  flex: none;
   width: var(--rule);
-  height: 12px;
+  height: 14px;
   background: var(--rule);
 }
 
@@ -139,13 +174,55 @@
   overflow: hidden;
 }
 
+/*
+ * The safety valve. At the declared minimum this column does not overflow and shows **no** scrollbar;
+ * below it, the operator gets a scrollbar on the form rather than a Trim button that has been cut off
+ * the bottom of the window. Degrading outside the supported range is not the same thing as being
+ * scrollable inside it.
+ */
 .app__col--form {
+  overflow-y: auto;
   background: var(--substrate-200);
   border-right: var(--rule) solid var(--rule-strong);
 }
 
+/*
+ * Every form zone grows by the same amount, and none of them shrinks.
+ *
+ * A single growing zone is a hole: the leftover height all lands inside one compartment, at the bottom
+ * of its body, and reads as a mistake — which is exactly what the first version of this panel did, with
+ * 116 px of nothing under the range fields at 1080p. Sharing it out gives each compartment the same
+ * extra air and no compartment looks stretched.
+ *
+ * `flex-shrink: 0` rather than `1`: a zone that shrinks below its content does not clip, it *overlaps*
+ * the zone under it, and no browser reports that. The heights in `tokens.css` are budgeted so that at
+ * the declared minimum there is nothing to shrink; below it the column's scroll takes over.
+ */
+.app__col--form > .zone {
+  flex: 1 0 auto;
+}
+
+/*
+ * The queue column is a **grid with two explicit tracks**, not a stack of two flexing zones.
+ *
+ * It was a flex column with both zones on `flex: 1 1 auto`, and that is a trap: flex shrinking is
+ * weighted by each item's content size, so a proof panel full of checks keeps almost all the height and
+ * the queue is squeezed to a single visible row — while the total still exceeded the column, because a
+ * nested block without `min-height: 0` refuses to shrink and simply overflows. The measured result was
+ * 822 px of content in a 654 px column, hidden by `overflow: hidden`. Tracks cannot do that: both are
+ * `minmax(0, …)`, so they shrink to nothing before they overflow.
+ *
+ * 3:2 because the queue is what the operator is working in and the proof is what they consult. With no
+ * outcome yet there is one child, and `:only-child` gives it both tracks.
+ */
 .app__col--queue {
+  display: grid;
+  grid-template-rows: minmax(0, 3fr) minmax(0, 2fr);
   background: var(--substrate-100);
+}
+
+.app__col--queue > .zone:only-child {
+  grid-row: 1 / -1;
 }
 
 /* ==========================================================================================
@@ -163,58 +240,69 @@
   border-bottom: none;
 }
 
-/* Grow the one zone in a column that should absorb the leftover height. */
-.zone--grow {
-  flex: 1 1 auto;
-}
-
+/*
+ * The strip height is derived from the type inside it rather than chosen: 10 px capitals at 1.25 are a
+ * 12.5 px line box, and 26 px leaves 6.75 px of air above and below. The previous 22 px strip clipped
+ * its own descenders.
+ */
 .zone__head {
   display: flex;
   align-items: center;
   gap: var(--space-4);
   flex: none;
-  height: var(--zone-head-height);
+  height: var(--strip-height);
   padding: 0 var(--space-5);
   background: var(--substrate-300);
   border-bottom: var(--rule-hair) solid var(--rule-hair);
 }
 
 .zone__title {
+  flex: none;
   font-size: var(--text-2xs);
   font-weight: var(--weight-bold);
-  letter-spacing: 0.16em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--phosphor);
 }
 
 /*
- * The units and counts in a zone header, in faint phosphor at the same size as the title. A header
+ * The units and counts in a zone header, at the same size as the title but in faint phosphor. A header
  * that carries its own state — how many rows, what the format is — is a header you do not have to open
  * anything to read.
+ *
+ * It is the one string in a strip that can be any length, so it shrinks and ellipsises.
  */
 .zone__note {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--text-2xs);
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--phosphor-faint);
 }
 
 .zone__count {
-  min-width: 16px;
-  padding: 0 var(--space-2);
+  flex: none;
+  min-width: 18px;
+  padding: 0 var(--space-3);
   background: var(--substrate-500);
   color: var(--phosphor);
+  font-family: var(--font-data);
   font-size: var(--text-2xs);
+  line-height: 16px;
   text-align: center;
 }
 
 .zone__body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
+  gap: var(--space-4);
   flex: 1 1 auto;
   min-height: 0;
-  padding: var(--space-5);
+  padding: var(--space-4) var(--space-5);
 }
 
 .zone__body--flush {
@@ -223,7 +311,7 @@
 }
 
 .zone__body--tight {
-  gap: var(--space-4);
+  gap: var(--space-3);
 }
 
 /* ==========================================================================================
@@ -237,7 +325,7 @@
  */
 .field-row {
   display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
+  grid-template-columns: 96px minmax(0, 1fr);
   align-items: center;
   gap: var(--space-4);
   min-width: 0;
@@ -246,7 +334,7 @@
 .field-row__label {
   font-size: var(--text-2xs);
   font-weight: var(--weight-semibold);
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--phosphor-dim);
 }
@@ -258,11 +346,15 @@
   min-width: 0;
 }
 
-/* The trailing note on a settings row, to the right of the control. */
+/* The trailing note on a settings row, to the right of the control. It yields before the control does. */
 .field-row__note {
-  font-size: var(--text-2xs);
-  color: var(--phosphor-faint);
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--phosphor-faint);
 }
 
 /* ==========================================================================================
@@ -276,26 +368,32 @@ input[type="number"],
 input[type="search"] {
   width: 100%;
   height: var(--field-height);
-  padding: 0 var(--space-4);
+  padding: 0 var(--space-5);
   border: var(--rule) solid var(--rule);
   background: var(--substrate-000);
   color: var(--phosphor-bright);
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
   font-size: var(--text-sm);
   transition:
     border-color var(--motion-fast) var(--easing),
     background var(--motion-fast) var(--easing);
 }
 
+/* A path is data: it is read character by character to check a drive letter or an extension. */
+.path-field {
+  font-family: var(--font-data);
+  font-size: var(--text-xs);
+}
+
 select {
-  /* A native indicator in a 26 px row needs its own slot or the text is clipped. */
-  padding-right: var(--space-6);
+  /* A native indicator in a 30 px row needs its own slot or the text is clipped. */
+  padding-right: var(--space-7);
   appearance: none;
   background-image: linear-gradient(45deg, transparent 50%, var(--phosphor-dim) 50%),
     linear-gradient(135deg, var(--phosphor-dim) 50%, transparent 50%);
   background-position:
-    right 11px center,
-    right 7px center;
+    right 12px center,
+    right 8px center;
   background-size: 4px 4px;
   background-repeat: no-repeat;
   cursor: pointer;
@@ -307,15 +405,15 @@ select:hover:not(:disabled) {
 }
 
 /*
- * Focus is a 1 px hazard outline and a change of edge, no glow. On a dark instrument panel a glowing
- * ring is the visual equivalent of a beep, and this application has one accent for one purpose.
+ * Focus is a 1 px blue outline and a change of edge, no glow. Blue and not red: the focus ring and a
+ * failure must never be the same signal, and the previous palette made them identical.
  */
 input:focus-visible,
 select:focus-visible,
 button:focus-visible,
 summary:focus-visible,
 [tabindex]:focus-visible {
-  outline: var(--focus-width) solid var(--hazard);
+  outline: var(--focus-width) solid var(--focus);
   outline-offset: 1px;
 }
 
@@ -331,27 +429,35 @@ input::placeholder {
   color: var(--phosphor-faint);
 }
 
+/* A count, so it is a figure: the data face and tabular digits. */
 input[type="number"] {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
   text-align: right;
 }
 
 /*
  * The timecode field: the one control larger than the body size, because eleven characters of
- * `HH:MM:SS:FF` are what is being compared and what the whole product turns on. Wide-tracked,
- * monospace, `tabular-nums`, centred so the colons line up between the two fields.
+ * `HH:MM:SS:FF` are what is being compared and what the whole product turns on. Monospace, tabular
+ * digits, centred so the colons line up between the two fields.
  */
 input.timecode-field {
   height: var(--timecode-height);
   padding: 0 var(--space-5);
+  font-family: var(--font-data);
   font-size: var(--text-lg);
   font-weight: var(--weight-medium);
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
 /* ---- Buttons ---------------------------------------------------------------------------- */
 
+/*
+ * A button is a word, not a datum: Inter, sentence case, medium weight. Uppercase monospace buttons are
+ * the single loudest tell of a terminal interface, and there was no reason for them.
+ */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -363,11 +469,9 @@ input.timecode-field {
   border: var(--rule) solid var(--rule-strong);
   background: var(--substrate-300);
   color: var(--phosphor-bright);
-  font-family: var(--font-data);
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-bold);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
   white-space: nowrap;
   cursor: pointer;
   transition:
@@ -395,18 +499,20 @@ input.timecode-field {
 }
 
 /*
- * The one primary action in the window. Solid hazard with inverse text — the same treatment as the mark
- * in the title bar, so "the thing that does the work" reads the same everywhere.
+ * The one primary action in the window: near-white on dark. It is the highest-contrast object on the
+ * panel, which is what "this is the button that does the work" ought to look like — and because it has
+ * no hue, it never competes with a status colour and never needs re-tuning when the palette moves.
  */
 .btn--primary {
-  background: var(--hazard);
-  border-color: var(--hazard);
-  color: var(--phosphor-inverse);
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-ink);
+  font-weight: var(--weight-semibold);
 }
 
 .btn--primary:hover:not(:disabled) {
-  background: var(--hazard-bright);
-  border-color: var(--hazard-bright);
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
 }
 
 .btn--primary:disabled {
@@ -433,15 +539,15 @@ input.timecode-field {
 }
 
 .btn--big {
-  height: 30px;
-  padding: 0 var(--space-8);
-  font-size: var(--text-xs);
+  height: 34px;
+  padding: 0 var(--space-7);
+  font-size: var(--text-base);
 }
 
 .btn--small {
-  height: 18px;
+  height: 20px;
   padding: 0 var(--space-4);
-  letter-spacing: 0.1em;
+  font-size: var(--text-xs);
 }
 
 .btn--danger {
@@ -464,6 +570,7 @@ input.timecode-field {
 
 .spacer {
   flex: 1 1 auto;
+  min-width: 0;
 }
 
 /* ==========================================================================================
@@ -478,7 +585,7 @@ input.timecode-field {
 
 .range__row {
   display: grid;
-  grid-template-columns: 88px minmax(0, 220px) minmax(0, 1fr);
+  grid-template-columns: 96px minmax(0, 200px) minmax(0, 1fr);
   align-items: center;
   gap: var(--space-4);
 }
@@ -486,22 +593,24 @@ input.timecode-field {
 /*
  * The plan line: what the marks currently mean, in the data face, quiet until it has something to say.
  * It sits under the two fields and is the most consequential line in the window — it is where "lossless
- * copy" appears before anything is cut.
+ * copy" appears before anything is cut. It wraps rather than clipping, because it is the one line whose
+ * whole value is in the words at the end of it.
  */
 .range__plan {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-2) var(--space-4);
   min-height: 16px;
-  padding-top: var(--space-4);
+  padding-top: var(--space-3);
   border-top: var(--rule-hair) solid var(--rule-hair);
+  font-family: var(--font-data);
   font-size: var(--text-xs);
   color: var(--phosphor-dim);
 }
 
 .range__plan .ok {
-  color: var(--data-readout);
+  color: var(--verified);
 }
 
 .range__plan .warn {
@@ -513,6 +622,7 @@ input.timecode-field {
 }
 
 .range__sep {
+  flex: none;
   width: var(--rule);
   height: 10px;
   background: var(--rule-strong);
@@ -527,7 +637,8 @@ input.timecode-field {
   align-items: center;
   gap: var(--space-4);
   flex: none;
-  min-height: 40px;
+  height: var(--action-bar-height);
+  margin-top: auto;
   padding: 0 var(--space-5);
   background: var(--substrate-300);
   border-top: var(--rule) solid var(--rule-strong);
@@ -540,6 +651,7 @@ input.timecode-field {
 .cut-table {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   min-height: 0;
 }
 
@@ -551,14 +663,14 @@ input.timecode-field {
 .cut-table__row {
   display: grid;
   grid-template-columns:
+    28px
     26px
-    24px
     minmax(0, 1fr)
+    96px
+    96px
+    64px
     92px
-    92px
-    60px
-    88px
-    24px;
+    26px;
   align-items: center;
   gap: var(--space-4);
   padding: 0 var(--space-5);
@@ -567,12 +679,12 @@ input.timecode-field {
 
 .cut-table__head {
   flex: none;
-  height: var(--zone-head-height);
+  height: var(--strip-height);
   background: var(--substrate-300);
   border-bottom: var(--rule) solid var(--rule-strong);
   font-size: var(--text-2xs);
   font-weight: var(--weight-bold);
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--phosphor-faint);
 }
@@ -594,16 +706,17 @@ input.timecode-field {
 }
 
 /*
- * Selection is a 2 px hazard edge plus a wash — not an inverted row. Inverting a row of timecodes makes
- * the figures harder to read at exactly the moment the operator is reading them.
+ * Selection is a 2 px blue edge plus a wash — not an inverted row, and not red. Inverting a row of
+ * timecodes makes the figures harder to read at exactly the moment the operator is reading them, and
+ * red is reserved for "this cannot be done".
  */
 .cut-table__row--selected {
-  background: var(--hazard-wash);
-  box-shadow: inset 2px 0 0 var(--hazard);
+  background: var(--select-wash);
+  box-shadow: inset 2px 0 0 var(--select);
 }
 
 .cut-table__row--disabled {
-  opacity: 0.4;
+  opacity: 0.45;
 }
 
 /* A range that cannot be cut keeps a hazard edge whether or not it is selected. */
@@ -613,6 +726,9 @@ input.timecode-field {
 
 .cut-table__cell {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--text-sm);
 }
 
@@ -625,6 +741,7 @@ input.timecode-field {
 .cut-table__cell--index,
 .cut-table__cell--tc,
 .cut-table__cell--num {
+  font-family: var(--font-data);
   font-variant-numeric: tabular-nums;
 }
 
@@ -642,26 +759,49 @@ input.timecode-field {
   font-size: var(--text-xs);
 }
 
+/* The name cell holds a badge beside a filename, so the filename is what ellipsises. */
 .cut-table__cell--name {
   display: flex;
   align-items: center;
   gap: var(--space-4);
+  overflow: visible;
+}
+
+/* A verdict beside a name is not flexible: it is two words, and it always fits. */
+.cut-table__problem {
+  flex: none;
 }
 
 .cut-table__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--phosphor-bright);
+}
+
+/* The plan badge: a flex cell so it keeps its own height instead of being stretched by the grid. */
+.cut-table__cell--mode {
+  display: flex;
+  align-items: center;
 }
 
 .cut-table__cell--actions {
   text-align: right;
+  overflow: visible;
 }
 
 .empty-state {
   padding: var(--space-6) var(--space-5);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
+  max-width: 76ch;
+  font-size: var(--text-sm);
   color: var(--phosphor-dim);
   line-height: var(--leading-loose);
+}
+
+/* Inside a well that already carries the padding, an empty state does not add a second lot. */
+.panel-body > .empty-state {
+  padding: 0;
 }
 
 /* ==========================================================================================
@@ -671,18 +811,19 @@ input.timecode-field {
 .badge {
   display: inline-flex;
   align-items: center;
-  height: 15px;
+  flex: none;
+  height: 17px;
   padding: 0 var(--space-3);
   border: var(--rule) solid currentcolor;
   font-size: var(--text-2xs);
-  font-weight: var(--weight-bold);
-  letter-spacing: 0.1em;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   white-space: nowrap;
 }
 
 .badge--ok {
-  color: var(--data-readout);
+  color: var(--verified);
 }
 
 .badge--head,
@@ -706,23 +847,21 @@ input.timecode-field {
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
   white-space: nowrap;
 }
 
 .status::before {
   content: "";
   flex: none;
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   background: currentcolor;
 }
 
 .status--ok {
-  color: var(--data-readout);
+  color: var(--verified);
 }
 
 .status--warn {
@@ -753,7 +892,7 @@ input.timecode-field {
 
 .transcript {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: 320px minmax(0, 1fr);
   gap: var(--space-5);
   flex: 1 1 auto;
   min-height: 0;
@@ -764,6 +903,17 @@ input.timecode-field {
   flex-direction: column;
   gap: var(--space-4);
   min-width: 0;
+}
+
+/*
+ * The help under the search box wraps rather than ellipsising. It is a sentence the operator needs all
+ * of — it is where the tool explains that a hit never crosses a pause — and there is vertical room for
+ * it, so cutting it off to save two lines would be trading the explanation for nothing.
+ */
+.transcript__find > .field-row__note {
+  overflow: visible;
+  white-space: normal;
+  line-height: var(--leading-normal);
 }
 
 .transcript__list {
@@ -788,9 +938,10 @@ input.timecode-field {
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  padding: 0 var(--space-4);
+  padding: 0 var(--space-5);
+  overflow: hidden;
   text-align: left;
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   color: var(--phosphor);
   cursor: pointer;
 }
@@ -800,20 +951,25 @@ input.timecode-field {
 }
 
 .hit--selected {
-  background: var(--hazard-wash);
-  box-shadow: inset 2px 0 0 var(--hazard);
+  background: var(--select-wash);
+  box-shadow: inset 2px 0 0 var(--select);
   color: var(--phosphor-bright);
 }
 
 .hit__time {
   flex: none;
-  width: 8ch;
-  color: var(--phosphor-faint);
+  width: 9ch;
+  font-family: var(--font-data);
+  font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
+  color: var(--phosphor-faint);
 }
 
 .hit__text {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hits__actions {
@@ -827,6 +983,10 @@ input.timecode-field {
 .hits__preview {
   flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-data);
   font-size: var(--text-xs);
   color: var(--phosphor-dim);
 }
@@ -840,7 +1000,7 @@ input.timecode-field {
   align-items: center;
   gap: var(--space-5);
   flex: none;
-  height: 24px;
+  height: 28px;
   padding: 0 var(--space-5);
   background: var(--substrate-300);
   border-bottom: var(--rule-hair) solid var(--rule-hair);
@@ -849,11 +1009,16 @@ input.timecode-field {
 /*
  * Indeterminate: a track with a bright segment travelling it. The engine reports per-step timing but not
  * a fraction of the whole, and a bar that filled to 40 % and stopped would be inventing a number.
+ *
+ * The duration is a token so that `prefers-reduced-motion` can reach it — a 1.3 s infinite sweep is
+ * exactly the motion the preference exists to stop, and the token block in `tokens.css` alone cannot
+ * touch a literal. When the duration is zero the animation is switched off entirely below, and the
+ * track fills instead: still a signal, no movement.
  */
 .progress-bar {
   position: relative;
   flex: none;
-  width: 180px;
+  width: 200px;
   height: 4px;
   background: var(--substrate-000);
   border: var(--rule) solid var(--rule);
@@ -865,23 +1030,38 @@ input.timecode-field {
   position: absolute;
   inset: 0 auto 0 0;
   width: 30%;
-  background: var(--hazard);
-  animation: sweep 1.3s var(--easing) infinite;
+  background: var(--select);
+  animation: sweep var(--motion-sweep) var(--easing) infinite;
 }
 
 @keyframes sweep {
   0% {
     transform: translateX(-100%);
   }
+
   100% {
     transform: translateX(340%);
   }
 }
 
+/*
+ * A user-preference query, not a viewport one: `layout.spec.ts` forbids `max-width`/`min-width` media
+ * queries and nothing else, because the layout must not adapt to the window but may always adapt to the
+ * person using it.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .progress-bar--running::after {
+    animation: none;
+    width: 100%;
+  }
+}
+
 .progress-status {
-  font-size: var(--text-2xs);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
   color: var(--phosphor-dim);
 }
 
@@ -891,6 +1071,7 @@ input.timecode-field {
   overflow-y: auto;
   padding: var(--space-4) var(--space-5);
   background: var(--substrate-000);
+  font-family: var(--font-data);
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
   user-select: text;
@@ -902,7 +1083,7 @@ input.timecode-field {
 
 .log__line {
   white-space: pre-wrap;
-  word-break: break-all;
+  word-break: break-word;
   color: var(--phosphor-dim);
 }
 
@@ -925,6 +1106,12 @@ input.timecode-field {
    The footer
    ========================================================================================== */
 
+/*
+ * Every item in this strip can be clipped by the one after it, and previously was: the ffmpeg build
+ * string ate the whole bar and the last items ran off the right edge. Each item is now `flex: 0 1 auto`
+ * with `min-width: 0`, so they share the width and ellipsise in order of importance; the two that must
+ * never be lost — the status lamp and the runnable count — are `flex: none`.
+ */
 .footerline {
   display: flex;
   align-items: center;
@@ -933,7 +1120,6 @@ input.timecode-field {
   background: var(--substrate-300);
   border-top: var(--rule) solid var(--rule-strong);
   font-size: var(--text-2xs);
-  letter-spacing: 0.06em;
   color: var(--phosphor-faint);
   overflow: hidden;
 }
@@ -942,24 +1128,28 @@ input.timecode-field {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  flex: 0 1 auto;
   min-width: 0;
   white-space: nowrap;
 }
 
 .footerline__detail {
-  max-width: 44ch;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-family: var(--font-data);
 }
 
 .footerline__sep {
+  flex: none;
   width: var(--rule);
-  height: 10px;
+  height: 12px;
   background: var(--rule);
 }
 
 .footerline__notice {
-  max-width: 60ch;
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--phosphor-dim);
@@ -969,12 +1159,37 @@ input.timecode-field {
    Proof
    ========================================================================================== */
 
+/*
+ * `.panel-body` is the scroll well of the proof zone: the facts grid, the run signature and the list of
+ * segments, in one column that scrolls when there are more of them than fit.
+ *
+ * It had **no rule at all** — the class was written when the panel was a card in an earlier shell, and
+ * the stylesheet that defined it was replaced. So it was a plain block: as a flex item it defaulted to
+ * `min-height: auto`, refused to shrink below its content, and pushed 692 px of proof into a 524 px
+ * zone under an `overflow: hidden` ancestor. Nothing reported it, because a clipped element is not an
+ * error to a browser. `layout.spec.ts` reports it now.
+ */
+.panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-5);
+}
+
 .proof {
   list-style: none;
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  overflow-y: auto;
+  /*
+   * It does not scroll itself: `.panel-body` above is the well, and a scrollbar inside a scrollbar is
+   * two answers to one question. `flex: none` because the list is as tall as its rows and the well
+   * takes the overflow.
+   */
+  flex: none;
+  overflow: visible;
 }
 
 .proof__item {
@@ -983,13 +1198,13 @@ input.timecode-field {
 
 .proof__head {
   display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
+  grid-template-columns: 110px minmax(0, 1fr);
   align-items: center;
   gap: var(--space-4);
   width: 100%;
   padding: var(--space-4) var(--space-5);
   text-align: left;
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 
@@ -998,19 +1213,21 @@ input.timecode-field {
 }
 
 .proof__name {
-  color: var(--phosphor-bright);
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--phosphor-bright);
 }
 
 .proof__summary {
   grid-column: 2;
-  color: var(--phosphor-faint);
-  font-size: var(--text-2xs);
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--phosphor-faint);
 }
 
 .proof__detail {
@@ -1029,7 +1246,7 @@ input.timecode-field {
 .checks {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
 }
 
 .checks th,
@@ -1045,9 +1262,10 @@ input.timecode-field {
 }
 
 .checks thead th {
+  font-size: var(--text-2xs);
   color: var(--phosphor-faint);
   font-weight: var(--weight-bold);
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -1056,38 +1274,52 @@ input.timecode-field {
 }
 
 .checks__name {
-  color: var(--phosphor);
   white-space: nowrap;
+  color: var(--phosphor);
 }
 
 .checks__detail {
+  font-family: var(--font-data);
   color: var(--phosphor-dim);
   line-height: var(--leading-normal);
+  word-break: break-word;
 }
 
+/*
+ * The run's totals: one label, one figure, the figures sharing a right edge so they can be compared
+ * down the column. Capped at 340 px — a label on the far left of a 1900 px panel and its number on the
+ * far right is a row the eye has to travel across to read.
+ */
 .facts {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: baseline;
-  gap: var(--space-2) var(--space-6);
-  font-size: var(--text-xs);
+  gap: var(--space-3) var(--space-6);
+  max-width: 340px;
+  font-size: var(--text-sm);
 }
 
 .facts dt {
   font-size: var(--text-2xs);
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--phosphor-faint);
 }
 
 .facts dd {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-data);
+  font-size: var(--text-xs);
   color: var(--phosphor);
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .facts .ok {
-  color: var(--data-readout);
+  color: var(--verified);
 }
 
 .facts .warn {
@@ -1098,20 +1330,26 @@ input.timecode-field {
   color: var(--hazard);
 }
 
+/* A column of figures: one edge for the ones digit, tabular digits so the columns line up. */
+.numeric-column {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .digest {
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
 }
 
 .digest__summary {
-  padding: var(--space-2) 0;
+  padding: var(--space-3) 0;
   cursor: pointer;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--phosphor-faint);
 }
 
 .digest__help {
-  margin-bottom: var(--space-2);
+  margin-bottom: var(--space-3);
   color: var(--phosphor-faint);
   line-height: var(--leading-loose);
 }
@@ -1119,9 +1357,10 @@ input.timecode-field {
 .digest__value {
   display: block;
   padding: var(--space-4);
-  word-break: break-all;
+  overflow-wrap: anywhere;
   background: var(--substrate-100);
   border: var(--rule) solid var(--rule-hair);
+  font-family: var(--font-data);
   color: var(--phosphor);
 }
 
@@ -1130,21 +1369,20 @@ input.timecode-field {
    ========================================================================================== */
 
 /*
- * A note is a rule on the left and a wash, not a filled alert box. The wash is 10–12 % of the signal
+ * A note is a rule on the left and a wash, not a filled alert box. The wash is 12 % of the signal
  * colour: enough to group the lines, not enough to shout over the text.
  */
 .note {
   padding: var(--space-4) var(--space-5);
   border-left: 2px solid var(--rule-strong);
   background: var(--substrate-100);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   line-height: var(--leading-loose);
   color: var(--phosphor);
 }
 
 .note--ok {
-  border-left-color: var(--data-readout);
+  border-left-color: var(--verified);
 }
 
 .note--warn {
@@ -1154,7 +1392,7 @@ input.timecode-field {
 
 .note--danger {
   border-left-color: var(--hazard);
-  background: var(--hazard-soft);
+  background: var(--hazard-wash);
 }
 
 .note__list {
@@ -1183,7 +1421,7 @@ input.timecode-field {
 .dialog {
   display: flex;
   flex-direction: column;
-  width: min(560px, calc(100vw - var(--space-9)));
+  width: min(620px, calc(100vw - var(--space-9)));
   max-height: calc(100vh - var(--space-9));
   overflow: hidden;
   background: var(--substrate-200);
@@ -1192,14 +1430,17 @@ input.timecode-field {
 
 .dialog__head {
   flex: none;
-  height: var(--zone-head-height);
+  height: var(--strip-height);
   padding: 0 var(--space-5);
-  line-height: var(--zone-head-height);
+  line-height: var(--strip-height);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   background: var(--substrate-300);
   border-bottom: var(--rule) solid var(--rule-strong);
   font-size: var(--text-2xs);
   font-weight: var(--weight-bold);
-  letter-spacing: 0.16em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--phosphor);
 }
@@ -1209,7 +1450,7 @@ input.timecode-field {
   flex-direction: column;
   gap: var(--space-5);
   min-height: 0;
-  padding: var(--space-5);
+  padding: var(--space-6);
   overflow-y: auto;
 }
 
@@ -1218,15 +1459,52 @@ input.timecode-field {
   align-items: center;
   gap: var(--space-4);
   flex: none;
-  padding: var(--space-5);
+  padding: var(--space-5) var(--space-6);
   border-top: var(--rule) solid var(--rule-strong);
 }
 
 .dialog__help {
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   color: var(--phosphor-dim);
   line-height: var(--leading-loose);
+}
+
+/*
+ * A stacked field inside a dialog: a label above, a control under it, an explanation under that. The
+ * main panel uses `.field-row` because its fields are read down one shared label column; a dialog is
+ * short and each field is read on its own, so stacking is the honest layout for it.
+ *
+ * `.field`, `.field__label` and `.field__help` all had **no rule**: they were named when the dialogs
+ * were written and the stylesheet that carried them is gone. The consequence was that every label in
+ * both dialogs rendered at body size in body colour with no space under it, which is what made the
+ * format list read as a wall of undifferentiated text. They are found by auditing every `className` in
+ * the source against the stylesheet — see `docs/adr/018-visual-language.md`.
+ */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.field__label {
+  display: block;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--phosphor-dim);
+}
+
+.field__help {
+  font-size: var(--text-xs);
+  color: var(--phosphor-faint);
+  line-height: var(--leading-loose);
+}
+
+.field__help code {
+  font-family: var(--font-data);
+  color: var(--phosphor-dim);
 }
 
 .source-list {
@@ -1240,8 +1518,17 @@ input.timecode-field {
   display: flex;
   align-items: center;
   gap: var(--space-4);
+  min-width: 0;
+  font-family: var(--font-data);
   font-size: var(--text-xs);
   color: var(--phosphor);
+}
+
+.source-list__item > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ==========================================================================================
@@ -1250,7 +1537,7 @@ input.timecode-field {
 
 /*
  * Radio options as rows rather than as a column of little circles with labels beside them: the whole row
- * is the target, the label and the note are one line each, and the chosen row carries the hazard edge.
+ * is the target, the label and the note are one line each, and the chosen row carries the blue edge.
  * This is a list you read to decide, so it is laid out as a list.
  */
 .choice {
@@ -1266,7 +1553,7 @@ input.timecode-field {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: baseline;
   gap: var(--space-2) var(--space-4);
-  padding: var(--space-4);
+  padding: var(--space-4) var(--space-4) var(--space-4) var(--space-5);
   border-left: 2px solid transparent;
   border-bottom: var(--rule-hair) solid var(--rule-hair);
   cursor: pointer;
@@ -1278,26 +1565,25 @@ input.timecode-field {
 }
 
 .choice__option:has(input:checked) {
-  background: var(--hazard-wash);
-  border-left-color: var(--hazard);
+  background: var(--select-wash);
+  border-left-color: var(--select);
 }
 
 .choice__option input {
   grid-row: span 2;
   align-self: start;
   margin-top: 3px;
-  accent-color: var(--hazard);
+  accent-color: var(--select);
 }
 
 .choice__label {
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   color: var(--phosphor-bright);
 }
 
 .choice__note {
   grid-column: 2;
-  font-family: var(--font-ui);
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
   color: var(--phosphor-dim);
   line-height: var(--leading-normal);
 }
@@ -1318,13 +1604,12 @@ input.timecode-field {
 .crash__title {
   font-size: var(--text-xl);
   font-weight: var(--weight-bold);
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--hazard);
 }
 
 .crash__lead {
-  font-family: var(--font-ui);
   color: var(--phosphor);
   line-height: var(--leading-loose);
 }
@@ -1334,6 +1619,7 @@ input.timecode-field {
   overflow-x: auto;
   background: var(--substrate-000);
   border: var(--rule) solid var(--rule-hair);
+  font-family: var(--font-data);
   font-size: var(--text-xs);
   color: var(--phosphor-dim);
 }
@@ -1366,12 +1652,11 @@ input.timecode-field {
   left: var(--space-4);
   z-index: 60;
   padding: var(--space-4) var(--space-5);
-  background: var(--hazard);
-  color: var(--phosphor-inverse);
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-bold);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  background: var(--primary);
+  color: var(--primary-ink);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
   transform: translateY(-300%);
 }
 

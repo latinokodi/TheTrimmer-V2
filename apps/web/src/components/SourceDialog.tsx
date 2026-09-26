@@ -20,6 +20,7 @@ import { useState } from "react";
 
 import { pickFile } from "../ipc/dialog";
 import type { SourceView } from "../ipc/types";
+import { useModal } from "../state/useModal";
 
 export function SourceDialog({
   sources,
@@ -33,6 +34,8 @@ export function SourceDialog({
   const [path, setPath] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Focus in, focus trapped, focus returned, Escape closes. See `state/useModal.ts`.
+  const dialogRef = useModal<HTMLDivElement>(onClose);
 
   async function pick(): Promise<void> {
     const chosen = await pickFile({
@@ -77,76 +80,85 @@ export function SourceDialog({
         }
       }}
     >
-      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="source-title">
+      <div
+        className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="source-title"
+        tabIndex={-1}
+        ref={dialogRef}
+      >
         <h2 className="dialog__head" id="source-title">
           Choose a video
         </h2>
 
-        <button
-          type="button"
-          className="btn btn--primary"
-          onClick={() => void pick()}
-          disabled={saving}
-        >
-          Choose a file…
-        </button>
+        <div className="dialog__body">
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={() => void pick()}
+            disabled={saving}
+          >
+            Choose a file…
+          </button>
 
-        <div className="field">
-          <label className="field__label" htmlFor="source-path">
-            Or paste a path
-          </label>
-          <div className="row">
-            <input
-              id="source-path"
-              type="text"
-              value={path}
-              placeholder="H:\masters\reel 2\A007C012_250312_R1QK.mov"
-              spellCheck={false}
-              onChange={(event) => setPath(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  void add(path);
-                }
-              }}
-            />
-            <button
-              type="button"
-              className="btn"
-              disabled={path.trim().length === 0 || saving}
-              onClick={() => void add(path)}
-            >
-              Add
-            </button>
-          </div>
-          <p className="field__help">
-            A caption file named after the video (<code>&lt;video&gt;.srt</code>) is picked up
-            automatically and retimed with every segment.
-          </p>
-        </div>
-
-        {sources.length > 0 ? (
           <div className="field">
-            <span className="field__label">Already in this session</span>
-            <ul className="source-list">
-              {sources.map((source) => (
-                <li key={source.path} className="source-list__item">
-                  <span className={`status ${source.present ? "status--ok" : "status--danger"}`}>
-                    {source.present ? "present" : "missing"}
-                  </span>
-                  <span className="truncate" title={source.path}>
-                    {source.name}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            <label className="field__label" htmlFor="source-path">
+              Or paste a path
+            </label>
+            <div className="row">
+              <input
+                id="source-path"
+                type="text"
+                value={path}
+                placeholder="H:\masters\reel 2\A007C012_250312_R1QK.mov"
+                spellCheck={false}
+                onChange={(event) => setPath(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    void add(path);
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="btn"
+                disabled={path.trim().length === 0 || saving}
+                onClick={() => void add(path)}
+              >
+                Add
+              </button>
+            </div>
+            <p className="field__help">
+              A caption file named after the video (<code>&lt;video&gt;.srt</code>) is picked up
+              automatically and retimed with every segment.
+            </p>
           </div>
-        ) : null}
 
-        {error !== null ? (
-          <p className="note note--danger" role="alert">
-            {error}
-          </p>
-        ) : null}
+          {sources.length > 0 ? (
+            <div className="field">
+              <span className="field__label">Already in this session</span>
+              <ul className="source-list">
+                {sources.map((source) => (
+                  <li key={source.path} className="source-list__item">
+                    <span className={`status ${source.present ? "status--ok" : "status--danger"}`}>
+                      {source.present ? "present" : "missing"}
+                    </span>
+                    <span className="truncate" title={source.path}>
+                      {source.name}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {error !== null ? (
+            <p className="note note--danger" role="alert">
+              {error}
+            </p>
+          ) : null}
+        </div>
 
         <div className="dialog__actions">
           <div className="spacer" />

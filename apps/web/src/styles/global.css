@@ -36,7 +36,13 @@ body,
 body {
   background: var(--substrate-000);
   color: var(--phosphor-bright);
-  font-family: var(--font-data);
+  /*
+   * Inter, not the monospace. This window contains sentences — the plan line, the empty states, the
+   * dialog help, the notes under a field — and a sentence set in a monospace face reads as a log entry
+   * rather than as software. The data face is applied per element, by `.figures` and by the controls
+   * whose content is a character to be compared rather than a word to be read.
+   */
+  font-family: var(--font-ui);
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
   /*
@@ -67,7 +73,7 @@ body {
 }
 
 :focus-visible {
-  outline: var(--focus-width) solid var(--hazard);
+  outline: var(--focus-width) solid var(--focus);
   outline-offset: 1px;
 }
 
@@ -163,16 +169,12 @@ ol {
 
 /* ---- Truncation ------------------------------------------------------------------------ */
 
+/*
+ * Deliberate truncation, always with a visible ellipsis. A string that can be any length is either
+ * ellipsised or wrapped; there is no third option, because the third option is text running off the
+ * edge of the panel. `layout.spec.ts` measures every leaf element and fails on the third option.
+ */
 .truncate {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Keeps the *end* of a path visible, which is the part that identifies it. */
-.truncate-start {
-  direction: rtl;
-  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -186,13 +188,25 @@ ol {
  */
 .boot {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: var(--space-3);
   height: 100%;
   background: var(--substrate-000);
   color: var(--phosphor-faint);
-  font-family: var(--font-data);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+}
+
+.boot__title {
   font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
   letter-spacing: 0.16em;
   text-transform: uppercase;
+  color: var(--phosphor-dim);
+}
+
+.boot__note {
+  color: var(--phosphor-faint);
 }
