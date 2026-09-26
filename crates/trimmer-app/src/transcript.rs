@@ -81,12 +81,7 @@ pub struct TranscriptView {
 impl TranscriptView {
     /// Build a view over cues.
     #[must_use]
-    pub fn new(
-        video: MediaPath,
-        path: PathBuf,
-        cues: Vec<Cue>,
-        grouping: Grouping,
-    ) -> Self {
+    pub fn new(video: MediaPath, path: PathBuf, cues: Vec<Cue>, grouping: Grouping) -> Self {
         let index = TranscriptIndex::new(cues.clone(), grouping);
         let groups = index.sentences.clone();
         Self {
@@ -158,7 +153,10 @@ impl TranscriptView {
     #[must_use]
     pub fn cut_for_with_pauses(&self, hit: &Hit, rate: FrameRate) -> Option<(i64, i64)> {
         let (start, end) = self.cut_for(hit, rate).ok()?;
-        Some(self.index.snap_to_silence(start, end, rate, MAX_SNAP_SECONDS))
+        Some(
+            self.index
+                .snap_to_silence(start, end, rate, MAX_SNAP_SECONDS),
+        )
     }
 
     /// The group a frame falls in, as a `(first_cue, last_cue)` pair.
@@ -179,13 +177,10 @@ impl TranscriptView {
     ///
     /// Returns [`AppError::Transcript`] when the group index is out of range.
     pub fn group_text(&self, index: usize, rate: FrameRate) -> AppResult<(String, String)> {
-        let group = self
-            .groups
-            .get(index)
-            .ok_or_else(|| AppError::Transcript {
-                path: self.path.to_string(),
-                reason: format!("there is no group {index}"),
-            })?;
+        let group = self.groups.get(index).ok_or_else(|| AppError::Transcript {
+            path: self.path.to_string(),
+            reason: format!("there is no group {index}"),
+        })?;
         Ok((
             group.text.clone(),
             format_timecode(group.start_frame(rate), rate, None),
@@ -295,10 +290,13 @@ impl TranscriptService {
                 return Ok(Some(Arc::clone(found)));
             }
         }
-        let transcript = self.source.read(&path).map_err(|error| AppError::Transcript {
-            path: video.to_string(),
-            reason: error.to_string(),
-        })?;
+        let transcript = self
+            .source
+            .read(&path)
+            .map_err(|error| AppError::Transcript {
+                path: video.to_string(),
+                reason: error.to_string(),
+            })?;
         if transcript.cues.is_empty() {
             return Err(AppError::Transcript {
                 path: path.display().to_string(),
@@ -322,11 +320,7 @@ impl TranscriptService {
     /// # Errors
     ///
     /// As [`TranscriptService::load`].
-    pub fn load_from(
-        &self,
-        video: &MediaPath,
-        path: &PathBuf,
-    ) -> AppResult<Arc<TranscriptView>> {
+    pub fn load_from(&self, video: &MediaPath, path: &PathBuf) -> AppResult<Arc<TranscriptView>> {
         if let Ok(cache) = self.cache.lock() {
             if let Some(found) = cache.get(path) {
                 return Ok(Arc::clone(found));

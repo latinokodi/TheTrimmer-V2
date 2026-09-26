@@ -75,16 +75,16 @@
 #![allow(clippy::large_futures)]
 
 pub mod executor;
-pub mod process;
 pub mod probe;
+pub mod process;
 pub mod tool;
 
 pub use executor::{CutConfig, CutExecutor, CutOutcome, ExecutionStep, Prepared};
+pub use probe::{FactsMeasurer, Prober};
 pub use process::{
     CancelFlag, CollectingSink, NullSink, PollPolicy, ProcessRunner, Progress, ProgressSink,
     RunOptions,
 };
-pub use probe::{FactsMeasurer, Prober};
 pub use tool::{ToolPaths, ToolSet};
 
 use trimmer_core::CoreError;

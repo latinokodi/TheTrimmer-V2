@@ -28,12 +28,10 @@ use axum::{Json, Router};
 use serde_json::{json, Value};
 use tower_http::trace::TraceLayer;
 use trimmer_app::{
-    AppError, Clock, FileTranscripts, MediaAdapter, MediaEngine, ProjectStore, Queue,
-    QueueOptions, SystemClock, Workspace,
+    AppError, Clock, FileTranscripts, MediaAdapter, MediaEngine, ProjectStore, Queue, QueueOptions,
+    SystemClock, Workspace,
 };
-use trimmer_core::{
-    plan_cut, KeyframeGrid, MediaPath, Project, ProjectId, Segment, SegmentId,
-};
+use trimmer_core::{plan_cut, KeyframeGrid, MediaPath, Project, ProjectId, Segment, SegmentId};
 use trimmer_media::{CancelFlag, CutConfig, CutExecutor, Prober};
 use trimmer_store::document;
 use uuid::Uuid;
@@ -123,7 +121,8 @@ fn parse_segment(id: &str) -> Result<SegmentId, ApiError> {
 
 /// As [`parse_project`], for a run.
 fn parse_run(id: &str) -> Result<Uuid, ApiError> {
-    Uuid::parse_str(id).map_err(|_| ApiError::bad_request("badId", format!("{id:?} is not a run id")))
+    Uuid::parse_str(id)
+        .map_err(|_| ApiError::bad_request("badId", format!("{id:?} is not a run id")))
 }
 
 /// A sentence for anything the domain or the media layer refused.
@@ -156,7 +155,10 @@ fn optional_integer(body: &Value, name: &str) -> Result<Option<i64>, ApiError> {
     match body.get(name) {
         None | Some(Value::Null) => Ok(None),
         Some(value) => value.as_i64().map(Some).ok_or_else(|| {
-            ApiError::bad_request("malformed", format!("{name} must be a whole number or null"))
+            ApiError::bad_request(
+                "malformed",
+                format!("{name} must be a whole number or null"),
+            )
         }),
     }
 }
@@ -165,9 +167,12 @@ fn optional_integer(body: &Value, name: &str) -> Result<Option<i64>, ApiError> {
 fn optional_text(body: &Value, name: &str) -> Result<Option<String>, ApiError> {
     match body.get(name) {
         None | Some(Value::Null) => Ok(None),
-        Some(value) => value.as_str().map(|text| Some(text.to_owned())).ok_or_else(|| {
-            ApiError::bad_request("malformed", format!("{name} must be a string or null"))
-        }),
+        Some(value) => value
+            .as_str()
+            .map(|text| Some(text.to_owned()))
+            .ok_or_else(|| {
+                ApiError::bad_request("malformed", format!("{name} must be a string or null"))
+            }),
     }
 }
 
@@ -207,7 +212,8 @@ async fn require_token(
     next: Next,
 ) -> Response {
     let supplied = bearer(&request).unwrap_or_default();
-    if constant_time_eq(supplied.as_bytes(), state.config.token.as_bytes()) && !supplied.is_empty() {
+    if constant_time_eq(supplied.as_bytes(), state.config.token.as_bytes()) && !supplied.is_empty()
+    {
         return next.run(request).await;
     }
     ApiError {
@@ -271,24 +277,27 @@ pub async fn serve(config: DaemonConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A name for this machine, recorded in the run log.
+fn machine_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "unknown".to_owned())
+}
+
 // --- handlers -----------------------------------------------------------------------------
 
 /// `GET /v1/health`
 async fn health(State(state): State<Arc<DaemonState>>) -> Json<Value> {
-    let licence = state.licence();
     Json(json!({
         "status": "ok",
         "service": SERVICE_NAME,
         "version": env!("CARGO_PKG_VERSION"),
         "ffmpeg": state.has_ffmpeg(),
-        "licensed": licence.is_some(),
     }))
 }
 
 /// `GET /v1/capabilities`
-async fn capabilities(
-    State(state): State<Arc<DaemonState>>,
-) -> Result<Json<Value>, ApiError> {
+async fn capabilities(State(state): State<Arc<DaemonState>>) -> Result<Json<Value>, ApiError> {
     let mut body = json!({
         "version": env!("CARGO_PKG_VERSION"),
         "ffmpeg": state.has_ffmpeg(),
@@ -307,24 +316,6 @@ async fn capabilities(
             Err(error) => body["ffmpegError"] = json!(error.to_string()),
         }
     }
-    body["licence"] = match state.licence() {
-        Some(signed) => json!({
-            "present": true,
-            "licensee": signed.licence.licensee,
-            "edition": signed.licence.edition.word(),
-            "seats": signed.licence.seats,
-            "serial": signed.licence.serial,
-            "features": signed.licence.features,
-        }),
-        None => json!({ "present": false }),
-    };
-    body["features"] = json!(trimmer_license::CAPABILITIES
-        .iter()
-        .map(|capability| json!({
-            "name": capability.name,
-            "editions": capability.editions.iter().map(|e| e.word()).collect::<Vec<_>>(),
-        }))
-        .collect::<Vec<_>>());
     Ok(Json(body))
 }
 
@@ -353,10 +344,7 @@ async fn create_project(
     }
     let project = Project::new(name, created_by, SystemClock.now_unix());
     state.store.save(&project).map_err(ApiError::internal)?;
-    Ok((
-        StatusCode::CREATED,
-        Json(project_json(&project)?),
-    ))
+    Ok((StatusCode::CREATED, Json(project_json(&project)?)))
 }
 
 /// `GET /v1/projects/{id}`
@@ -377,10 +365,7 @@ async fn delete_project(
     // Prove it is there first: the store's delete is happy to delete nothing, and a client
     // that deletes a project twice should be told the second time that it is already gone.
     load(&state, project_id)?;
-    state
-        .store
-        .delete(project_id)
-        .map_err(ApiError::internal)?;
+    state.store.delete(project_id).map_err(ApiError::internal)?;
     Ok(Json(json!({ "deleted": project_id.to_string() })))
 }
 
@@ -462,7 +447,9 @@ async fn add_segment(
         if end <= start_frame {
             return Err(ApiError::bad_request(
                 "badRange",
-                format!("the out point (frame {end}) is not after the in point (frame {start_frame})"),
+                format!(
+                    "the out point (frame {end}) is not after the in point (frame {start_frame})"
+                ),
             ));
         }
     }
@@ -477,7 +464,11 @@ async fn add_segment(
                 ),
             ));
         }
-        let grid = KeyframeGrid::new(Vec::new(), start_frame, end_frame.unwrap_or(media.frame_count));
+        let grid = KeyframeGrid::new(
+            Vec::new(),
+            start_frame,
+            end_frame.unwrap_or(media.frame_count),
+        );
         let probe = Segment {
             id: SegmentId::new(),
             source: source.clone(),
@@ -490,9 +481,8 @@ async fn add_segment(
             handle_frames,
             enabled: true,
         };
-        plan_cut(media, &probe, &grid).map_err(|error| {
-            ApiError::bad_request("badRange", error.to_string())
-        })?;
+        plan_cut(media, &probe, &grid)
+            .map_err(|error| ApiError::bad_request("badRange", error.to_string()))?;
     }
 
     let mut segment = Segment::new(source, name, start_frame, end_frame.unwrap_or(start_frame));
@@ -580,9 +570,9 @@ async fn start_run(
     };
     let run_id = record.id;
     let provisional = record.cancel.clone();
-    state.insert_run(record).map_err(|error| {
-        ApiError::conflict("registryFull", error)
-    })?;
+    state
+        .insert_run(record)
+        .map_err(|error| ApiError::conflict("registryFull", error))?;
 
     spawn_run(
         Arc::clone(&state),
@@ -623,7 +613,9 @@ async fn cancel_run(
     state
         .update_run(id, |record| record.state = RunState::Cancelled)
         .map_err(ApiError::internal)?;
-    Ok(Json(json!({ "runId": id.to_string(), "state": RunState::Cancelled.word() })))
+    Ok(Json(
+        json!({ "runId": id.to_string(), "state": RunState::Cancelled.word() }),
+    ))
 }
 
 /// `POST /v1/transcripts/search`
@@ -637,7 +629,9 @@ async fn search_transcripts(
 ) -> Result<Json<Value>, ApiError> {
     let video = MediaPath::new(text(&body, "video")?);
     let phrase = text(&body, "phrase")?;
-    let limit = optional_integer(&body, "limit")?.unwrap_or(20).clamp(0, 1_000) as usize;
+    let limit = optional_integer(&body, "limit")?
+        .unwrap_or(20)
+        .clamp(0, 1_000) as usize;
 
     let service = trimmer_app::TranscriptService::new(
         Arc::new(FileTranscripts),
@@ -838,7 +832,7 @@ async fn run_batch(
         Arc::new(ProbeMeasurer::new(Prober::new(tools))),
         Arc::clone(&clock) as Arc<dyn Clock>,
         env!("CARGO_PKG_VERSION"),
-        trimmer_license::machine_id(),
+        machine_name(),
     );
 
     // The run record was written before the queue existed, so the flag it holds is replaced by
@@ -864,7 +858,10 @@ async fn run_batch(
     // Persist the audit record. A failure here is logged and does not change the verdict: the
     // files are on disk either way, and reporting the run as failed because its bookkeeping
     // failed would be a lie about the work.
-    if let Err(error) = state.store.record_run(project_id, actor, started_at, &outcome) {
+    if let Err(error) = state
+        .store
+        .record_run(project_id, actor, started_at, &outcome)
+    {
         tracing::error!(%run_id, %error, "the run could not be recorded in the store");
     }
 

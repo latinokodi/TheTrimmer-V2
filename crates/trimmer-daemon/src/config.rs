@@ -78,28 +78,11 @@ impl DaemonConfig {
         })?;
         if !address.is_loopback() {
             return Err(format!(
-                "refusing to bind to {address}: this API can cut files, delete projects and read \
-                 a licence, so it is a local control surface and not a service. Bind 127.0.0.1 \
-                 and put a reverse proxy in front of it if remote access is wanted"
+                "refusing to bind to {address}: this API can cut files and delete projects, so it \
+                 is a control surface for one machine rather than a service. Bind 127.0.0.1, and \
+                 put a reverse proxy in front of it if remote access is wanted"
             ));
         }
         Ok(())
-    }
-
-    /// Where the licence file is looked for.
-    ///
-    /// Beside the database by default, so the two things a daemon needs travelling together
-    /// cannot end up in different directories; `THE_TRIMMER_LICENCE` overrides it, which is how
-    /// a licence on a read-only share is used without copying it.
-    #[must_use]
-    pub fn licence_path(&self) -> PathBuf {
-        if let Ok(override_path) = std::env::var("THE_TRIMMER_LICENCE") {
-            if !override_path.trim().is_empty() {
-                return PathBuf::from(override_path.trim());
-            }
-        }
-        self.store_path
-            .parent()
-            .map_or_else(|| PathBuf::from("licence.key"), |dir| dir.join("licence.key"))
     }
 }

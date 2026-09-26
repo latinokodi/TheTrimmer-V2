@@ -6,8 +6,8 @@
 //! it shows, and where the source file is. Positions are frame numbers, not seconds, which is
 //! why this format and the domain agree so easily.
 
-use trimmer_core::FrameRate;
 use trimmer_core::CoreResult;
+use trimmer_core::FrameRate;
 
 use crate::clips::{dimensions, prepare, sequence_end, ExportClip};
 use crate::request::{ExportFormat, ExportProduct, ExportRequest};

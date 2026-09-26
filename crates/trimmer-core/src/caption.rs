@@ -170,9 +170,10 @@ impl RetimeResult {
                     instead of retiming it."
                 .to_owned();
         };
-        let name = path
-            .file_name()
-            .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
         let mut parts = vec![format!("{name}: {} cues", self.cues.len())];
         if !self.clamped.is_empty() {
             parts.push(format!("{} clamped at the marks", self.clamped.len()));
@@ -335,7 +336,9 @@ pub fn parse(text: &str) -> Vec<Cue> {
             continue;
         };
         let timing = lines[timing_index];
-        let (before, after) = timing.split_once("-->").expect("the line contains an arrow");
+        let (before, after) = timing
+            .split_once("-->")
+            .expect("the line contains an arrow");
         // A cue number glued to the front of the timing line is common in hand-edited
         // files: `7 00:00:01,000 --> ...`. Record it, then read the stamp from whatever
         // remains. The scan in `parse_stamp` finds the first well-formed stamp wherever it
@@ -345,8 +348,12 @@ pub fn parse(text: &str) -> Vec<Cue> {
             .split_once(char::is_whitespace)
             .and_then(|(number, _)| number.parse::<u32>().ok())
             .or_else(|| head.parse::<u32>().ok());
-        let Ok(start) = parse_stamp(head) else { continue };
-        let Ok(end) = parse_stamp(after) else { continue };
+        let Ok(start) = parse_stamp(head) else {
+            continue;
+        };
+        let Ok(end) = parse_stamp(after) else {
+            continue;
+        };
         let body = lines[timing_index + 1..].join("\n");
         cues.push(Cue {
             start,
@@ -360,7 +367,11 @@ pub fn parse(text: &str) -> Vec<Cue> {
         a.start
             .partial_cmp(&b.start)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then(a.end.partial_cmp(&b.end).unwrap_or(std::cmp::Ordering::Equal))
+            .then(
+                a.end
+                    .partial_cmp(&b.end)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
     });
     cues
 }
@@ -485,7 +496,11 @@ pub fn retime(cues: &[Cue], start: f64, end: f64, min_overlap: f64) -> CoreResul
         a.start
             .partial_cmp(&b.start)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then(a.end.partial_cmp(&b.end).unwrap_or(std::cmp::Ordering::Equal))
+            .then(
+                a.end
+                    .partial_cmp(&b.end)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
     });
     Ok(result)
 }
@@ -517,7 +532,12 @@ pub fn retime_file(
     if result.cues.is_empty() {
         return Ok((result, None));
     }
-    write(output_srt, &result.cues, &transcript.newline, transcript.bom)?;
+    write(
+        output_srt,
+        &result.cues,
+        &transcript.newline,
+        transcript.bom,
+    )?;
     Ok((result, Some(output_srt.to_path_buf())))
 }
 
@@ -672,7 +692,9 @@ Far away.\n";
         let result = retime(&cues, 5.0, 10.0, MIN_OVERLAP).expect("ok");
         assert!(result.is_empty());
         assert_eq!(result.outside, 2);
-        assert!(result.summary(None).contains("already relative to the segment"));
+        assert!(result
+            .summary(None)
+            .contains("already relative to the segment"));
     }
 
     #[test]
@@ -683,10 +705,7 @@ Far away.\n";
 
     #[test]
     fn rendering_renumbers_from_one_and_keeps_the_shape() {
-        let cues = vec![
-            Cue::new(0.0, 1.0, "one"),
-            Cue::new(1.0, 2.0, "two"),
-        ];
+        let cues = vec![Cue::new(0.0, 1.0, "one"), Cue::new(1.0, 2.0, "two")];
         let crlf = render(&cues, "\r\n", true);
         assert!(crlf.starts_with('\u{feff}'));
         assert!(crlf.contains("1\r\n00:00:00,000 --> 00:00:01,000\r\none"));
@@ -761,15 +780,21 @@ Far away.\n";
 
         assert!(find_for(&video).is_none());
 
-        std::fs::write(dir.join("interview.en.srt"), "1\n00:00:00,000 --> 00:00:01,000\nx\n")
-            .expect("write");
+        std::fs::write(
+            dir.join("interview.en.srt"),
+            "1\n00:00:00,000 --> 00:00:01,000\nx\n",
+        )
+        .expect("write");
         assert_eq!(
             find_for(&video).expect("found").file_name().expect("name"),
             "interview.en.srt"
         );
 
-        std::fs::write(dir.join("interview.srt"), "1\n00:00:00,000 --> 00:00:01,000\ny\n")
-            .expect("write");
+        std::fs::write(
+            dir.join("interview.srt"),
+            "1\n00:00:00,000 --> 00:00:01,000\ny\n",
+        )
+        .expect("write");
         assert_eq!(
             find_for(&video).expect("found").file_name().expect("name"),
             "interview.srt"
@@ -778,8 +803,11 @@ Far away.\n";
         // An unrelated transcript must not be picked up.
         std::fs::remove_file(dir.join("interview.srt")).ok();
         std::fs::remove_file(dir.join("interview.en.srt")).ok();
-        std::fs::write(dir.join("something-else.srt"), "1\n00:00:00,000 --> 00:00:01,000\nz\n")
-            .expect("write");
+        std::fs::write(
+            dir.join("something-else.srt"),
+            "1\n00:00:00,000 --> 00:00:01,000\nz\n",
+        )
+        .expect("write");
         assert!(find_for(&video).is_none());
 
         std::fs::remove_dir_all(&dir).ok();

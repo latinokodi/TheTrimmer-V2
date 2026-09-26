@@ -312,7 +312,9 @@ impl MediaEngine for MediaAdapter {
                 vec![trimmer_media::executor::prepare_copy(media, plan, config)]
             }
             trimmer_core::CutMode::Reencode => {
-                vec![trimmer_media::executor::prepare_reencode(media, plan, preset, config)]
+                vec![trimmer_media::executor::prepare_reencode(
+                    media, plan, preset, config,
+                )]
             }
             trimmer_core::CutMode::HeadPatch => {
                 let mut steps = vec![trimmer_media::executor::prepare_head(media, plan, config)];

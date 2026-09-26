@@ -204,7 +204,10 @@ impl CollectingSink {
     /// The events received so far.
     #[must_use]
     pub fn events(&self) -> Vec<Progress> {
-        self.events.lock().map(|guard| guard.clone()).unwrap_or_default()
+        self.events
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -272,7 +275,11 @@ impl Output {
     /// The last few lines of standard error, for an error message.
     #[must_use]
     pub fn stderr_tail(&self, lines: usize) -> String {
-        let all: Vec<&str> = self.stderr.lines().filter(|line| !line.trim().is_empty()).collect();
+        let all: Vec<&str> = self
+            .stderr
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .collect();
         let start = all.len().saturating_sub(lines);
         all[start..].join("\n")
     }
@@ -338,7 +345,10 @@ impl ProcessRunner {
         });
         options.sink.report(Progress::Command {
             text: display.clone(),
-            args: args.iter().map(|arg| arg.to_string_lossy().into_owned()).collect(),
+            args: args
+                .iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect(),
         });
 
         let started = Instant::now();
@@ -487,7 +497,10 @@ impl ProcessRunner {
 #[must_use]
 pub fn display_command(program: &Path, args: &[OsString]) -> String {
     let mut parts = vec![quote_for_display(&program.to_string_lossy())];
-    parts.extend(args.iter().map(|arg| quote_for_display(&arg.to_string_lossy())));
+    parts.extend(
+        args.iter()
+            .map(|arg| quote_for_display(&arg.to_string_lossy())),
+    );
     parts.join(" ")
 }
 
@@ -592,7 +605,10 @@ mod tests {
         let result = handle.await.expect("the task did not panic");
         assert!(matches!(result, Err(MediaError::Cancelled)), "{result:?}");
         // The poll interval is 20 ms, so this must not be anywhere near the child's full run.
-        assert!(started.elapsed() < Duration::from_secs(5), "cancel was slow");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "cancel was slow"
+        );
     }
 
     #[tokio::test]
@@ -655,18 +671,27 @@ mod tests {
             sink: sink.clone(),
             label: "copy body".to_owned(),
         };
-        runner.run(&program("sh"), &args, &options).await.expect("runs");
+        runner
+            .run(&program("sh"), &args, &options)
+            .await
+            .expect("runs");
         let events = sink.events();
         assert!(
-            events.iter().any(|event| matches!(event, Progress::Step { label } if label == "copy body")),
+            events
+                .iter()
+                .any(|event| matches!(event, Progress::Step { label } if label == "copy body")),
             "{events:?}"
         );
         assert!(
-            events.iter().any(|event| matches!(event, Progress::Command { .. })),
+            events
+                .iter()
+                .any(|event| matches!(event, Progress::Command { .. })),
             "the exact command line must be reported so the log can show it"
         );
         assert!(
-            events.iter().any(|event| matches!(event, Progress::Elapsed { .. })),
+            events
+                .iter()
+                .any(|event| matches!(event, Progress::Elapsed { .. })),
             "a slow step must say it is still running: {events:?}"
         );
         assert!(events.iter().any(
@@ -692,8 +717,14 @@ mod tests {
             },
             ..RunOptions::default()
         };
-        let output = runner.run(&program("sh"), &args, &options).await.expect("runs");
-        assert!(output.stdout.lines().count() > 1_000, "output was truncated");
+        let output = runner
+            .run(&program("sh"), &args, &options)
+            .await
+            .expect("runs");
+        assert!(
+            output.stdout.lines().count() > 1_000,
+            "output was truncated"
+        );
     }
 
     #[test]
@@ -701,7 +732,10 @@ mod tests {
         let args = argv(&["-i", r"H:\master takes\Andy Ross.mp4", "-c", "copy"]);
         let text = display_command(Path::new("ffmpeg"), &args);
         assert!(text.starts_with("ffmpeg -i "));
-        assert!(text.contains("\"H:\\master takes\\Andy Ross.mp4\""), "{text}");
+        assert!(
+            text.contains("\"H:\\master takes\\Andy Ross.mp4\""),
+            "{text}"
+        );
         assert!(text.ends_with("-c copy"));
     }
 

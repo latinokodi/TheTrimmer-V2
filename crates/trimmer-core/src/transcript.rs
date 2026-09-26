@@ -235,7 +235,12 @@ impl TranscriptIndex {
 
     /// Grow a frame range outwards until it covers the whole sentences it touches.
     #[must_use]
-    pub fn snap_to_sentence(&self, start_frame: i64, end_frame: i64, rate: FrameRate) -> (i64, i64) {
+    pub fn snap_to_sentence(
+        &self,
+        start_frame: i64,
+        end_frame: i64,
+        rate: FrameRate,
+    ) -> (i64, i64) {
         let (Some(first), Some(last)) = (
             self.sentence_at_frame(start_frame, rate),
             // The out point is exclusive, so the frame before it is the last kept frame.
@@ -247,7 +252,9 @@ impl TranscriptIndex {
         let last_sentence = &self.sentences[last];
         (
             first_sentence.start_frame(rate),
-            last_sentence.end_frame(rate).max(first_sentence.end_frame(rate)),
+            last_sentence
+                .end_frame(rate)
+                .max(first_sentence.end_frame(rate)),
         )
     }
 
@@ -365,7 +372,10 @@ impl TranscriptIndex {
     /// How many words the transcript holds.
     #[must_use]
     pub fn word_count(&self) -> usize {
-        self.cues.iter().map(|cue| cue.one_line().split_whitespace().count()).sum()
+        self.cues
+            .iter()
+            .map(|cue| cue.one_line().split_whitespace().count())
+            .sum()
     }
 }
 
@@ -446,7 +456,12 @@ fn highlight(line: &str, offset: usize, len: usize) -> String {
     if offset >= line.len() {
         return line.to_owned();
     }
-    format!("{}[[{}]]{}", &line[..offset], &line[offset..end], &line[end..])
+    format!(
+        "{}[[{}]]{}",
+        &line[..offset],
+        &line[offset..end],
+        &line[end..]
+    )
 }
 
 /// Group cues into sentences.
@@ -589,9 +604,15 @@ mod tests {
         // Cue 1 ends with '.', cue 2 ends with '.', cue 4 ends with '.', cue 5 ends with '.'
         // and cue 3 is followed by a 2-second pause.
         let texts: Vec<&str> = index.sentences.iter().map(|s| s.text.as_str()).collect();
-        assert_eq!(texts[0], "So the custody question is the thing nobody wants to answer.");
+        assert_eq!(
+            texts[0],
+            "So the custody question is the thing nobody wants to answer."
+        );
         assert_eq!(texts[1], "Right.");
-        assert_eq!(texts[2], "And that is where the market disagrees with the SEC.");
+        assert_eq!(
+            texts[2],
+            "And that is where the market disagrees with the SEC."
+        );
         assert_eq!(texts[3], "Every single time.");
     }
 
@@ -650,7 +671,11 @@ mod tests {
         // A 1.2 s limit reaches it; a 1.0 s limit does not, and the range is left alone.
         let (start, end) = index.snap_to_silence(18, 30, rate(), 1.2);
         assert_eq!(start, 18);
-        assert_eq!(end, rate().frames_in(2.1), "the out point should snap to the pause at 2.1 s");
+        assert_eq!(
+            end,
+            rate().frames_in(2.1),
+            "the out point should snap to the pause at 2.1 s"
+        );
 
         // With a limit too small to reach any gap, the range is left alone. Frames 18 and 30
         // are both inside cue 0 (0.0–2.0 s), so they are the requested range unchanged.
@@ -703,9 +728,15 @@ mod tests {
         assert_eq!(index.sentence_of_cue(2), Some(1));
         assert_eq!(index.sentence_of_cue(5), Some(3));
         // 0.5 s is inside cue 0, which is sentence 0.
-        assert_eq!(index.sentence_at_frame(rate().frames_in(0.5), rate()), Some(0));
+        assert_eq!(
+            index.sentence_at_frame(rate().frames_in(0.5), rate()),
+            Some(0)
+        );
         // A frame far past the end belongs to no group.
-        assert_eq!(index.sentence_at_frame(rate().frames_in(60.0), rate()), None);
+        assert_eq!(
+            index.sentence_at_frame(rate().frames_in(60.0), rate()),
+            None
+        );
     }
 
     #[test]
@@ -743,7 +774,10 @@ mod tests {
         // point: slicing the highlighted text at an offset into the original proves nothing,
         // and an earlier version of this line did exactly that.
         let line = index.cues[hit.cue].one_line();
-        assert_eq!(&line[hit.byte_offset..hit.byte_offset + hit.byte_len], "there");
+        assert_eq!(
+            &line[hit.byte_offset..hit.byte_offset + hit.byte_len],
+            "there"
+        );
         assert_eq!(hit.highlighted, "hello   [[there]] world");
         // The match starts after the collapsed whitespace run, not inside it.
         assert_eq!(hit.byte_offset, 8);

@@ -46,8 +46,8 @@
 
 use std::path::{Path, PathBuf};
 
-use trimmer_core::{format_seconds, FrameRate, MediaPath};
 use trimmer_core::timecode::split_timecodes;
+use trimmer_core::{format_seconds, FrameRate, MediaPath};
 
 /// What triggers a job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -290,7 +290,11 @@ impl WatchFolder {
                 Some(markers) => {
                     let extension = extension_of(&markers).unwrap_or_default();
                     let (action, trigger, marks) = if WatchPolicy::is_project_marker(&extension) {
-                        (WatchAction::RunProject, WatchTrigger::ProjectFile, Vec::new())
+                        (
+                            WatchAction::RunProject,
+                            WatchTrigger::ProjectFile,
+                            Vec::new(),
+                        )
                     } else {
                         (
                             WatchAction::CutMarkedSegments,
@@ -342,12 +346,7 @@ impl WatchFolder {
     }
 
     /// A plan that says why it is not a job yet.
-    fn blocked_plan(
-        &self,
-        master: MediaPath,
-        trigger: WatchTrigger,
-        reason: String,
-    ) -> WatchPlan {
+    fn blocked_plan(&self, master: MediaPath, trigger: WatchTrigger, reason: String) -> WatchPlan {
         WatchPlan {
             master,
             markers: None,
@@ -414,7 +413,9 @@ impl WatchFolder {
                             format_seconds(total)
                         )
                     }
-                    None => format!("{master}: marks beside it, waiting for the source to be probed"),
+                    None => {
+                        format!("{master}: marks beside it, waiting for the source to be probed")
+                    }
                 },
             },
         }

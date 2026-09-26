@@ -15,7 +15,6 @@ trimmer-verify.workspace = true
 trimmer-export.workspace = true
 trimmer-app.workspace = true
 trimmer-store.workspace = true
-trimmer-license.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 tower-http.workspace = true

@@ -6,8 +6,8 @@
 //! [`Rational::from_frames`](crate::clips::Rational::from_frames), which is integer
 //! arithmetic from the frame count and the rate's own numerator and denominator.
 
-use trimmer_core::FrameRate;
 use trimmer_core::CoreResult;
+use trimmer_core::FrameRate;
 
 use crate::clips::{dimensions, prepare, sequence_end, ExportClip, Rational};
 use crate::request::{ExportFormat, ExportProduct, ExportRequest};
@@ -82,7 +82,11 @@ fn document(
     let frame_duration = Rational::from_frames(1, rate).text();
     let duration = Rational::from_frames(sequence_end(request, clips), rate).text();
     let tc_start = Rational::ZERO.text();
-    let tc_format = if rate.supports_drop_frame() { "DF" } else { "NDF" };
+    let tc_format = if rate.supports_drop_frame() {
+        "DF"
+    } else {
+        "NDF"
+    };
 
     let mut out = String::with_capacity(2048 + clips.len() * 512);
     out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -156,11 +160,7 @@ fn asset_clip(
     timeline_rate: FrameRate,
     warnings: &mut Vec<String>,
 ) {
-    let name = xml::clean(
-        &clip.name,
-        &format!("the name of clip r{asset}"),
-        warnings,
-    );
+    let name = xml::clean(&clip.name, &format!("the name of clip r{asset}"), warnings);
     // `offset` and `duration` are positions and lengths on the *timeline*, so they are
     // measured at the timeline's rate; `start` is a position in the *source*, so it is
     // measured at the source's own rate. On a rate mismatch those two grids differ, which is
@@ -194,14 +194,23 @@ mod tests {
 
     #[test]
     fn a_format_name_uses_the_nominal_timebase() {
-        assert_eq!(format_name(1080, FrameRate::FPS_29_97), "FFVideoFormat1080p30");
+        assert_eq!(
+            format_name(1080, FrameRate::FPS_29_97),
+            "FFVideoFormat1080p30"
+        );
         assert_eq!(format_name(720, FrameRate::FPS_25), "FFVideoFormat720p25");
     }
 
     #[test]
     fn the_frame_duration_of_a_single_frame_is_the_rates_denominator_over_its_numerator() {
-        assert_eq!(Rational::from_frames(1, FrameRate::FPS_29_97).text(), "1001/30000s");
+        assert_eq!(
+            Rational::from_frames(1, FrameRate::FPS_29_97).text(),
+            "1001/30000s"
+        );
         assert_eq!(Rational::from_frames(1, FrameRate::FPS_25).text(), "1/25s");
-        assert_eq!(Rational::from_frames(1, FrameRate::FPS_23_976).text(), "1001/24000s");
+        assert_eq!(
+            Rational::from_frames(1, FrameRate::FPS_23_976).text(),
+            "1001/24000s"
+        );
     }
 }

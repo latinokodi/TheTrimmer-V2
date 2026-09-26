@@ -33,9 +33,7 @@ pub enum CoreError {
     FrameRate(String),
 
     /// The out point is not after the in point.
-    #[error(
-        "the out point (frame {out_frame}) is not after the in point (frame {in_frame})"
-    )]
+    #[error("the out point (frame {out_frame}) is not after the in point (frame {in_frame})")]
     EmptyRange {
         /// First frame of the requested range.
         in_frame: i64,

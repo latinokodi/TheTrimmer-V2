@@ -221,7 +221,10 @@ impl Capabilities {
                 if self.has_encoder(name) { "yes" } else { "NO" }
             ));
         }
-        for (name, why) in [("loudnorm", "loudness targeting"), ("ssim", "head fidelity")] {
+        for (name, why) in [
+            ("loudnorm", "loudness targeting"),
+            ("ssim", "head fidelity"),
+        ] {
             lines.push(format!(
                 "{name:<11} {:<4} ({why})",
                 if self.has_filter(name) { "yes" } else { "NO" }
@@ -237,36 +240,88 @@ impl Capabilities {
     }
 }
 
-/// Parse the output of `ffmpeg -encoders` and friends.
+/// Parse the output of `ffmpeg -encoders`, `-muxers` or `-filters`.
 ///
-/// The listings are human-readable tables, not a machine format:
+/// The listings are human-readable tables rather than a machine format, and the three of them use
+/// **different flag widths and different column layouts**:
 ///
 /// ```text
-///  V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC (codec h264)
-///  ....... loudnorm            Apply ISO 226 loudness normalization
+///   ffmpeg -encoders            ffmpeg -muxers            ffmpeg -filters
+///   V....D libx264  …             E  mp4       …           TS aap     AA->A  …
+///   A....D aac      …             E  mxf       …           .. abench  A->A   …
 /// ```
 ///
-/// The name is the second whitespace-separated field on a line whose first field is flags. The
-/// header rows and the `------` rules are skipped by requiring the first field to look like
-/// flags: six characters, all from the flag alphabet.
+/// Encoders pad the flags to six characters; muxers and filters pad to three and two, and separate
+/// the flags from the name with **two spaces**. A demuxer or encoder may put a marker between them
+/// (`=h264_nvenc`).
+///
+/// ## How a line is read
+///
+/// 1. Skip to the first position whose character is *not* a flag character.
+/// 2. That position must be 2..=6 (so it is a flag column, not a name) and must be whitespace (so
+///    the flags are a column of their own: `E  mp4`, never `E3g2` — a muxer name such as `3g2` is
+///    made entirely of characters that also appear in the flag alphabet, which is how an earlier
+///    version of this function swallowed the name column and returned nothing at all).
+/// 3. Skip any further tokens that are themselves flag runs, which steps over the flag column of a
+///    *second* listing pasted into the same text.
+/// 4. Take the first token that is neither a flag run nor just `=`, and strip a leading `=`.
+///
+/// ## Why this has been rewritten twice
+///
+/// Both earlier versions produced a *plausible* answer rather than an error, which is the worst kind
+/// of wrong: once by demanding six-character flags of every listing, so `-filters` and `-muxers`
+/// parsed to nothing and `doctor` claimed a good build had no `mp4` muxer and no `loudnorm`; once by
+/// accepting any leading run of flag characters, which ate the name column instead. The unit tests
+/// now use literal ffmpeg output and `tests/end_to_end.rs` asserts against the ffmpeg that is
+/// actually installed, because a fixture that does not match reality hides exactly this bug.
 #[must_use]
 pub fn parse_listing(text: &str) -> Vec<String> {
+    const FLAGS: &str = "VASDEFXBT.";
+
+    /// True when a token is a flag column rather than a name: two to six characters, all of them
+    /// from the flag alphabet, and not all dots.
+    fn is_flag_column(token: &str) -> bool {
+        (2..=6).contains(&token.len())
+            && token.chars().all(|ch| FLAGS.contains(ch))
+            && token.chars().any(|ch| ch != '.')
+    }
+
     let mut names = Vec::new();
     for line in text.lines() {
-        let mut fields = line.split_whitespace();
-        let Some(flags) = fields.next() else { continue };
-        let Some(name) = fields.next() else { continue };
-        if flags.len() != 6
-            || flags == "------"
-            || !flags
-                .chars()
-                .all(|ch| matches!(ch, 'V' | 'A' | 'S' | 'D' | 'E' | 'F' | 'X' | 'B' | 'T' | '.'))
-        {
+        let tokens: Vec<&str> = line.split_whitespace().collect();
+        let mut tokens = tokens.clone().into_iter();
+
+        // The flag column is the first token. It is one to six characters wide depending on which
+        // listing this is — six for encoders, three for muxers, two for filters.
+        let Some(first) = tokens.next() else { continue };
+        if first.len() > 6 || !first.chars().all(|ch| FLAGS.contains(ch)) {
             continue;
         }
-        // A leading `=` marks an encoder whose output is not a standalone stream.
+        // A legend line explains the flag columns and separates them from its prose with a `=`,
+        // wherever that sits: `V..... = Video` and `A = Audio input/output`. A real entry never has
+        // a bare `=` token, so one anywhere on the line is decisive. Testing only the *second* token
+        // is not enough, because a three-wide flag column such as a muxer's `D..` pushes the `=` to
+        // third place.
+        if tokens.clone().any(|token| token == "=") {
+            continue;
+        }
+
+        // Skip the padding and any marker between the flags and the name: a demuxer spends an extra
+        // column, and an encoder that is not standalone writes `=name`.
+        let mut found = None;
+        for token in tokens.by_ref() {
+            if is_flag_column(token) {
+                continue;
+            }
+            found = Some(token);
+            break;
+        }
+        let Some(name) = found else { continue };
         let name = name.trim_start_matches('=');
-        if !name.is_empty() && !names.iter().any(|existing| existing == name) {
+        if name.is_empty() || name.len() > 64 {
+            continue;
+        }
+        if !names.iter().any(|existing| existing == name) {
             names.push(name.to_owned());
         }
     }
@@ -369,29 +424,95 @@ mod tests {
         }
     }
 
-    #[test]
-    fn listing_parsing_reads_encoder_names_and_skips_the_table_furniture() {
-        let text = "\
+    /// The literal head of `ffmpeg -encoders`, flags six wide.
+    const ENCODERS: &str = "\
 Encoders:
  V..... = Video
+ A..... = Audio
+ S..... = Subtitle
+ .F.... = Frame-level multithreading
+ ..S... = Slice-level multithreading
+ ...X.. = Codec is experimental
+ ....B. = Supports draw_horiz_band
+ .....D = Supports direct rendering method 1
  ------
  V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC (codec h264)
  V....D libx265              libx265 H.265 / HEVC (codec hevc)
  V..... =h264_nvenc          NVIDIA NVENC H.264 encoder
  A....D aac                  AAC (Advanced Audio Coding)
- S..... ssim                 Calculate the SSIM between two video streams
 ";
-        let names = parse_listing(text);
+
+    /// The literal head of `ffmpeg -muxers`, flags **three** wide. This width difference is the bug
+    /// the parser had: a six-flag requirement parsed this to nothing, so `doctor` claimed the build
+    /// had no MP4 muxer.
+    const MUXERS: &str = "\
+Formats:
+ D.. = Demuxing supported
+ .E. = Muxing supported
+ ..d = Is a device
+ ---
+  E  3g2             3GP2 (3GPP2 file format)
+  E  mp4             MP4 (MPEG-4 Part 14)
+  E  mxf             MXF (Material eXchange Format)
+  D  mov,mp4,m4a,3gp,3g2,mj2 QuickTime / MOV
+";
+
+    /// The literal head of `ffmpeg -filters`, flags **two** wide, and the name column is preceded by
+    /// the input/output signature.
+    const FILTERS: &str = "\
+Filters:
+  T.. = Timeline support
+  .S. = Slice threading
+  A = Audio input/output
+  V = Video input/output
+  N = Dynamic number and/or type of input/output
+  | = Source or sink filter
+ TS aap               AA->A      Apply Affine Projection algorithm to first audio stream.
+ .. abench            A->A       Benchmark part of a filtergraph.
+ .. loudnorm          AA->A      EBU R128 loudness normalization
+ .. ssim              VV->V      Calculate the SSIM between two video streams.
+";
+
+    #[test]
+    fn listing_parsing_reads_encoder_names_and_skips_the_table_furniture() {
+        let names = parse_listing(ENCODERS);
         assert!(names.contains(&"libx264".to_owned()), "{names:?}");
         assert!(names.contains(&"libx265".to_owned()));
         assert!(names.contains(&"aac".to_owned()));
-        assert!(names.contains(&"ssim".to_owned()));
         // The `=` is a marker, not part of the name.
-        assert!(names.contains(&"h264_nvenc".to_owned()));
-        // Furniture is not a name.
+        assert!(names.contains(&"h264_nvenc".to_owned()), "{names:?}");
+        // Furniture is not a name, and neither is a legend.
         assert!(!names.contains(&"Encoders:".to_owned()));
         assert!(!names.contains(&"------".to_owned()));
         assert!(!names.contains(&"Video".to_owned()));
+        assert!(!names.contains(&"Frame-level".to_owned()), "{names:?}");
+    }
+
+    #[test]
+    fn listing_parsing_handles_the_three_flag_widths() {
+        // The regression: every listing must parse, not just the one whose flags happen to be six
+        // characters wide.
+        let muxers = parse_listing(MUXERS);
+        assert!(muxers.contains(&"mp4".to_owned()), "muxers: {muxers:?}");
+        assert!(muxers.contains(&"mxf".to_owned()), "muxers: {muxers:?}");
+        assert!(!muxers.contains(&"Demuxing".to_owned()), "{muxers:?}");
+        assert!(!muxers.contains(&"---".to_owned()), "{muxers:?}");
+
+        let filters = parse_listing(FILTERS);
+        assert!(
+            filters.contains(&"loudnorm".to_owned()),
+            "filters: {filters:?}"
+        );
+        assert!(filters.contains(&"ssim".to_owned()), "filters: {filters:?}");
+        assert!(filters.contains(&"aap".to_owned()), "filters: {filters:?}");
+        assert!(
+            filters.contains(&"abench".to_owned()),
+            "filters: {filters:?}"
+        );
+        // The legend's prose must not become a name.
+        assert!(!filters.contains(&"Timeline".to_owned()), "{filters:?}");
+        assert!(!filters.contains(&"support".to_owned()), "{filters:?}");
+        assert!(!filters.contains(&"filter".to_owned()), "{filters:?}");
     }
 
     #[test]

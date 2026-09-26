@@ -8,9 +8,8 @@ members = [
     "crates/trimmer-export",
     "crates/trimmer-app",
     "crates/trimmer-store",
-    "crates/trimmer-license",
     "crates/trimmer-daemon",
-    # "crates/trimmer-cli",
+    "crates/trimmer-cli",
     "apps/desktop/src-tauri",
 ]
 
@@ -30,7 +29,6 @@ trimmer-verify = { path = "crates/trimmer-verify" }
 trimmer-export = { path = "crates/trimmer-export" }
 trimmer-store = { path = "crates/trimmer-store" }
 trimmer-app = { path = "crates/trimmer-app" }
-trimmer-license = { path = "crates/trimmer-license" }
 trimmer-cli = { path = "crates/trimmer-cli" }
 trimmer-daemon = { path = "crates/trimmer-daemon" }
 

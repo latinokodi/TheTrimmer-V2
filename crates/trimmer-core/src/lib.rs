@@ -54,7 +54,6 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 #![warn(clippy::all, clippy::pedantic)]
-
 // --- Lint policy, stated here so it is visible next to the code it governs -------------
 //
 // Clippy runs at pedantic strength. The exemptions below are deliberate and narrow.
@@ -75,11 +74,19 @@
 #![allow(clippy::too_many_lines)]
 // The doc comments are prose. They name types in backticks where that helps and in plain
 // words where backticks would be noise, and they are checked by hand rather than by lint.
-#![allow(clippy::doc_markdown, clippy::missing_panics_doc, clippy::missing_errors_doc)]
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_panics_doc,
+    clippy::missing_errors_doc
+)]
 #![allow(clippy::module_name_repetitions, clippy::must_use_candidate)]
 // Small helpers returned by value where a borrow would be less readable at the call site,
 // and a nested `fn` declared after the bindings it uses — both readable in context.
-#![allow(clippy::ref_option, clippy::items_after_statements, clippy::redundant_closure)]
+#![allow(
+    clippy::ref_option,
+    clippy::items_after_statements,
+    clippy::redundant_closure
+)]
 
 pub mod caption;
 pub mod delivery;
@@ -94,8 +101,7 @@ pub mod transcript;
 // paths remain public for a caller that prefers them, and for `cargo doc`.
 pub use caption::{Cue, RetimeResult, Transcript};
 pub use delivery::{
-    AspectFit, AudioTreatment, Container, DeliveryPreset, Geometry, LoudnessTarget,
-    VideoTreatment,
+    AspectFit, AudioTreatment, Container, DeliveryPreset, Geometry, LoudnessTarget, VideoTreatment,
 };
 pub use domain::{
     AudioFormat, CutMode, KeyframeGrid, MediaInfo, MediaPath, Project, ProjectId, Segment,

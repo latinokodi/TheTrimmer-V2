@@ -7,7 +7,9 @@ use std::sync::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use trimmer_app::BatchOutcome;
-use trimmer_core::{MediaInfo, MediaPath, Project, ProjectId, Segment, SegmentId, SegmentSource, VerifyPolicy};
+use trimmer_core::{
+    MediaInfo, MediaPath, Project, ProjectId, Segment, SegmentId, SegmentSource, VerifyPolicy,
+};
 use uuid::Uuid;
 
 use crate::schema;
@@ -106,10 +108,8 @@ impl RunSummary {
 
 /// One instant as a UTC stamp, falling back to the raw count for a value no date can name.
 fn stamp(unix: i64) -> String {
-    time::OffsetDateTime::from_unix_timestamp(unix).map_or_else(
-        |_| unix.to_string(),
-        |moment| moment.to_string(),
-    )
+    time::OffsetDateTime::from_unix_timestamp(unix)
+        .map_or_else(|_| unix.to_string(), |moment| moment.to_string())
 }
 
 /// Where a project store lives when the caller does not say.
@@ -236,10 +236,7 @@ impl SqliteStore {
         let id = Uuid::now_v7();
         let finished_at = started_at + outcome.elapsed_seconds.max(0.0) as i64;
         let status = run_status(outcome);
-        let manifest = outcome
-            .audit
-            .to_json()
-            .map_err(|error| error.to_string())?;
+        let manifest = outcome.audit.to_json().map_err(|error| error.to_string())?;
         let items: Vec<(i64, String, String, String)> = outcome
             .jobs
             .iter()
@@ -258,10 +255,11 @@ impl SqliteStore {
             })
             .collect();
 
-        let mut conn = self.conn.lock().map_err(|_| StoreError::Poisoned.to_string())?;
-        let transaction = conn
-            .transaction()
-            .map_err(|error| error.to_string())?;
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| StoreError::Poisoned.to_string())?;
+        let transaction = conn.transaction().map_err(|error| error.to_string())?;
         transaction
             .execute(
                 "INSERT INTO runs (id, project_id, started_at, finished_at, actor, status, \
@@ -296,7 +294,10 @@ impl SqliteStore {
     ///
     /// Returns the error as a sentence; see [`SqliteStore::record_run`].
     pub fn list_runs(&self, project_id: ProjectId) -> Result<Vec<RunSummary>, String> {
-        let conn = self.conn.lock().map_err(|_| StoreError::Poisoned.to_string())?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StoreError::Poisoned.to_string())?;
         let mut statement = conn
             .prepare(
                 "SELECT r.id, r.started_at, r.finished_at, r.actor, r.status, \
@@ -335,7 +336,10 @@ impl SqliteStore {
     ///
     /// Returns the error as a sentence; see [`SqliteStore::record_run`].
     pub fn load_run(&self, id: Uuid) -> Result<Option<String>, String> {
-        let conn = self.conn.lock().map_err(|_| StoreError::Poisoned.to_string())?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StoreError::Poisoned.to_string())?;
         conn.query_row(
             "SELECT manifest_json FROM runs WHERE id = ?1",
             [id.to_string()],
@@ -352,7 +356,10 @@ impl SqliteStore {
     ///
     /// Returns the error as a sentence; see [`SqliteStore::record_run`].
     pub fn run_items(&self, id: Uuid) -> Result<Vec<String>, String> {
-        let conn = self.conn.lock().map_err(|_| StoreError::Poisoned.to_string())?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StoreError::Poisoned.to_string())?;
         let mut statement = conn
             .prepare("SELECT detail_json FROM runs_items WHERE run_id = ?1 ORDER BY ordinal")
             .map_err(|error| error.to_string())?;
@@ -594,11 +601,7 @@ impl SqliteStore {
         let mut listed = Vec::new();
         for row in rows {
             let (id, name, updated_at) = row?;
-            listed.push((
-                ProjectId(uuid_of(&id)?),
-                name,
-                updated_at,
-            ));
+            listed.push((ProjectId(uuid_of(&id)?), name, updated_at));
         }
         Ok(listed)
     }
@@ -696,7 +699,8 @@ fn ordinal_of(index: usize) -> i64 {
 
 impl trimmer_app::ProjectStore for SqliteStore {
     fn save(&self, project: &Project) -> Result<(), String> {
-        self.save_project(project).map_err(|error| error.to_string())
+        self.save_project(project)
+            .map_err(|error| error.to_string())
     }
 
     fn load(&self, id: ProjectId) -> Result<Project, String> {

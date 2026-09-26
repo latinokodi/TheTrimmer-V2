@@ -19,8 +19,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use trimmer_core::{
-    format_seconds, CutMode, CutPlan, MediaInfo, MediaPath, Project, ProjectId, Segment,
-    SegmentId, VerifyPolicy,
+    format_seconds, CutMode, CutPlan, MediaInfo, MediaPath, Project, ProjectId, Segment, SegmentId,
+    VerifyPolicy,
 };
 use trimmer_media::Prepared;
 
@@ -343,7 +343,10 @@ impl Workspace {
                     transcript,
                     transcript_cues: cues,
                     label: source.label.clone(),
-                    variable_rate: source.media.as_ref().is_some_and(MediaInfo::is_variable_rate),
+                    variable_rate: source
+                        .media
+                        .as_ref()
+                        .is_some_and(MediaInfo::is_variable_rate),
                 }
             })
             .collect()
@@ -374,9 +377,10 @@ impl Workspace {
             }
             None => (
                 format!("frame {}", segment.start_frame),
-                segment
-                    .end_frame
-                    .map_or_else(|| "to the end".to_owned(), |end| format!("frame {}", end - 1)),
+                segment.end_frame.map_or_else(
+                    || "to the end".to_owned(),
+                    |end| format!("frame {}", end - 1),
+                ),
                 segment.frame_count(),
                 None,
             ),
@@ -492,9 +496,10 @@ impl Workspace {
 
         let forces_full_encode = !preset.preserves_picture(media.width, media.height);
         let commands = match &plan {
-            Some(plan) if problems.is_empty() => {
-                self.engine.preview(&media, &segment, &preset, plan).unwrap_or_default()
-            }
+            Some(plan) if problems.is_empty() => self
+                .engine
+                .preview(&media, &segment, &preset, plan)
+                .unwrap_or_default(),
             _ => Vec::new(),
         };
 
@@ -515,8 +520,7 @@ impl Workspace {
             let bits_per_frame = f64::from(media.width) * f64::from(media.height) * quality_factor;
             let video_bytes = bits_per_frame * plan.requested_frames() as f64 / 8.0;
             let audio_bytes = 24_000.0 * plan.head_seconds().max(0.0)
-                + 24_000.0 * plan.requested_frames() as f64
-                    * plan.rate_denominator as f64
+                + 24_000.0 * plan.requested_frames() as f64 * plan.rate_denominator as f64
                     / plan.rate_numerator.max(1) as f64;
             Some((video_bytes + audio_bytes).max(0.0) as u64)
         });
@@ -615,21 +619,28 @@ impl Workspace {
     /// not legal in a Windows file name.
     #[must_use]
     pub fn output_path(&self, segment: &Segment) -> MediaPath {
-        let directory = self
-            .project
-            .output_dir
-            .clone()
-            .unwrap_or_else(|| MediaPath::new(segment.source.as_path().parent().unwrap_or(std::path::Path::new("."))));
+        let directory = self.project.output_dir.clone().unwrap_or_else(|| {
+            MediaPath::new(
+                segment
+                    .source
+                    .as_path()
+                    .parent()
+                    .unwrap_or(std::path::Path::new(".")),
+            )
+        });
         let preset = self.project.preset_for(segment).ok();
         let extension = preset.map_or("mp4", |preset| preset.container.extension());
         let media = self.project.media(&segment.source);
         let start = media.map_or_else(
             || format!("frame{}", segment.start_frame),
-            |media| media.timecode_of(segment.start_frame).replace([':', ';'], "."),
+            |media| {
+                media
+                    .timecode_of(segment.start_frame)
+                    .replace([':', ';'], ".")
+            },
         );
         let sanitised = sanitise_name(&segment.name);
-        directory
-            .with_suffix(&format!(" {sanitised} {start}"), extension)
+        directory.with_suffix(&format!(" {sanitised} {start}"), extension)
     }
 
     /// A description of the project for a report.

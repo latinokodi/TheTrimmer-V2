@@ -322,7 +322,8 @@ impl Geometry {
         if self.is_native() {
             return false;
         }
-        self.width != source_width || self.height != source_height
+        self.width != source_width
+            || self.height != source_height
             || !matches!(self.fit, AspectFit::Native)
     }
 
@@ -399,14 +400,19 @@ impl DeliveryPreset {
         let carries_video = self.container.carries_video();
         let treatment_is_none = self.video.is_none();
         if carries_video && treatment_is_none {
-            return Err(fail("the preset removes the picture from a video container"));
+            return Err(fail(
+                "the preset removes the picture from a video container",
+            ));
         }
         if !carries_video && !treatment_is_none {
             return Err(fail(
                 "the container carries no picture, but the preset sets a video treatment",
             ));
         }
-        if let VideoTreatment::Encode { encoder, quality, .. } = &self.video {
+        if let VideoTreatment::Encode {
+            encoder, quality, ..
+        } = &self.video
+        {
             if encoder.trim().is_empty() {
                 return Err(fail("the video treatment names no encoder"));
             }
@@ -425,10 +431,14 @@ impl DeliveryPreset {
                 return Err(fail("the audio treatment names no encoder"));
             }
             if *sample_rate < 8_000 || *sample_rate > 384_000 {
-                return Err(fail("the audio sample rate is outside anything a codec accepts"));
+                return Err(fail(
+                    "the audio sample rate is outside anything a codec accepts",
+                ));
             }
             if *channels == 0 || *channels > 16 {
-                return Err(fail("the audio channel count is outside anything a codec accepts"));
+                return Err(fail(
+                    "the audio channel count is outside anything a codec accepts",
+                ));
             }
         }
         if let Some(loudness) = self.loudness {
@@ -519,8 +529,7 @@ pub fn standard_presets() -> Vec<DeliveryPreset> {
         },
         DeliveryPreset {
             name: "youtube_1080".to_owned(),
-            description: "1920x1080 H.264 at CRF 18, AAC 320k, normalised to -14 LUFS."
-                .to_owned(),
+            description: "1920x1080 H.264 at CRF 18, AAC 320k, normalised to -14 LUFS.".to_owned(),
             container: Container::Mp4,
             video: VideoTreatment::Encode {
                 encoder: "libx264".to_owned(),
@@ -575,8 +584,7 @@ pub fn standard_presets() -> Vec<DeliveryPreset> {
         },
         DeliveryPreset {
             name: "square_social".to_owned(),
-            description: "1080x1080 H.264, cropped, normalised to -14 LUFS."
-                .to_owned(),
+            description: "1080x1080 H.264, cropped, normalised to -14 LUFS.".to_owned(),
             container: Container::Mp4,
             video: VideoTreatment::Encode {
                 encoder: "libx264".to_owned(),
@@ -606,8 +614,7 @@ pub fn standard_presets() -> Vec<DeliveryPreset> {
         },
         DeliveryPreset {
             name: "wav_split".to_owned(),
-            description: "48 kHz 24-bit stereo WAV, untouched. For a sound editor."
-                .to_owned(),
+            description: "48 kHz 24-bit stereo WAV, untouched. For a sound editor.".to_owned(),
             container: Container::Wav,
             video: VideoTreatment::None,
             audio: AudioTreatment::Encode {
@@ -759,9 +766,15 @@ mod tests {
 
     #[test]
     fn loudness_targets_name_the_standard_they_implement() {
-        assert!(LoudnessTarget::STREAMING.measurement_basis().contains("streaming"));
-        assert!(LoudnessTarget::EBU_R128.measurement_basis().contains("R128"));
-        assert!(LoudnessTarget::ATSC_A85.measurement_basis().contains("A/85"));
+        assert!(LoudnessTarget::STREAMING
+            .measurement_basis()
+            .contains("streaming"));
+        assert!(LoudnessTarget::EBU_R128
+            .measurement_basis()
+            .contains("R128"));
+        assert!(LoudnessTarget::ATSC_A85
+            .measurement_basis()
+            .contains("A/85"));
         assert_eq!(
             LoudnessTarget::PODCAST.filter_args(),
             "loudnorm=I=-16.0:TP=-1.0:lra=11.0"

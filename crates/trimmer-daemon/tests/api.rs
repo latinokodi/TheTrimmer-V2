@@ -152,7 +152,7 @@ fn a_bind_address_that_is_not_loopback_is_refused() {
         config.bind = address.to_owned();
         let error = config.validate().expect_err("refused");
         assert!(
-            error.contains("local control surface"),
+            error.contains("control surface for one machine"),
             "{address}: {error}"
         );
     }
@@ -220,7 +220,9 @@ async fn health_with_the_right_token_is_200_and_a_json_body() {
     assert_eq!(body["service"], "thetrimmer-daemon");
     assert!(body["version"].is_string());
     assert!(body["ffmpeg"].is_boolean());
-    assert!(body["licensed"].is_boolean());
+    // The health body reports the environment and nothing about entitlement: this build has no
+    // licensing feature, so it must not pretend to report one.
+    assert!(body.get("licensed").is_none(), "{body}");
 }
 
 #[tokio::test]
@@ -273,17 +275,26 @@ async fn a_project_is_created_listed_read_and_deleted() {
 async fn a_missing_project_is_404_with_the_error_shape() {
     let harness = Harness::new("missing-project");
     let (status, body) = harness
-        .ask(Method::GET, &format!("/v1/projects/{}", Uuid::now_v7()), None)
+        .ask(
+            Method::GET,
+            &format!("/v1/projects/{}", Uuid::now_v7()),
+            None,
+        )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["error"], "notFound");
-    assert!(body["detail"].as_str().expect("a detail").contains("project"));
+    assert!(body["detail"]
+        .as_str()
+        .expect("a detail")
+        .contains("project"));
 }
 
 #[tokio::test]
 async fn an_id_that_is_not_a_uuid_is_a_bad_request() {
     let harness = Harness::new("bad-id");
-    let (status, body) = harness.ask(Method::GET, "/v1/projects/not-a-uuid", None).await;
+    let (status, body) = harness
+        .ask(Method::GET, "/v1/projects/not-a-uuid", None)
+        .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["error"], "badId");
 }
@@ -298,7 +309,9 @@ async fn a_malformed_body_is_400_with_the_error_shape() {
     assert_eq!(body["error"], "malformed");
     assert!(body["detail"].as_str().expect("a detail").contains("name"));
 
-    let (status, body) = harness.ask(Method::POST, "/v1/projects", Some(json!({}))).await;
+    let (status, body) = harness
+        .ask(Method::POST, "/v1/projects", Some(json!({})))
+        .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["error"], "malformed");
 }
@@ -408,7 +421,11 @@ async fn segments_are_added_listed_and_deleted() {
         .await;
 
     let mut created = Vec::new();
-    for (name, start, end) in [("one", 0_i64, 48_i64), ("two", 100, 200), ("three", 300, 400)] {
+    for (name, start, end) in [
+        ("one", 0_i64, 48_i64),
+        ("two", 100, 200),
+        ("three", 300, 400),
+    ] {
         let (status, body) = harness
             .ask(
                 Method::POST,
@@ -719,15 +736,17 @@ async fn a_transcript_search_with_a_malformed_body_is_400() {
 }
 
 #[tokio::test]
-async fn capabilities_answers_with_the_edition_table_and_the_ffmpeg_report() {
+async fn capabilities_answers_with_the_ffmpeg_report_and_no_edition_table() {
     let harness = Harness::new("capabilities");
     let (status, body) = harness.ask(Method::GET, "/v1/capabilities", None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body["version"].is_string());
-    assert!(body["licence"]["present"].is_boolean());
-    let features = body["features"].as_array().expect("a table");
-    assert!(!features.is_empty());
-    assert!(features.iter().any(|entry| entry["name"] == "api"));
+    assert!(body["ffmpeg"].is_boolean());
+    // This build has no licensing feature. An edition table would be a claim about what a caller is
+    // entitled to, and there is nothing to base it on, so its absence is asserted rather than left
+    // to chance.
+    assert!(body.get("licence").is_none(), "{body}");
+    assert!(body.get("features").is_none(), "{body}");
 }
 
 #[tokio::test]
@@ -796,12 +815,8 @@ fn a_daemon_can_be_built_over_a_store_that_already_has_projects() {
     trimmer_app::ProjectStore::save(&store, &project).expect("saved");
     drop(store);
 
-    let state = DaemonState::new(DaemonConfig::new(
-        8787,
-        TOKEN,
-        scratch.join("db.sqlite"),
-    ))
-    .expect("the daemon opens the same store");
+    let state = DaemonState::new(DaemonConfig::new(8787, TOKEN, scratch.join("db.sqlite")))
+        .expect("the daemon opens the same store");
     let listed = trimmer_app::ProjectStore::list(state.store.as_ref()).expect("listed");
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].0, project.id);

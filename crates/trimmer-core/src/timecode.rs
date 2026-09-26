@@ -469,7 +469,14 @@ fn limit_denominator(numerator: i64, denominator: i64, limit: i64) -> Option<(i6
 /// Exact integer arithmetic throughout: an approximation that itself rounds could pick the
 /// wrong candidate, and picking the wrong rate is the failure this whole function exists to
 /// prevent.
-fn closer(a_num: i64, a_den: i64, target_num: i64, target_den: i64, b_num: i64, b_den: i64) -> bool {
+fn closer(
+    a_num: i64,
+    a_den: i64,
+    target_num: i64,
+    target_den: i64,
+    b_num: i64,
+    b_den: i64,
+) -> bool {
     if a_den <= 0 || b_den <= 0 || target_den <= 0 {
         return false;
     }
@@ -566,7 +573,8 @@ pub fn parse_timecode(text: &str, rate: FrameRate) -> CoreResult<i64> {
         fields
     };
 
-    if fields.len() != 4 || !fields.iter().all(|field| is_plain_number(field))
+    if fields.len() != 4
+        || !fields.iter().all(|field| is_plain_number(field))
         || fields.iter().any(|field| field.contains('.'))
     {
         return Err(timecode_error(text, rate, "it is not HH:MM:SS:FF"));
@@ -694,9 +702,7 @@ pub fn split_timecodes(text: &str, rate: FrameRate) -> Vec<i64> {
             let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
             let rest = &after[digits.len()..];
             // `NN:` and then at least one more group: a real timecode follows the comma.
-            !digits.is_empty()
-                && rest.starts_with(':')
-                && rest[1..].contains(':')
+            !digits.is_empty() && rest.starts_with(':') && rest[1..].contains(':')
         };
         if is_boundary {
             if let Ok(frame) = parse_timecode(&text[start..index], rate) {
@@ -722,7 +728,11 @@ pub fn split_timecodes(text: &str, rate: FrameRate) -> Vec<i64> {
 pub fn format_timecode(frame: i64, rate: FrameRate, drop: Option<bool>) -> String {
     let nominal = rate.nominal();
     let drop = drop.unwrap_or_else(|| rate.default_drop_frame());
-    let skipped = if drop { rate.drop_labels_per_minute() } else { 0 };
+    let skipped = if drop {
+        rate.drop_labels_per_minute()
+    } else {
+        0
+    };
 
     let mut frame = frame.max(0);
     if skipped > 0 {
@@ -844,7 +854,11 @@ mod tests {
             (107_892, "01:00:00;00"),
             (108_000, "01:00:03;18"),
         ] {
-            assert_eq!(format_timecode(frame, rate, None), expected, "frame {frame}");
+            assert_eq!(
+                format_timecode(frame, rate, None),
+                expected,
+                "frame {frame}"
+            );
             assert_eq!(
                 parse_timecode(expected, rate).expect("parses"),
                 frame,
@@ -882,8 +896,14 @@ mod tests {
         // function is concerned.
         let drop = FrameRate::FPS_29_97;
         let (first, rest) = parse_timecode_with_remainder("00:01:00,02", drop).expect("reads");
-        assert_eq!(first, 1_800, "a comma must not set drop-frame mode by itself");
-        assert!(rest.is_empty(), "the comma belonged to the timecode, got {rest:?}");
+        assert_eq!(
+            first, 1_800,
+            "a comma must not set drop-frame mode by itself"
+        );
+        assert!(
+            rest.is_empty(),
+            "the comma belonged to the timecode, got {rest:?}"
+        );
     }
 
     #[test]
@@ -895,7 +915,10 @@ mod tests {
             vec![93_079, 184_605]
         );
         assert_eq!(split_timecodes("00:00:10:00", rate), vec![250]);
-        assert_eq!(split_timecodes("no timecodes here", rate), Vec::<i64>::new());
+        assert_eq!(
+            split_timecodes("no timecodes here", rate),
+            Vec::<i64>::new()
+        );
 
         // The critical disambiguation: a comma two digits from the end belongs to a drop-frame
         // timecode, and splitting there would read the same string as two marks.
@@ -921,7 +944,10 @@ mod tests {
         assert!(parse_timecode_with_remainder("", rate).is_err());
         // A bare number *is* a timecode in seconds, so this reads rather than failing; the
         // watch-folder reader is what decides a leading number is likely a row index.
-        assert_eq!(parse_timecode_with_remainder("3", rate).expect("reads").0, 75);
+        assert_eq!(
+            parse_timecode_with_remainder("3", rate).expect("reads").0,
+            75
+        );
     }
 
     #[test]
@@ -994,7 +1020,15 @@ mod tests {
     #[test]
     fn out_of_range_fields_are_refused_with_the_text_attached() {
         let rate = FrameRate::FPS_25;
-        for bad in ["00:60:00:00", "00:00:60:00", "00:00:00:25", "12", "abc", "", "1:2:3:4:5"] {
+        for bad in [
+            "00:60:00:00",
+            "00:00:60:00",
+            "00:00:00:25",
+            "12",
+            "abc",
+            "",
+            "1:2:3:4:5",
+        ] {
             let error = parse_timecode(bad, rate);
             if bad == "12" {
                 assert!(error.is_ok(), "12 seconds is a legal timecode");
@@ -1009,18 +1043,30 @@ mod tests {
 
     #[test]
     fn rate_parsing_agrees_with_ffprobe_spellings() {
-        assert_eq!(FrameRate::parse("30000/1001").expect("ok"), FrameRate::FPS_29_97);
+        assert_eq!(
+            FrameRate::parse("30000/1001").expect("ok"),
+            FrameRate::FPS_29_97
+        );
         // The decimal a person writes resolves to the standard fraction, not a near-miss.
         assert_eq!(FrameRate::parse("29.97").expect("ok"), FrameRate::FPS_29_97);
         assert_eq!(FrameRate::parse("24").expect("ok"), FrameRate::FPS_24);
-        assert_eq!(FrameRate::parse("24000/1001").expect("ok"), FrameRate::FPS_23_976);
-        assert_eq!(FrameRate::parse("23.976").expect("ok"), FrameRate::FPS_23_976);
+        assert_eq!(
+            FrameRate::parse("24000/1001").expect("ok"),
+            FrameRate::FPS_23_976
+        );
+        assert_eq!(
+            FrameRate::parse("23.976").expect("ok"),
+            FrameRate::FPS_23_976
+        );
         assert_eq!(FrameRate::parse("59.94").expect("ok"), FrameRate::FPS_59_94);
         assert_eq!(FrameRate::parse("25").expect("ok").nominal(), 25);
         assert_eq!(FrameRate::parse("23.976").expect("ok").nominal(), 24);
         assert_eq!(FrameRate::parse("59.94").expect("ok").nominal(), 60);
         // A container timescale is a legitimate low rate and must not be refused.
-        assert_eq!(FrameRate::parse("1/90000").expect("ok").as_ffmpeg(), "1/90000");
+        assert_eq!(
+            FrameRate::parse("1/90000").expect("ok").as_ffmpeg(),
+            "1/90000"
+        );
     }
 
     #[test]
@@ -1034,7 +1080,10 @@ mod tests {
     fn ffmpeg_form_is_a_whole_number_or_an_exact_ratio() {
         assert_eq!(FrameRate::FPS_25.as_ffmpeg(), "25");
         assert_eq!(FrameRate::FPS_29_97.as_ffmpeg(), "30000/1001");
-        assert_eq!(FrameRate::parse("29.97").expect("ok").as_ffmpeg(), "30000/1001");
+        assert_eq!(
+            FrameRate::parse("29.97").expect("ok").as_ffmpeg(),
+            "30000/1001"
+        );
     }
 
     #[test]

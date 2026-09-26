@@ -215,9 +215,8 @@ impl CutPlan {
     /// Where the body begins, in seconds, as the executor needs it.
     #[must_use]
     pub fn body_start_seconds(&self) -> Option<f64> {
-        self.keyframe.map(|frame| {
-            frame as f64 * self.rate_denominator as f64 / self.rate_numerator as f64
-        })
+        self.keyframe
+            .map(|frame| frame as f64 * self.rate_denominator as f64 / self.rate_numerator as f64)
     }
 
     /// Re-check every invariant this plan claims, and return the ones it no longer satisfies.
@@ -286,7 +285,8 @@ impl CutPlan {
                 broken.push(PlanInvariant::HeadIsBounded);
             }
         }
-        if self.mode == CutMode::Reencode && (self.head_frames != self.requested_frames() || self.body_frames != 0)
+        if self.mode == CutMode::Reencode
+            && (self.head_frames != self.requested_frames() || self.body_frames != 0)
         {
             broken.push(PlanInvariant::HeadIsBounded);
         }
@@ -380,7 +380,11 @@ impl CutPlan {
 /// Returns [`CoreError::EmptyRange`], [`CoreError::BeforeStart`], [`CoreError::PastEnd`] or
 /// [`CoreError::UnsupportedCodec`] when the request cannot be satisfied, and
 /// [`CoreError::Invariant`] in the (unreachable) case that the planner contradicts itself.
-pub fn plan_cut(media: &MediaInfo, segment: &Segment, keyframes: &KeyframeGrid) -> CoreResult<CutPlan> {
+pub fn plan_cut(
+    media: &MediaInfo,
+    segment: &Segment,
+    keyframes: &KeyframeGrid,
+) -> CoreResult<CutPlan> {
     // Validate what the user actually asked for, *before* any clamping. Validating after
     // resolution would hide a genuine mistake: a segment whose in point is past the end of the
     // file gets clamped by the handle logic into something that looks reasonable, and the user
@@ -484,8 +488,8 @@ pub fn plan_cut(media: &MediaInfo, segment: &Segment, keyframes: &KeyframeGrid) 
 
     // Case 3: the normal one. Re-encode up to the keyframe, copy from it.
     let head_frames = keyframe - start_frame;
-    let head_seconds = head_frames as f64 * media.rate.denominator() as f64
-        / media.rate.numerator() as f64;
+    let head_seconds =
+        head_frames as f64 * media.rate.denominator() as f64 / media.rate.numerator() as f64;
     if head_seconds > MAX_HEAD_SECONDS {
         common.notes.push(format!(
             "the first keyframe is {head_seconds:.2}s after the in point, which is longer than \
@@ -502,7 +506,8 @@ pub fn plan_cut(media: &MediaInfo, segment: &Segment, keyframes: &KeyframeGrid) 
     );
     plan.invariants.push(PlanInvariant::BodyStartsOnKeyframe);
     plan.invariants.push(PlanInvariant::HeadMatchesBodyCodec);
-    plan.invariants.push(PlanInvariant::HeadMatchesSourceTimebase);
+    plan.invariants
+        .push(PlanInvariant::HeadMatchesSourceTimebase);
     plan.invariants.push(PlanInvariant::ConcatOffsetCompensated);
     plan.invariants.push(PlanInvariant::FramesAddUp);
     plan.invariants.push(PlanInvariant::HeadIsBounded);
@@ -759,7 +764,10 @@ mod tests {
         let media = master();
         let backwards = Segment::new(media.path.clone(), "s", 500, 400);
         match plan_cut(&media, &backwards, &grid(500)).expect_err("refused") {
-            CoreError::EmptyRange { in_frame, out_frame } => {
+            CoreError::EmptyRange {
+                in_frame,
+                out_frame,
+            } => {
                 assert_eq!((in_frame, out_frame), (500, 400));
             }
             other => panic!("wrong error: {other:?}"),
@@ -877,8 +885,16 @@ mod tests {
         let segment = Segment::new(media.path.clone(), "s", 600, 5_000);
         let keyframes = KeyframeGrid::new(vec![500, 1_500, 4_000, 6_000], 600, 5_000);
         let cut = plan_cut(&media, &segment, &keyframes).expect("plans");
-        assert!(cut.notes.iter().any(|note| note.contains("longer than")), "{:?}", cut.notes);
-        assert!(cut.violated_invariants().is_empty(), "{:?}", cut.violated_invariants());
+        assert!(
+            cut.notes.iter().any(|note| note.contains("longer than")),
+            "{:?}",
+            cut.notes
+        );
+        assert!(
+            cut.violated_invariants().is_empty(),
+            "{:?}",
+            cut.violated_invariants()
+        );
     }
 
     #[test]

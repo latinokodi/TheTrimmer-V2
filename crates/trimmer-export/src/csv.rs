@@ -60,7 +60,10 @@ fn document(clips: &[ExportClip]) -> String {
             format_timecode(clip.source_in, clip.rate, None),
             format_timecode(clip.source_out, clip.rate, None),
             frames.to_string(),
-            format!("{:.3}", Rational::from_frames(frames, clip.rate).as_seconds()),
+            format!(
+                "{:.3}",
+                Rational::from_frames(frames, clip.rate).as_seconds()
+            ),
             clip.preset.clone(),
             clip.tags.join(TAG_SEPARATOR),
             clip.note.clone(),

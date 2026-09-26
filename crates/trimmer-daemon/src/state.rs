@@ -1,4 +1,4 @@
-//! Shared state: the store, the tools, the licence, and the bounded registry of runs.
+//! Shared state: the store, the tools, and the bounded registry of runs.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -171,14 +171,13 @@ impl DaemonState {
     /// Returns a sentence naming the environment variables that would fix it when they could
     /// not be.
     pub fn prober(&self) -> Result<Prober, String> {
-        self.tools
-            .clone()
-            .map(Prober::new)
-            .ok_or_else(|| MediaError::ToolNotFound {
+        self.tools.clone().map(Prober::new).ok_or_else(|| {
+            MediaError::ToolNotFound {
                 tool: "ffmpeg".to_owned(),
                 env: "FFMPEG".to_owned(),
             }
-            .to_string())
+            .to_string()
+        })
     }
 
     /// True when a usable ffmpeg was found.
@@ -187,14 +186,6 @@ impl DaemonState {
         self.tools
             .as_ref()
             .is_some_and(|tools| tools.ffmpeg.exists() && tools.ffprobe.exists())
-    }
-
-    /// The licence, when one is installed and its signature checks out.
-    #[must_use]
-    pub fn licence(&self) -> Option<trimmer_license::SignedLicence> {
-        let signed = trimmer_license::read_file(&self.config.licence_path()).ok()?;
-        trimmer_license::verify_with_embedded(&signed).ok()?;
-        Some(signed)
     }
 
     /// Whether a run for this project is already going.
@@ -309,9 +300,8 @@ impl ProbeMeasurer {
 
 impl MediaMeasurer for ProbeMeasurer {
     fn facts(&self, path: &MediaPath) -> CoreResult<CutFacts> {
-        let handle = tokio::runtime::Handle::try_current().map_err(|_| {
-            CoreError::Invariant("there is no runtime to probe on".to_owned())
-        })?;
+        let handle = tokio::runtime::Handle::try_current()
+            .map_err(|_| CoreError::Invariant("there is no runtime to probe on".to_owned()))?;
         if !matches!(
             handle.runtime_flavor(),
             tokio::runtime::RuntimeFlavor::MultiThread
@@ -322,8 +312,9 @@ impl MediaMeasurer for ProbeMeasurer {
                     .to_owned(),
             ));
         }
-        let media = tokio::task::block_in_place(|| handle.block_on(self.prober.probe(path.as_path())))
-            .map_err(|error| CoreError::Invariant(error.to_string()))?;
+        let media =
+            tokio::task::block_in_place(|| handle.block_on(self.prober.probe(path.as_path())))
+                .map_err(|error| CoreError::Invariant(error.to_string()))?;
         Ok(CutFacts {
             path: media.path,
             frame_count: media.frame_count,

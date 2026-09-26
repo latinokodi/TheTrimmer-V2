@@ -9,8 +9,8 @@ use trimmer_store::document;
 use uuid::Uuid;
 
 use crate::cli::{
-    ExportArgs, FormatArg, ProjectAddSegmentArgs, ProjectAddSourceArgs, ProjectExportArgs,
-    ProjectIdArg, ProjectNewArgs, ProjectRemoveSegmentArgs,
+    ExportArgs, ProjectAddSegmentArgs, ProjectAddSourceArgs, ProjectExportArgs, ProjectIdArg,
+    ProjectNewArgs, ProjectRemoveSegmentArgs,
 };
 use crate::context::{Context, Failure, Outcome, OK};
 
@@ -84,19 +84,22 @@ pub fn show_project(context: &Context, args: &ProjectIdArg) -> Outcome {
         return Ok(OK);
     }
     println!();
-    println!("{:<4} {:<28} {:<16} {:<16} {:>8}  {}", "idx", "name", "in", "out", "frames", "problems");
+    println!(
+        "{:<4} {:<28} {:<16} {:<16} {:>8}  problems",
+        "idx", "name", "in", "out", "frames"
+    );
     for (index, view) in views.iter().enumerate() {
         let frames = view
             .frames
-            .map_or_else(|| "?".to_owned(), |frames| frames.to_string());
+            .map_or_else(|| "?".to_owned(), |count| count.to_string());
         let problems = if view.problems.is_empty() {
             String::new()
         } else {
             format!("!! {}", view.problems.join("; "))
         };
         println!(
-            {index: <4} {:<28} {:<16} {:<16} {:>8}  {problems}",
-            view.name, view.in_timeview.in_timecode, view
+            "{:<4} {:<28} {:<16} {:<16} {:>8}  {problems}",
+            index, view.name, view.in_timecode, view.out_timecode, frames
         );
     }
     Ok(OK)
@@ -123,7 +126,7 @@ pub async fn add_source(context: &Context, args: &ProjectAddSourceArgs) -> Outco
 }
 
 /// `project add-segment`
-pub async fn add_segment(context: &Context, args: &ProjectAddSegmentArgs) -> Outcome {
+pub fn add_segment(context: &Context, args: &ProjectAddSegmentArgs) -> Outcome {
     let id = project_id(&args.project)?;
     let mut workspace = workspace(context, id)?;
     let source = MediaPath::new(args.source.clone());
@@ -145,7 +148,7 @@ pub async fn add_segment(context: &Context, args: &ProjectAddSegmentArgs) -> Out
 
     let mut segment = Segment::new(source, args.name.clone(), start, end.unwrap_or(start + 1));
     segment.end_frame = end;
-    segment.preset = args.preset.clone();
+    segment.preset.clone_from(&args.preset);
     segment.handle_frames = args.handles;
 
     let id = workspace
@@ -193,7 +196,7 @@ pub fn export_timeline(context: &Context, args: &ExportArgs) -> Outcome {
     let id = project_id(&args.project)?;
     let store = context.store()?;
     let project = store.load(id).map_err(Failure::refused)?;
-    let format: ExportFormat = FormatArg::from(args.format).into();
+    let format: ExportFormat = args.format.into();
 
     // The resolver the export layer is handed. An absolute, canonicalised path is what an
     // editor's machine can open, and the export layer never touches the filesystem to decide
@@ -236,14 +239,12 @@ fn timeline_rate(project: &Project) -> trimmer_core::FrameRate {
     project
         .sources
         .values()
-        .find_map(|source| source.rate())
+        .find_map(trimmer_core::SegmentSource::rate)
         .unwrap_or(trimmer_core::FrameRate::FPS_25)
 }
 
 /// One instant as a UTC stamp, falling back to the raw count.
 fn time_stamp(unix: i64) -> String {
-    time::OffsetDateTime::from_unix_timestamp(unix).map_or_else(
-        |_| unix.to_string(),
-        |moment| moment.to_string(),
-    )
+    time::OffsetDateTime::from_unix_timestamp(unix)
+        .map_or_else(|_| unix.to_string(), |moment| moment.to_string())
 }

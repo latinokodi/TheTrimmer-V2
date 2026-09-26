@@ -53,17 +53,19 @@ impl MediaPath {
     /// The file name, for display.
     #[must_use]
     pub fn file_name(&self) -> String {
-        self.0
-            .file_name()
-            .map_or_else(|| self.0.display().to_string(), |name| name.to_string_lossy().into_owned())
+        self.0.file_name().map_or_else(
+            || self.0.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        )
     }
 
     /// The file stem, without its extension.
     #[must_use]
     pub fn stem(&self) -> String {
-        self.0
-            .file_stem()
-            .map_or_else(|| self.file_name(), |stem| stem.to_string_lossy().into_owned())
+        self.0.file_stem().map_or_else(
+            || self.file_name(),
+            |stem| stem.to_string_lossy().into_owned(),
+        )
     }
 
     /// The extension, lower-cased and without the dot. Empty when there is none.
@@ -445,7 +447,10 @@ impl KeyframeGrid {
     /// The first keyframe at or after `frame`, if the grid holds one.
     #[must_use]
     pub fn first_at_or_after(&self, frame: i64) -> Option<i64> {
-        self.keyframes.iter().copied().find(|&candidate| candidate >= frame)
+        self.keyframes
+            .iter()
+            .copied()
+            .find(|&candidate| candidate >= frame)
     }
 }
 
@@ -476,8 +481,6 @@ impl SegmentId {
     }
 }
 
-
-
 impl std::fmt::Display for SegmentId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
@@ -504,8 +507,6 @@ impl ProjectId {
         self.0
     }
 }
-
-
 
 impl std::fmt::Display for ProjectId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -581,7 +582,12 @@ pub struct Segment {
 impl Segment {
     /// A segment covering `[start, end)`.
     #[must_use]
-    pub fn new(source: impl Into<MediaPath>, name: impl Into<String>, start_frame: i64, end_frame: i64) -> Self {
+    pub fn new(
+        source: impl Into<MediaPath>,
+        name: impl Into<String>,
+        start_frame: i64,
+        end_frame: i64,
+    ) -> Self {
         Self {
             id: SegmentId::new(),
             source: source.into(),
@@ -654,8 +660,6 @@ impl VerifyPolicy {
     }
 }
 
-
-
 /// A body of work: the sources, the cuts, and the decisions that apply to all of them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -718,7 +722,9 @@ impl Project {
     /// The media facts for a path, when they are known.
     #[must_use]
     pub fn media(&self, path: &MediaPath) -> Option<&MediaInfo> {
-        self.sources.get(path).and_then(|source| source.media.as_ref())
+        self.sources
+            .get(path)
+            .and_then(|source| source.media.as_ref())
     }
 
     /// The rate to read a source's timecodes against.
@@ -804,7 +810,11 @@ impl Project {
         self.segments
             .iter()
             .filter(|segment| {
-                segment.enabled && self.sources.get(&segment.source).is_some_and(|s| s.available)
+                segment.enabled
+                    && self
+                        .sources
+                        .get(&segment.source)
+                        .is_some_and(|s| s.available)
             })
             .collect()
     }
@@ -817,12 +827,10 @@ impl Project {
     /// preset that exists — better a clear refusal than a silently wrong container.
     pub fn preset_for(&self, segment: &Segment) -> CoreResult<&crate::delivery::DeliveryPreset> {
         let name = segment.preset.as_deref().unwrap_or(&self.default_preset);
-        self.presets
-            .get(name)
-            .ok_or_else(|| CoreError::Delivery {
-                preset: name.to_owned(),
-                reason: "no preset by that name is defined in this project".to_owned(),
-            })
+        self.presets.get(name).ok_or_else(|| CoreError::Delivery {
+            preset: name.to_owned(),
+            reason: "no preset by that name is defined in this project".to_owned(),
+        })
     }
 
     /// Total frames across the runnable segments, for the batch progress bar.
@@ -880,7 +888,12 @@ mod tests {
         let segment = Segment::new(r"H:\master.mp4", "begging", 1_000, 3_000);
         let id = project.add_segment(segment).expect("added");
         assert_eq!(project.segment(id).expect("present").name, "begging");
-        assert_eq!(project.rate_for(&MediaPath::new(r"H:\master.mp4")).expect("known"), FrameRate::FPS_29_97);
+        assert_eq!(
+            project
+                .rate_for(&MediaPath::new(r"H:\master.mp4"))
+                .expect("known"),
+            FrameRate::FPS_29_97
+        );
     }
 
     #[test]
@@ -954,7 +967,10 @@ mod tests {
         let path = MediaPath::new(r"H:\work\Andy Ross.mp4");
         assert_eq!(path.stem(), "Andy Ross");
         assert_eq!(path.extension(), "mp4");
-        assert_eq!(path.with_extension("srt").to_string(), r"H:\work\Andy Ross.srt");
+        assert_eq!(
+            path.with_extension("srt").to_string(),
+            r"H:\work\Andy Ross.srt"
+        );
         assert_eq!(
             path.with_suffix(" begging 01", "mp4").to_string(),
             r"H:\work\Andy Ross begging 01.mp4"
@@ -967,7 +983,12 @@ mod tests {
         project.upsert_source(SegmentSource::unprobed(r"H:\master.mp4"));
         for index in 0..3 {
             project
-                .add_segment(Segment::new(r"H:\master.mp4", format!("s{index}"), index * 10, index * 10 + 5))
+                .add_segment(Segment::new(
+                    r"H:\master.mp4",
+                    format!("s{index}"),
+                    index * 10,
+                    index * 10 + 5,
+                ))
                 .expect("added");
         }
         project.reorder_segment(0, 2).expect("moved");

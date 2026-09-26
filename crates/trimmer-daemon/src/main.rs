@@ -40,7 +40,7 @@ OPTIONS:
                       May also come from THE_TRIMMER_TOKEN.
     --bind <ADDR>     The address to listen on. Must be a loopback address; the daemon
                       refuses anything else, because this API can cut files, delete
-                      projects and read a licence. Default 127.0.0.1.
+                      projects. Default 127.0.0.1.
     --store <PATH>    The project database. Default is this machine's data directory,
                       or THE_TRIMMER_STORE.
     -h, --help        Print this.
@@ -94,7 +94,10 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
 
-    let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
         Ok(runtime) => runtime,
         Err(error) => {
             eprintln!("trimmerd: could not start a runtime: {error}");
@@ -133,8 +136,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
         let mut value = |name: &str| -> Result<String, String> {
-            args.next()
-                .ok_or_else(|| format!("{name} needs a value"))
+            args.next().ok_or_else(|| format!("{name} needs a value"))
         };
         match arg.as_str() {
             "-h" | "--help" => parsed.help = true,

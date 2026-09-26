@@ -69,15 +69,15 @@ pub use ports::{
     SegmentCutRequest, SystemClock, TestClock, TranscriptSource,
 };
 pub use queue::{
-    quiet_sink, mode_word, BatchOutcome, CollectingQueueSink, JobId, JobState, JobStatus, Queue,
+    mode_word, quiet_sink, BatchOutcome, CollectingQueueSink, JobId, JobState, JobStatus, Queue,
     QueueEvent, QueueEventKind, QueueOptions, QueueSink, QuietQueueSink,
 };
+pub use transcript::cues_to_text;
 pub use transcript::{TranscriptService, TranscriptSummary, TranscriptView};
 pub use watch::{
     compound_extension, parse_marks, WatchAction, WatchFolder, WatchMark, WatchPlan, WatchPolicy,
     WatchTrigger,
 };
-pub use transcript::cues_to_text;
 pub use workspace::sanitise_name;
 pub use workspace::{QueuePreview, SegmentView, SourceView, Workspace, WorkspaceSummary};
 

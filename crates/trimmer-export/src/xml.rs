@@ -28,7 +28,10 @@ pub(crate) fn strip_forbidden(text: &str) -> (Cow<'_, str>, bool) {
     if !has_forbidden(text) {
         return (Cow::Borrowed(text), false);
     }
-    let cleaned: String = text.chars().filter(|character| !is_forbidden(*character)).collect();
+    let cleaned: String = text
+        .chars()
+        .filter(|character| !is_forbidden(*character))
+        .collect();
     (Cow::Owned(cleaned), true)
 }
 
@@ -61,8 +64,7 @@ pub(crate) fn clean(raw: &str, what: &str, warnings: &mut Vec<String>) -> String
 /// because a Windows drive letter is the single most common thing in one of these paths and
 /// every tool that reads them accepts it unescaped.
 fn is_url_safe(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric()
-        || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/' | b':')
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/' | b':')
 }
 
 /// Percent-encode a filesystem path for a URL, with `/` separators and uppercase hex.
@@ -118,7 +120,10 @@ mod tests {
 
     #[test]
     fn every_xml_special_character_is_escaped() {
-        assert_eq!(escape("a & b < c > d \" e ' f"), "a &amp; b &lt; c &gt; d &quot; e &apos; f");
+        assert_eq!(
+            escape("a & b < c > d \" e ' f"),
+            "a &amp; b &lt; c &gt; d &quot; e &apos; f"
+        );
         assert_eq!(escape("nothing to do"), "nothing to do");
     }
 
@@ -135,21 +140,33 @@ mod tests {
 
     #[test]
     fn a_windows_path_becomes_a_url_path() {
-        assert_eq!(url_path(r"H:\THEROLLUPFILES\Andy Ross.mp4"), "H:/THEROLLUPFILES/Andy%20Ross.mp4");
+        assert_eq!(
+            url_path(r"H:\THEROLLUPFILES\Andy Ross.mp4"),
+            "H:/THEROLLUPFILES/Andy%20Ross.mp4"
+        );
         assert_eq!(url_path("/srv/media/a+b.mp4"), "/srv/media/a%2Bb.mp4");
     }
 
     #[test]
     fn the_two_url_dialects_differ_only_in_their_authority() {
         let path = r"H:\work\Andy Ross.mp4";
-        assert_eq!(premiere_url(path), "file://localhost/H:/work/Andy%20Ross.mp4");
+        assert_eq!(
+            premiere_url(path),
+            "file://localhost/H:/work/Andy%20Ross.mp4"
+        );
         assert_eq!(fcpxml_url(path), "file:///H:/work/Andy%20Ross.mp4");
     }
 
     #[test]
     fn a_unix_absolute_path_does_not_gain_a_fourth_slash() {
-        assert_eq!(fcpxml_url("/srv/masters/a.mp4"), "file:///srv/masters/a.mp4");
-        assert_eq!(premiere_url("/srv/masters/a.mp4"), "file://localhost/srv/masters/a.mp4");
+        assert_eq!(
+            fcpxml_url("/srv/masters/a.mp4"),
+            "file:///srv/masters/a.mp4"
+        );
+        assert_eq!(
+            premiere_url("/srv/masters/a.mp4"),
+            "file://localhost/srv/masters/a.mp4"
+        );
     }
 
     #[test]

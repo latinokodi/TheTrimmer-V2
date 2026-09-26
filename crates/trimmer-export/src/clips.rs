@@ -76,16 +76,19 @@ pub(crate) struct Prepared {
 
 /// Where the last clip ends, which is the duration of the sequence.
 pub(crate) fn sequence_end(request: &ExportRequest<'_>, clips: &[ExportClip]) -> i64 {
-    clips
-        .last()
-        .map_or_else(|| request.timeline_start_frame.max(0), |clip| clip.timeline_end)
+    clips.last().map_or_else(
+        || request.timeline_start_frame.max(0),
+        |clip| clip.timeline_end,
+    )
 }
 
 /// The frame size the timeline is declared with: the first clip's, or a sane default.
 pub(crate) fn dimensions(clips: &[ExportClip]) -> (u32, u32) {
     clips
         .first()
-        .map_or((DEFAULT_WIDTH, DEFAULT_HEIGHT), |clip| (clip.width, clip.height))
+        .map_or((DEFAULT_WIDTH, DEFAULT_HEIGHT), |clip| {
+            (clip.width, clip.height)
+        })
 }
 
 /// Resolve every requested segment into a clip, or record why it could not be one.
@@ -304,8 +307,14 @@ mod tests {
 
     #[test]
     fn one_frame_at_twenty_nine_ninety_seven_is_the_literal_rational() {
-        assert_eq!(Rational::from_frames(1, FrameRate::FPS_29_97).text(), "1001/30000s");
-        assert_eq!(Rational::from_frames(30_000, FrameRate::FPS_29_97).text(), "1001/1s");
+        assert_eq!(
+            Rational::from_frames(1, FrameRate::FPS_29_97).text(),
+            "1001/30000s"
+        );
+        assert_eq!(
+            Rational::from_frames(30_000, FrameRate::FPS_29_97).text(),
+            "1001/1s"
+        );
     }
 
     #[test]

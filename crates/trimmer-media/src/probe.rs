@@ -187,7 +187,10 @@ impl Prober {
         Ok(MediaInfo {
             path: MediaPath::new(path.to_path_buf()),
             codec: video.codec_name.clone().unwrap_or_else(|| "?".to_owned()),
-            pix_fmt: video.pix_fmt.clone().unwrap_or_else(|| "yuv420p".to_owned()),
+            pix_fmt: video
+                .pix_fmt
+                .clone()
+                .unwrap_or_else(|| "yuv420p".to_owned()),
             width: video.width.unwrap_or(0),
             height: video.height.unwrap_or(0),
             rate,
@@ -225,10 +228,14 @@ impl Prober {
         to_frame: i64,
     ) -> MediaResult<KeyframeGrid> {
         let rate = media.rate;
-        let start = rate.seconds_of(from_frame.max(0)) - 1.0;
+        // A second of slack either side, so a keyframe sitting exactly on a mark is not missed to a
+        // rounding difference. The window is bounded by the file's own start.
+        let start = (rate.seconds_of(from_frame.max(0)) - 1.0).max(0.0);
         let end = rate.seconds_of(to_frame.max(1)) + 1.0;
-        let start = start.max(0.0);
 
+        // `-read_intervals` bounds the demuxer's seek, and `-skip_frame nokey` means nothing that
+        // is not a keyframe is decoded. Together they make this cheap on a two-hour master: a seek
+        // per GOP, not a decode of the file.
         let args = crate::process::argv(&[
             "-v",
             "error",
@@ -241,14 +248,9 @@ impl Prober {
             "-of",
             "csv=p=0",
             "-read_intervals",
+            &format!("{start:.6}%{end:.6}"),
+            media.path.as_path().to_str().unwrap_or_default(),
         ]);
-        let mut args = args;
-        args.push(format!("{start:.6}%{end:.6}").into());
-        args.push(media.path.as_path().as_os_str().to_os_string());
-        // `-i` is normally required; ffprobe accepts a bare input path, but being explicit
-        // keeps the command line readable in the log.
-        let mut full = crate::process::argv(&["-v", "error"]);
-        full.extend(args.into_iter().skip(1));
 
         let options = RunOptions {
             policy: PollPolicy::quick(),
@@ -257,7 +259,11 @@ impl Prober {
         };
         let output = self
             .runner
-            .run(self.tools.path(crate::tool::ToolSet::Ffprobe), &full, &options)
+            .run(
+                self.tools.path(crate::tool::ToolSet::Ffprobe),
+                &args,
+                &options,
+            )
             .await?;
 
         let mut frames: Vec<i64> = Vec::new();
@@ -293,7 +299,11 @@ impl Prober {
         };
         let output = self
             .runner
-            .run(self.tools.path(crate::tool::ToolSet::Ffprobe), &args, &options)
+            .run(
+                self.tools.path(crate::tool::ToolSet::Ffprobe),
+                &args,
+                &options,
+            )
             .await?;
         serde_json::from_str(&output.stdout)
             .map_err(|error| MediaError::BadProbe(format!("{error}: {}", output.stdout.trim())))
@@ -318,12 +328,7 @@ impl Prober {
                 &options,
             )
             .await?;
-        Ok(output
-            .stdout
-            .lines()
-            .next()
-            .unwrap_or("unknown")
-            .to_owned())
+        Ok(output.stdout.lines().next().unwrap_or("unknown").to_owned())
     }
 
     /// What the resolved ffmpeg build can do.
@@ -418,12 +423,17 @@ mod tests {
             FrameRate::FPS_29_97
         );
         assert_eq!(
-            Timescale::from_ffprobe_time_base(video.time_base.as_deref().expect("tb"))
-                .expect("ok"),
+            Timescale::from_ffprobe_time_base(video.time_base.as_deref().expect("tb")).expect("ok"),
             Timescale::NINETY_KHZ
         );
         // The frame count falls back to duration x rate when the container does not say.
-        let duration: f64 = parsed.format.duration.as_deref().expect("dur").parse().expect("num");
+        let duration: f64 = parsed
+            .format
+            .duration
+            .as_deref()
+            .expect("dur")
+            .parse()
+            .expect("num");
         let rate = FrameRate::FPS_29_97;
         assert_eq!((duration * rate.as_f64()).round() as i64, 107_907);
     }
@@ -433,7 +443,9 @@ mod tests {
         assert!(Timescale::from_ffprobe_time_base("1001/30000").is_err());
         assert!(Timescale::from_ffprobe_time_base("0/0").is_err());
         assert_eq!(
-            Timescale::from_ffprobe_time_base("1/48000").expect("ok").ticks(),
+            Timescale::from_ffprobe_time_base("1/48000")
+                .expect("ok")
+                .ticks(),
             48_000
         );
     }
@@ -444,6 +456,8 @@ mod tests {
             .map_err(|error| MediaError::BadProbe(error.to_string()))
             .expect_err("refused");
         assert!(matches!(error, MediaError::BadProbe(_)));
-        assert!(error.to_string().starts_with("ffprobe returned unreadable output"));
+        assert!(error
+            .to_string()
+            .starts_with("ffprobe returned unreadable output"));
     }
 }

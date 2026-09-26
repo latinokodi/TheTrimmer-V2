@@ -26,12 +26,12 @@
 
 use std::sync::Arc;
 
+use trimmer_core::VerifyPolicy;
 use trimmer_core::{format_seconds, CutMode, CutPlan, MediaPath, SegmentId};
 use trimmer_media::{CancelFlag, Progress, ProgressSink, RunOptions};
-use trimmer_core::VerifyPolicy;
 use trimmer_verify::{AuditManifest, CutFacts, VerifyReport};
 
-use crate::ports::{cut_request_with, Clock, MediaEngine, Measurer, SegmentCutRequest};
+use crate::ports::{cut_request_with, Clock, Measurer, MediaEngine, SegmentCutRequest};
 use crate::workspace::Workspace;
 use crate::AppResult;
 
@@ -164,7 +164,11 @@ impl JobStatus {
                 };
                 format!(
                     "{frames} frames in {seconds:.1}s, checks {} {tail}",
-                    if verification.ok() { "passed" } else { "FAILED" }
+                    if verification.ok() {
+                        "passed"
+                    } else {
+                        "FAILED"
+                    }
                 )
             }
             Self::Unverified {
@@ -349,7 +353,10 @@ impl BatchOutcome {
     /// How many succeeded.
     #[must_use]
     pub fn succeeded(&self) -> usize {
-        self.jobs.iter().filter(|(_, _, _, s)| s.is_success()).count()
+        self.jobs
+            .iter()
+            .filter(|(_, _, _, s)| s.is_success())
+            .count()
     }
 
     /// How many wrote a file that failed a check.
@@ -391,7 +398,10 @@ impl BatchOutcome {
         self.jobs
             .iter()
             .filter(|(_, _, _, status)| {
-                matches!(status, JobStatus::Failed { .. } | JobStatus::Unverified { .. })
+                matches!(
+                    status,
+                    JobStatus::Failed { .. } | JobStatus::Unverified { .. }
+                )
             })
             .collect()
     }
@@ -409,8 +419,10 @@ impl BatchOutcome {
             self.skipped()
         )];
         if self.cancelled {
-            lines.push("            the run was cancelled; the segments below were not attempted"
-                .to_owned());
+            lines.push(
+                "            the run was cancelled; the segments below were not attempted"
+                    .to_owned(),
+            );
         }
         lines.push(format!(
             "delivered   {} frames, {}",
@@ -531,9 +543,7 @@ impl Queue {
         let mut delivered_seconds = 0.0f64;
         let mut cancelled = false;
 
-        sink.event(QueueEvent::Started {
-            total: order.len(),
-        });
+        sink.event(QueueEvent::Started { total: order.len() });
 
         for (index, id) in order.iter().enumerate() {
             let job = JobId(index);
@@ -563,7 +573,9 @@ impl Queue {
                 state: JobState::Planning,
             });
 
-            let status = self.run_one(workspace, *id, job, &name, options, &sink).await;
+            let status = self
+                .run_one(workspace, *id, job, &name, options, &sink)
+                .await;
             if let Some((frames, seconds)) = delivered_of(&status) {
                 delivered_frames += frames;
                 delivered_seconds += seconds;
@@ -598,7 +610,13 @@ impl Queue {
                 status: status.clone(),
             });
             let stop = options.stop_on_error
-                && matches!(status, JobStatus::Failed { cancelled: false, .. });
+                && matches!(
+                    status,
+                    JobStatus::Failed {
+                        cancelled: false,
+                        ..
+                    }
+                );
             jobs.push((job, *id, name, status));
             if stop || cancelled {
                 cancelled = cancelled || stop;
@@ -709,7 +727,11 @@ impl Queue {
         // The wall-clock cost of the cut is the sum of its steps, not the difference between two
         // reads of the clock: a batch reports per-segment timings, and the steps are what the
         // engine actually measured.
-        let elapsed = cut.steps.iter().filter_map(|step| step.seconds).sum::<f64>();
+        let elapsed = cut
+            .steps
+            .iter()
+            .filter_map(|step| step.seconds)
+            .sum::<f64>();
 
         if verification.ok() {
             JobStatus::Succeeded {
@@ -804,10 +826,14 @@ impl ProgressSink for JobSink {
 fn delivered_of(status: &JobStatus) -> Option<(i64, f64)> {
     match status {
         JobStatus::Succeeded {
-            frames, verification, ..
+            frames,
+            verification,
+            ..
         }
         | JobStatus::Unverified {
-            frames, verification, ..
+            frames,
+            verification,
+            ..
         } => {
             let _ = verification;
             Some((*frames, 0.0))

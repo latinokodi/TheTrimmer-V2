@@ -29,7 +29,8 @@ static IDENTITY: fn(&MediaPath) -> String = identity;
 
 /// A resolver that pretends the masters live on a Linux NAS instead.
 fn remapped(path: &MediaPath) -> String {
-    path.to_string().replace(r"H:\THEROLLUPFILES", "/mnt/masters")
+    path.to_string()
+        .replace(r"H:\THEROLLUPFILES", "/mnt/masters")
 }
 
 /// A `'static` reference to [`remapped`].
@@ -333,14 +334,20 @@ fn premiere_xml_marks_ntsc_rates_and_only_ntsc_rates() {
         media_path_for: &IDENTITY,
     };
     let body = export_premiere_xml(&ntsc_request).expect("exports").body;
-    assert!(body.contains("<rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>"), "{body}");
+    assert!(
+        body.contains("<rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>"),
+        "{body}"
+    );
     assert!(!body.contains("<ntsc>FALSE</ntsc>"), "{body}");
 
     let pal = project();
     let pal_segments = [Segment::new(MASTER, "cold open", 0, 50)];
     let pal_request = request(&pal, &pal_segments);
     let body = export_premiere_xml(&pal_request).expect("exports").body;
-    assert!(body.contains("<rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>"), "{body}");
+    assert!(
+        body.contains("<rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>"),
+        "{body}"
+    );
     assert!(!body.contains("<ntsc>TRUE</ntsc>"), "{body}");
 }
 
@@ -352,8 +359,14 @@ fn premiere_xml_names_every_clipitem_and_file_element() {
 
     let body = export_premiere_xml(&request).expect("exports").body;
     for index in 1..=3 {
-        assert!(body.contains(&format!("<clipitem id=\"clipitem-{index}\">")), "{body}");
-        assert!(body.contains(&format!("<file id=\"file-{index}\">")), "{body}");
+        assert!(
+            body.contains(&format!("<clipitem id=\"clipitem-{index}\">")),
+            "{body}"
+        );
+        assert!(
+            body.contains(&format!("<file id=\"file-{index}\">")),
+            "{body}"
+        );
     }
     // The clipitem duration is the master clip's length, which is what Premiere trims into.
     assert!(body.contains("<duration>10000</duration>"), "{body}");
@@ -366,10 +379,18 @@ fn a_control_character_is_stripped_out_of_xml_and_reported_rather_than_written()
     let request = request(&project, &segments);
 
     let product = export_premiere_xml(&request).expect("exports");
-    assert!(product.body.contains("<name>cold open</name>"), "{}", product.body);
+    assert!(
+        product.body.contains("<name>cold open</name>"),
+        "{}",
+        product.body
+    );
     assert!(!product.body.contains('\u{7}'));
     assert_eq!(product.warnings.len(), 1);
-    assert!(product.warnings[0].contains("control"), "{:?}", product.warnings);
+    assert!(
+        product.warnings[0].contains("control"),
+        "{:?}",
+        product.warnings
+    );
 }
 
 #[test]
@@ -386,9 +407,17 @@ fn a_negative_timeline_start_is_clamped_to_zero_and_reported() {
     };
 
     let product = export_premiere_xml(&request).expect("exports");
-    assert!(product.body.contains("<start>0</start>"), "{}", product.body);
+    assert!(
+        product.body.contains("<start>0</start>"),
+        "{}",
+        product.body
+    );
     assert_eq!(product.warnings.len(), 1);
-    assert!(product.warnings[0].contains("-25"), "{:?}", product.warnings);
+    assert!(
+        product.warnings[0].contains("-25"),
+        "{:?}",
+        product.warnings
+    );
 }
 
 // --- FCPXML ---------------------------------------------------------------------------
@@ -424,7 +453,10 @@ fn fcpxml_writes_a_hundred_frames_at_twenty_five_as_exactly_four_over_one() {
     assert!(body.contains("duration=\"4/1s\""), "{body}");
     assert!(body.contains("tcFormat=\"NDF\""), "{body}");
     assert!(body.contains("frameDuration=\"1/25s\""), "{body}");
-    assert!(!body.contains("0.033"), "no floating point time reached the document:\n{body}");
+    assert!(
+        !body.contains("0.033"),
+        "no floating point time reached the document:\n{body}"
+    );
 }
 
 #[test]
@@ -467,7 +499,10 @@ fn fcpxml_offsets_and_starts_are_rational_seconds_on_the_right_grid() {
     assert!(body.contains("offset=\"16/5s\""), "{body}");
     assert!(body.contains("duration=\"4/5s\""), "{body}");
     // The sequence is 100 frames, which is 4 s.
-    assert!(body.contains("<sequence format=\"r1\" duration=\"4/1s\""), "{body}");
+    assert!(
+        body.contains("<sequence format=\"r1\" duration=\"4/1s\""),
+        "{body}"
+    );
 }
 
 #[test]
@@ -496,9 +531,8 @@ fn edl_numbers_events_in_three_digits_from_one_and_lays_out_the_columns() {
 
     let body = export_edl(&request).expect("exports").body;
     let reel = format!("{:<8}", "AX");
-    let expected_second = format!(
-        "002  {reel} V     C        00:00:08:00 00:00:09:04 00:00:02:00 00:00:03:04"
-    );
+    let expected_second =
+        format!("002  {reel} V     C        00:00:08:00 00:00:09:04 00:00:02:00 00:00:03:04");
     assert!(body.contains(&expected_second), "{body}");
     assert!(body.contains("003"), "{body}");
     assert!(!body.contains("004"), "{body}");
@@ -511,7 +545,10 @@ fn edl_out_points_are_inclusive_so_a_fifty_frame_event_ends_on_frame_forty_nine(
     let request = request(&project, &segments);
 
     let body = export_edl(&request).expect("exports").body;
-    let line = body.lines().find(|line| line.starts_with("001")).expect("event 001");
+    let line = body
+        .lines()
+        .find(|line| line.starts_with("001"))
+        .expect("event 001");
     let fields: Vec<&str> = line.split_whitespace().collect();
     assert_eq!(
         fields,
@@ -542,7 +579,10 @@ fn edl_switches_between_drop_and_non_drop_with_its_timecodes() {
         media_path_for: &IDENTITY,
     };
     let drop = export_edl(&drop_request).expect("exports").body;
-    assert!(drop.starts_with("TITLE: Rollup\nFCM: DROP FRAME\n"), "{drop}");
+    assert!(
+        drop.starts_with("TITLE: Rollup\nFCM: DROP FRAME\n"),
+        "{drop}"
+    );
     assert!(drop.contains("00:00:01;19"), "{drop}");
     assert!(!drop.contains("00:00:01:19"), "{drop}");
 
@@ -564,7 +604,11 @@ fn edl_names_the_file_behind_every_event_because_the_reel_column_cannot() {
     let request = request(&project, &segments);
 
     let body = export_edl(&request).expect("exports").body;
-    assert_eq!(body.matches("* FROM CLIP NAME: master.mp4").count(), 3, "{body}");
+    assert_eq!(
+        body.matches("* FROM CLIP NAME: master.mp4").count(),
+        3,
+        "{body}"
+    );
 }
 
 // --- CSV ------------------------------------------------------------------------------
@@ -576,10 +620,7 @@ fn csv_quotes_a_name_containing_a_comma_and_a_quote_to_rfc_4180() {
     let request = request(&project, &segments);
 
     let body = export_csv(&request).expect("exports").body;
-    assert!(
-        body.contains("\"begging, take \"\"two\"\"\""),
-        "{body}"
-    );
+    assert!(body.contains("\"begging, take \"\"two\"\"\""), "{body}");
 }
 
 #[test]
@@ -590,7 +631,11 @@ fn csv_separates_rows_with_carriage_return_and_line_feed() {
 
     let body = export_csv(&request).expect("exports").body;
     let rows: Vec<&str> = body.split("\r\n").collect();
-    assert_eq!(rows.len(), 5, "a header and three rows, then the terminator:\n{body}");
+    assert_eq!(
+        rows.len(),
+        5,
+        "a header and three rows, then the terminator:\n{body}"
+    );
     assert_eq!(rows[4], "");
     assert!(rows.iter().all(|row| !row.contains('\n')));
 }
@@ -646,7 +691,10 @@ fn a_segment_on_an_unprobed_source_is_skipped_with_a_warning_and_the_rest_still_
 
     for format in ExportFormat::ALL {
         let product = export(&request, format).expect("still exports");
-        assert_eq!(product.clip_count, 2, "{format:?} skipped the wrong number of segments");
+        assert_eq!(
+            product.clip_count, 2,
+            "{format:?} skipped the wrong number of segments"
+        );
         assert_eq!(product.total_frames, 70, "{format:?}");
         assert_eq!(product.warnings.len(), 1, "{:?}", product.warnings);
         let warning = &product.warnings[0];
@@ -664,7 +712,10 @@ fn a_rate_mismatch_is_a_warning_and_the_frames_are_not_rescaled() {
 
     let product = export_premiere_xml(&request).expect("exports");
     assert_eq!(product.clip_count, 1);
-    assert_eq!(product.total_frames, 50, "a mismatched rate must not rescale the cut");
+    assert_eq!(
+        product.total_frames, 50,
+        "a mismatched rate must not rescale the cut"
+    );
     assert_eq!(product.warnings.len(), 1, "{:?}", product.warnings);
     let warning = &product.warnings[0];
     assert!(warning.contains("cold open"), "{warning}");
@@ -672,7 +723,9 @@ fn a_rate_mismatch_is_a_warning_and_the_frames_are_not_rescaled() {
     assert!(warning.contains(" 25 fps"), "{warning}");
     // The clip keeps its own source rate, so its rate element is 30/TRUE, not 25/FALSE.
     assert!(
-        product.body.contains("<rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>"),
+        product
+            .body
+            .contains("<rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>"),
         "{}",
         product.body
     );
@@ -715,7 +768,11 @@ fn an_open_ended_segment_runs_to_the_end_of_its_source() {
 
     let product = export_premiere_xml(&request).expect("exports");
     assert_eq!(product.total_frames, 50);
-    assert!(product.body.contains("<out>10000</out>"), "{}", product.body);
+    assert!(
+        product.body.contains("<out>10000</out>"),
+        "{}",
+        product.body
+    );
 }
 
 #[test]
@@ -726,10 +783,17 @@ fn a_mark_past_the_end_of_the_source_is_clamped_and_reported() {
 
     let product = export_premiere_xml(&request).expect("exports");
     assert_eq!(product.total_frames, 20);
-    assert!(product.body.contains("<out>10000</out>"), "{}", product.body);
+    assert!(
+        product.body.contains("<out>10000</out>"),
+        "{}",
+        product.body
+    );
     assert_eq!(product.warnings.len(), 1, "{:?}", product.warnings);
     assert!(
-        product.warnings.iter().any(|warning| warning.contains("clamped")),
+        product
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("clamped")),
         "{:?}",
         product.warnings
     );

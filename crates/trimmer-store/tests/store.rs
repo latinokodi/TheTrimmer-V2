@@ -9,11 +9,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use trimmer_app::{BatchOutcome, JobId, JobStatus, ProjectStore};
+use trimmer_core::timecode::FrameRate;
 use trimmer_core::{
     MediaInfo, MediaPath, Project, ProjectId, Segment, SegmentId, SegmentSource, Timescale,
     VerifyPolicy,
 };
-use trimmer_core::timecode::FrameRate;
 use trimmer_store::{document, schema, SqliteStore, StoreError};
 use trimmer_verify::AuditManifest;
 use uuid::Uuid;
@@ -79,13 +79,12 @@ fn media(path: &str) -> MediaInfo {
 /// A project with one source, one segment and the standard preset library.
 fn project(name: &str, now: i64) -> Project {
     let mut project = Project::new(name, "Fernando", now);
-    project
-        .upsert_source(SegmentSource {
-            path: MediaPath::new(r"H:\masters\andy.mp4"),
-            media: Some(media(r"H:\masters\andy.mp4")),
-            available: true,
-            label: Some("Andy, day one".to_owned()),
-        });
+    project.upsert_source(SegmentSource {
+        path: MediaPath::new(r"H:\masters\andy.mp4"),
+        media: Some(media(r"H:\masters\andy.mp4")),
+        available: true,
+        label: Some("Andy, day one".to_owned()),
+    });
     project
         .add_segment(Segment::new(
             r"H:\masters\andy.mp4",
@@ -337,8 +336,10 @@ fn delete_removes_sources_and_segments_by_cascade() {
     let (sources, segments, presets): (i64, i64, i64) = store
         .with_connection(|conn| {
             let count = |table: &str| -> i64 {
-                conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
-                    .expect("a count")
+                conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .expect("a count")
             };
             (count("sources"), count("segments"), count("presets"))
         })
@@ -423,10 +424,17 @@ fn a_failed_save_leaves_the_previous_state_intact() {
     broken.name = "Atomic, renamed".to_owned();
     let duplicate = broken.segments[0].clone();
     broken.segments.push(duplicate);
-    let error = store.save(&broken).expect_err("the duplicate identity is refused");
-    assert!(error.to_lowercase().contains("unique") || error.contains("constraint"), "{error}");
+    let error = store
+        .save(&broken)
+        .expect_err("the duplicate identity is refused");
+    assert!(
+        error.to_lowercase().contains("unique") || error.contains("constraint"),
+        "{error}"
+    );
 
-    let loaded = store.load(original.id).expect("the old state is still readable");
+    let loaded = store
+        .load(original.id)
+        .expect("the old state is still readable");
     assert_eq!(loaded, original, "the rollback restored every row");
     assert_eq!(loaded.name, "Atomic");
     assert_eq!(loaded.segments.len(), 1);
@@ -511,7 +519,10 @@ fn foreign_keys_are_on() {
                 .expect("a flag")
         })
         .expect("the connection is available");
-    assert_eq!(enabled, 1, "without this every ON DELETE CASCADE is a comment");
+    assert_eq!(
+        enabled, 1,
+        "without this every ON DELETE CASCADE is a comment"
+    );
 }
 
 #[test]
@@ -574,7 +585,12 @@ fn run_counts_are_derived_from_the_items() {
     let original = project("Counted", 1);
     store.save(&original).expect("saved");
     store
-        .record_run(original.id, "Fernando", 1_700_000_000, &outcome(original.id, 5))
+        .record_run(
+            original.id,
+            "Fernando",
+            1_700_000_000,
+            &outcome(original.id, 5),
+        )
         .expect("recorded");
 
     let runs = store.list_runs(original.id).expect("listed");
@@ -620,7 +636,10 @@ fn a_clean_run_is_recorded_as_clean() {
         .record_run(original.id, "Fernando", 7, &batch)
         .expect("recorded");
     assert!(store.load_run(id).expect("readable").is_some());
-    assert_eq!(store.list_runs(original.id).expect("listed")[0].status, "clean");
+    assert_eq!(
+        store.list_runs(original.id).expect("listed")[0].status,
+        "clean"
+    );
 }
 
 #[test]
@@ -662,8 +681,10 @@ fn deleting_a_project_takes_its_runs_with_it() {
     let (runs, items): (i64, i64) = store
         .with_connection(|conn| {
             let count = |table: &str| -> i64 {
-                conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
-                    .expect("a count")
+                conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .expect("a count")
             };
             (count("runs"), count("runs_items"))
         })
@@ -696,7 +717,10 @@ fn the_compact_document_is_one_line_and_parses() {
 fn a_document_that_is_not_a_project_is_refused_with_a_position() {
     let error = document::from_json("{\"nope\": true}").expect_err("refused");
     let message = error.to_string();
-    assert!(message.contains("line") || message.contains("missing field"), "{message}");
+    assert!(
+        message.contains("line") || message.contains("missing field"),
+        "{message}"
+    );
 }
 
 #[test]
@@ -748,7 +772,10 @@ fn a_house_preset_survives_a_round_trip_under_its_own_name() {
     let loaded = store.load(original.id).expect("loaded");
     assert_eq!(loaded.presets.len(), 1);
     assert_eq!(
-        loaded.presets.get("house").map(|preset| preset.description.clone()),
+        loaded
+            .presets
+            .get("house")
+            .map(|preset| preset.description.clone()),
         Some("the house look".to_owned())
     );
     assert_eq!(loaded.default_preset, "house");

@@ -1,0 +1,176 @@
+name: ci
+
+# What this pipeline is for, and what it deliberately is not.
+#
+# It runs on every push and pull request, on Windows only, and it checks four things in the order
+# that a failure is cheapest to fix: formatting, lints, the test suite, and a *real cut*. That last
+# step is the point of the whole file. Everything else in this workspace tests a decision; the
+# end-to-end test generates a clip with ffmpeg, cuts a segment through the head-patch method, and
+# asserts that the copied body is byte-identical to the source and that the head landed on the mark.
+# It is the only check that would have caught the two defects that cost the most time in V1 — a
+# missing `-video_track_timescale` producing slow motion with exit code 0, and `-frames:v` dropping a
+# frame in decode order — and it is the reason the runner is `windows-latest` rather than something
+# cheaper.
+#
+# The differential oracle runs here too, and it needs the V1 engine. That checkout is not in this
+# repository, so the job fetches it and skips the oracle loudly when it cannot: a test that cannot
+# tell "not applicable" from "the engine is wrong" gets deleted by the first person it
+# inconveniences.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Fail on a warning rather than letting one accumulate.
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  rust:
+    name: rust
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: x86_64-pc-windows-msvc
+
+      # ffmpeg is what the end-to-end test cuts with, and what the product cannot run without.
+      # `choco` is the fastest route on a GitHub Windows runner.
+      - name: Install ffmpeg
+        run: choco install ffmpeg --no-progress -y
+        shell: pwsh
+
+      - name: Report the toolchain
+        run: |
+          rustc --version
+          cargo --version
+          ffmpeg -version | Select-Object -First 1
+          ffprobe -version | Select-Object -First 1
+        shell: pwsh
+
+      - name: Cache the build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Formatting
+        run: cargo fmt --all --check
+
+      - name: Lints
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # The V1 engine, for the differential oracle. A failure here is not fatal: the oracle skips
+      # with a printed reason, and the job says so rather than pretending it ran.
+      - name: Fetch the V1 engine for the oracle
+        continue-on-error: true
+        run: |
+          git clone --depth 1 https://github.com/thetrimmer/thetrimmer-v1 "$env:RUNNER_TEMP\thetrimmer-v1"
+          echo "THE_TRIMMER_V1_ROOT=$env:RUNNER_TEMP\thetrimmer-v1" >> $env:GITHUB_ENV
+        shell: pwsh
+
+      - name: Tests
+        run: cargo test --workspace --all-targets
+        shell: pwsh
+
+      - name: A real cut
+        run: |
+          # Named explicitly so the media path is exercised even if a future change to the test
+          # filter would otherwise skip it.
+          cargo test -p trimmer-media --test end_to_end -- --nocapture
+        shell: pwsh
+
+  web:
+    name: web
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install
+        working-directory: apps/web
+        run: npm ci --no-audit --no-fund
+
+      - name: Types
+        working-directory: apps/web
+        run: npx tsc --noEmit
+
+      - name: Build
+        working-directory: apps/web
+        run: npm run build
+
+  # The packaging job is separate and manual: a signed installer needs a certificate, and a
+  # certificate needs a secret this repository does not hold. It runs on a tag, and it will fail
+  # with a clear message about the missing signing material rather than producing an unsigned
+  # installer that a user's SmartScreen will refuse.
+  bundle:
+    name: bundle
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    timeout-minutes: 60
+    needs: [rust, web]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install ffmpeg
+        run: choco install ffmpeg --no-progress -y
+        shell: pwsh
+
+      - name: Build the interface
+        working-directory: apps/web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Check the signing material is present
+        run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+            Write-Error "TAURI_SIGNING_PRIVATE_KEY is not set. An unsigned installer is refused by SmartScreen, so this job stops rather than producing one."
+            exit 1
+          }
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
+      - name: Build the installers
+        working-directory: apps/desktop/src-tauri
+        run: npx --yes @tauri-apps/cli@^2 build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: thetrimmer-installers
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error

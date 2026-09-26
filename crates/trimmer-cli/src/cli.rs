@@ -72,8 +72,7 @@ pub enum Command {
     /// Check that this machine can cut, and say what it found.
     #[command(
         long_about = "Resolves ffmpeg and ffprobe, prints the build's version and the capability \
-                      report, says where the project store lives and whether a licence was \
-                      found.\n\n\
+                      report, and says where the project store lives.\n\n\
                       Exits 0 when ffmpeg and ffprobe both resolve and the build has libx264, \
                       and 1 otherwise. That is what makes it usable as a preflight check in a \
                       script."
@@ -135,19 +134,10 @@ pub enum Command {
     )]
     Verify(VerifyArgs),
 
-    /// Read, install and identify licences.
-    #[command(
-        long_about = "An offline licence is a signed document and a machine identity. `status` \
-                      verifies the installed one, `install` copies a key file into the config \
-                      directory, and `machine` prints this machine's identity — the value a \
-                      licence has to name to be bound to this machine."
-    )]
-    Licence(LicenceArgs),
-
     /// Serve the local HTTP/JSON API.
     #[command(
         long_about = "Starts the headless daemon in the foreground. It binds to 127.0.0.1 only: \
-                      the API can cut files, delete projects and read a licence, so it is a \
+                      the API can cut files and delete projects, so it is a \
                       local control surface and not a service.\n\n\
                       The token must be at least 16 characters."
     )]
@@ -172,12 +162,21 @@ pub struct ProbeArgs {
     pub video: PathBuf,
 
     /// Print the machine-readable form instead of one line per fact.
-    #[arg(long, long_help = "Emits a JSON object on stdout with every field the probe found. \
-                             Intended for a script; the human form is the default.")]
+    #[arg(
+        long,
+        long_help = "Emits a JSON object on stdout with every field the probe found. \
+                             Intended for a script; the human form is the default."
+    )]
     pub json: bool,
 }
 
 /// `cut`
+///
+/// The five booleans are the command's own flags, not a state machine: `--out-exclusive`,
+/// `--no-srt`, `--dry-run`, `--yes` and the global `--verbose` are each an independent
+/// answer to an independent question, and folding them into an enum would make the command line
+/// worse to read rather than the struct better.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Args)]
 pub struct CutArgs {
     /// The source to cut from.
@@ -185,16 +184,24 @@ pub struct CutArgs {
     pub video: PathBuf,
 
     /// The first frame to keep, inclusive, as `HH:MM:SS:FF`.
-    #[arg(long = "in", value_name = "TC", long_help = "Accepts `HH:MM:SS:FF`, `MM:SS:FF` or \
+    #[arg(
+        long = "in",
+        value_name = "TC",
+        long_help = "Accepts `HH:MM:SS:FF`, `MM:SS:FF` or \
                                                        a bare frame count, on the source's own \
-                                                       frame rate.")]
+                                                       frame rate."
+    )]
     pub in_point: String,
 
     /// The last frame to keep, as `HH:MM:SS:FF`.
-    #[arg(long = "out", value_name = "TC", long_help = "Inclusive by default: the frame at this \
+    #[arg(
+        long = "out",
+        value_name = "TC",
+        long_help = "Inclusive by default: the frame at this \
                                                         timecode is the last one kept. Add \
                                                         `--out-exclusive` for the half-open \
-                                                        reading.")]
+                                                        reading."
+    )]
     pub out_point: String,
 
     /// Treat the out point as one past the last frame kept.
@@ -221,9 +228,13 @@ pub struct CutArgs {
     pub preset: String,
 
     /// Override the encoder's quality for a re-encoded head.
-    #[arg(long, value_name = "N", long_help = "Constant rate factor. Lower is better and \
+    #[arg(
+        long,
+        value_name = "N",
+        long_help = "Constant rate factor. Lower is better and \
                                                bigger; 18 is visually lossless for most \
-                                               material.")]
+                                               material."
+    )]
     pub crf: Option<u8>,
 
     /// Frames of handle to add either side, for a crossfade.
@@ -265,8 +276,11 @@ pub struct BatchArgs {
     pub segments: Vec<String>,
 
     /// Stop at the first failure instead of finishing the batch.
-    #[arg(long, long_help = "Off by default, because one bad segment should not cost a studio \
-                             the other ninety-nine.")]
+    #[arg(
+        long,
+        long_help = "Off by default, because one bad segment should not cost a studio \
+                             the other ninety-nine."
+    )]
     pub stop_on_error: bool,
 
     /// Skip verification even when the project asks for it.
@@ -432,40 +446,17 @@ pub struct VerifyArgs {
     pub output: PathBuf,
 
     /// The plan the cut was made from, as JSON.
-    #[arg(long, value_name = "JSON", long_help = "A `CutPlan` as `project show --plan` writes \
-                                                  it, or as a run's audit record holds it.")]
+    #[arg(
+        long,
+        value_name = "JSON",
+        long_help = "A `CutPlan` as `project show --plan` writes \
+                                                  it, or as a run's audit record holds it."
+    )]
     pub plan: PathBuf,
 
     /// How hard to check.
     #[arg(long, value_enum, default_value_t = VerifyArg::Strict, value_name = "POLICY")]
     pub policy: VerifyArg,
-}
-
-/// `licence`
-#[derive(Debug, Args)]
-pub struct LicenceArgs {
-    /// What to do.
-    #[command(subcommand)]
-    pub command: LicenceCommand,
-}
-
-/// Every `licence` subcommand.
-#[derive(Debug, Subcommand)]
-pub enum LicenceCommand {
-    /// Print the installed licence and whether it is good right now.
-    Status,
-    /// Copy a key file into the configuration directory.
-    Install(LicenceInstallArgs),
-    /// Print this machine's identity.
-    Machine,
-}
-
-/// `licence install`
-#[derive(Debug, Args)]
-pub struct LicenceInstallArgs {
-    /// The key file, as it arrived.
-    #[arg(value_name = "KEY-FILE")]
-    pub key_file: PathBuf,
 }
 
 /// `daemon`

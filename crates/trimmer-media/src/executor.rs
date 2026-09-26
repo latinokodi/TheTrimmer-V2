@@ -24,10 +24,10 @@
 
 use std::path::{Path, PathBuf};
 
+use trimmer_core::{apply_calibration, plan_cut, KeyframeGrid};
 use trimmer_core::{
     CutMode, CutPlan, DeliveryPreset, Geometry, MediaInfo, MediaPath, Segment, VideoTreatment,
 };
-use trimmer_core::{apply_calibration, plan_cut, KeyframeGrid};
 
 use crate::probe::Prober;
 use crate::process::{Progress, RunOptions};
@@ -231,7 +231,11 @@ impl CutExecutor {
         output: &Path,
         options: &RunOptions,
     ) -> MediaResult<CutOutcome> {
-        let plan = plan_cut(media, segment, &self.cached_keyframes(media, segment, options).await?)?;
+        let plan = plan_cut(
+            media,
+            segment,
+            &self.cached_keyframes(media, segment, options).await?,
+        )?;
         self.cut_with_plan(media, &plan, preset, config, output, options)
             .await
     }
@@ -249,10 +253,10 @@ impl CutExecutor {
     ) -> MediaResult<KeyframeGrid> {
         let end = segment.end_frame.unwrap_or(media.frame_count);
         let window = media.rate.frames_in(trimmer_core::plan::MAX_HEAD_SECONDS);
-        let to = (segment.start_frame + window).min(end).max(segment.start_frame + 1);
-        self.prober
-            .keyframes(media, segment.start_frame, to)
-            .await
+        let to = (segment.start_frame + window)
+            .min(end)
+            .max(segment.start_frame + 1);
+        self.prober.keyframes(media, segment.start_frame, to).await
     }
 
     /// Carry out a plan that has already been made.
@@ -290,7 +294,10 @@ impl CutExecutor {
         }
 
         match plan.mode {
-            CutMode::Copy => self.copy_segment(media, plan, config, output, options).await,
+            CutMode::Copy => {
+                self.copy_segment(media, plan, config, output, options)
+                    .await
+            }
             CutMode::Reencode => {
                 self.reencode_segment(media, plan, preset, config, output, options)
                     .await
@@ -336,7 +343,8 @@ impl CutExecutor {
     ) -> MediaResult<CutOutcome> {
         let prepared = prepare_copy(media, plan, config);
         let mut steps = Vec::new();
-        self.run_step(&prepared, output, options, &mut steps).await?;
+        self.run_step(&prepared, output, options, &mut steps)
+            .await?;
 
         let facts = self.prober.probe(output).await?;
         Ok(CutOutcome {
@@ -345,9 +353,7 @@ impl CutExecutor {
             steps,
             frame_count: facts.frame_count,
             overshoot: (facts.frame_count - plan.requested_frames()).max(0),
-            notes: vec![
-                "the in point lands on a keyframe, so no frame was re-encoded".to_owned(),
-            ],
+            notes: vec!["the in point lands on a keyframe, so no frame was re-encoded".to_owned()],
         })
     }
 
@@ -363,7 +369,8 @@ impl CutExecutor {
     ) -> MediaResult<CutOutcome> {
         let prepared = prepare_reencode(media, plan, preset, config);
         let mut steps = Vec::new();
-        self.run_step(&prepared, output, options, &mut steps).await?;
+        self.run_step(&prepared, output, options, &mut steps)
+            .await?;
 
         let facts = self.prober.probe(output).await?;
         Ok(CutOutcome {
@@ -416,18 +423,22 @@ impl CutExecutor {
         let body_steps = prepare_body(media, plan, config);
         if body_steps.len() == 1 {
             // No audio: the picture copy is the body.
-            self.run_step(&body_steps[0], &body, options, &mut steps).await?;
+            self.run_step(&body_steps[0], &body, options, &mut steps)
+                .await?;
         } else {
             let picture = work.path().join("body-picture.mp4");
             let sound = work.path().join("body-sound.m4a");
-            self.run_step(&body_steps[0], &picture, options, &mut steps).await?;
-            self.run_step(&body_steps[1], &sound, options, &mut steps).await?;
-            self.run_step(&body_steps[2], &body, options, &mut steps).await?;
+            self.run_step(&body_steps[0], &picture, options, &mut steps)
+                .await?;
+            self.run_step(&body_steps[1], &sound, options, &mut steps)
+                .await?;
+            self.run_step(&body_steps[2], &body, options, &mut steps)
+                .await?;
         }
 
         // 3. The join, with the head's duration stated rather than inferred.
-        let head_seconds = plan.head_frames as f64 * plan.rate_denominator as f64
-            / plan.rate_numerator as f64;
+        let head_seconds =
+            plan.head_frames as f64 * plan.rate_denominator as f64 / plan.rate_numerator as f64;
         let listing = work.path().join("concat.txt");
         std::fs::write(&listing, concat_list(&head, &body, head_seconds)).map_err(|error| {
             MediaError::WorkingFile {
@@ -436,7 +447,8 @@ impl CutExecutor {
             }
         })?;
         let prepared = prepare_join(&listing);
-        self.run_step(&prepared, &joined, options, &mut steps).await?;
+        self.run_step(&prepared, &joined, options, &mut steps)
+            .await?;
 
         // 4. Publish.
         if output.exists() {
@@ -445,16 +457,17 @@ impl CutExecutor {
                 reason: error.to_string(),
             })?;
         }
-        std::fs::rename(&joined, output).or_else(|_| {
-            // A rename across volumes fails on Windows; copy then.
-            std::fs::copy(&joined, output)
-                .map(|_| ())
-                .and_then(|()| std::fs::remove_file(&joined))
-        })
-        .map_err(|error| MediaError::WorkingFile {
-            path: output.display().to_string(),
-            reason: error.to_string(),
-        })?;
+        std::fs::rename(&joined, output)
+            .or_else(|_| {
+                // A rename across volumes fails on Windows; copy then.
+                std::fs::copy(&joined, output)
+                    .map(|_| ())
+                    .and_then(|()| std::fs::remove_file(&joined))
+            })
+            .map_err(|error| MediaError::WorkingFile {
+                path: output.display().to_string(),
+                reason: error.to_string(),
+            })?;
 
         let facts = self.prober.probe(output).await?;
         let overshoot = (facts.frame_count - plan.requested_frames()).max(0);
@@ -478,7 +491,7 @@ impl CutExecutor {
     async fn run_step(
         &self,
         prepared: &Prepared,
-        _output: &Path,
+        output: &Path,
         options: &RunOptions,
         steps: &mut Vec<ExecutionStep>,
     ) -> MediaResult<()> {
@@ -486,19 +499,28 @@ impl CutExecutor {
             label: prepared.label.clone(),
             ..options.clone()
         };
+        // The output path is appended here rather than by each builder. A builder is a pure function
+        // of the plan and knows nothing about where a file is going, which is what lets it be tested
+        // as data; the caller that knows the destination is the one that names it.
+        //
+        // An earlier version had the builders omit the path and the caller forget it, so every step
+        // failed with `At least one output file must be specified`. No test of the argument *vectors*
+        // could have caught that — which is precisely what the end-to-end test is for.
+        let mut args: Vec<std::ffi::OsString> = prepared.os_args();
+        args.push(output.as_os_str().to_os_string());
+
         let started = std::time::Instant::now();
         let result = self
             .runner
-            .run(
-                self.tools.path(ToolSet::Ffmpeg),
-                &prepared.os_args(),
-                &step_options,
-            )
+            .run(self.tools.path(ToolSet::Ffmpeg), &args, &step_options)
             .await;
+
+        let mut recorded = prepared.args.clone();
+        recorded.push(output.display().to_string());
         steps.push(ExecutionStep {
             label: prepared.label.clone(),
             program: self.tools.path(ToolSet::Ffmpeg).display().to_string(),
-            args: prepared.args.clone(),
+            args: recorded,
             seconds: Some(started.elapsed().as_secs_f64()),
             ok: Some(result.is_ok()),
         });
@@ -523,9 +545,10 @@ impl WorkDir {
         let name = format!(
             ".trimmer-{}-{}",
             std::process::id(),
-            output
-                .file_stem()
-                .map_or_else(|| "work".to_owned(), |stem| stem.to_string_lossy().into_owned())
+            output.file_stem().map_or_else(
+                || "work".to_owned(),
+                |stem| stem.to_string_lossy().into_owned()
+            )
         );
         let path = parent.join(name);
         std::fs::create_dir_all(&path).map_err(|error| MediaError::WorkingFile {
@@ -655,8 +678,7 @@ pub fn prepare_body(media: &MediaInfo, plan: &CutPlan, _config: &CutConfig) -> V
         return Vec::new();
     };
     let body_frames = plan.body_frames.max(0);
-    let duration = body_frames as f64 * plan.rate_denominator as f64
-        / plan.rate_numerator as f64;
+    let duration = body_frames as f64 * plan.rate_denominator as f64 / plan.rate_numerator as f64;
 
     let picture_args = {
         let mut args = common_head_args();
@@ -782,8 +804,11 @@ pub fn prepare_copy(media: &MediaInfo, plan: &CutPlan, config: &CutConfig) -> Pr
         "-c".to_owned(),
         "copy".to_owned(),
         "-t".to_owned(),
-        format!("{:.6}", (plan.requested_frames() + 1) as f64 * plan.rate_denominator as f64
-            / plan.rate_numerator as f64),
+        format!(
+            "{:.6}",
+            (plan.requested_frames() + 1) as f64 * plan.rate_denominator as f64
+                / plan.rate_numerator as f64
+        ),
     ]);
     if config.faststart {
         args.extend(["-movflags".to_owned(), "+faststart".to_owned()]);
@@ -822,8 +847,11 @@ pub fn prepare_reencode(
         "-i".to_owned(),
         media.path.to_string(),
         "-t".to_owned(),
-        format!("{:.6}", plan.requested_frames() as f64 * plan.rate_denominator as f64
-            / plan.rate_numerator as f64),
+        format!(
+            "{:.6}",
+            plan.requested_frames() as f64 * plan.rate_denominator as f64
+                / plan.rate_numerator as f64
+        ),
     ]);
     let mut filters = vec!["setpts=PTS-STARTPTS".to_owned()];
     filters.extend(preset.geometry.filters());
@@ -988,12 +1016,26 @@ mod tests {
         let plan = plan_for(1_000, 1_600);
         let prepared = prepare_head(&media, &plan, &CutConfig::default());
         // 400 frames at 29.97 is 13.346 667 s.
-        let requested: f64 = find(&prepared.args, "-t").expect("has -t").parse().expect("num");
-        assert!((requested - 400.0 * 1001.0 / 30_000.0).abs() < 1e-6, "{requested}");
+        let requested: f64 = find(&prepared.args, "-t")
+            .expect("has -t")
+            .parse()
+            .expect("num");
+        assert!(
+            (requested - 400.0 * 1001.0 / 30_000.0).abs() < 1e-6,
+            "{requested}"
+        );
         assert!(prepared.args.contains(&"setpts=PTS-STARTPTS".to_owned()));
         // The seek is an input seek, before -i, so the decoder starts on the mark.
-        let ss_index = prepared.args.iter().position(|arg| arg == "-ss").expect("-ss");
-        let i_index = prepared.args.iter().position(|arg| arg == "-i").expect("-i");
+        let ss_index = prepared
+            .args
+            .iter()
+            .position(|arg| arg == "-ss")
+            .expect("-ss");
+        let i_index = prepared
+            .args
+            .iter()
+            .position(|arg| arg == "-i")
+            .expect("-i");
         assert!(ss_index < i_index, "the head seek must be an input seek");
     }
 
@@ -1060,14 +1102,24 @@ mod tests {
             !prepared.args.contains(&"-frames:v".to_owned()),
             "`-frames:v` counts packets in decode order with B-frames, and drops a wanted frame"
         );
-        let requested: f64 = find(&prepared.args, "-t").expect("has -t").parse().expect("num");
+        let requested: f64 = find(&prepared.args, "-t")
+            .expect("has -t")
+            .parse()
+            .expect("num");
         // 500 frames requested, bounded at 501 frames of time.
-        assert!((requested - 501.0 * 1001.0 / 30_000.0).abs() < 1e-6, "{requested}");
+        assert!(
+            (requested - 501.0 * 1001.0 / 30_000.0).abs() < 1e-6,
+            "{requested}"
+        );
     }
 
     #[test]
     fn the_concat_list_states_the_head_duration() {
-        let text = concat_list(Path::new(r"H:\work\head.mp4"), Path::new(r"H:\work\body.mp4"), 1.5);
+        let text = concat_list(
+            Path::new(r"H:\work\head.mp4"),
+            Path::new(r"H:\work\body.mp4"),
+            1.5,
+        );
         assert!(text.starts_with("ffconcat version 1.0\n"));
         assert!(text.contains("file 'H:\\work\\head.mp4'\n"));
         assert!(text.contains("duration 1.500000\n"), "{text}");
@@ -1089,7 +1141,10 @@ mod tests {
             1.0,
         );
         assert!(text.contains(r"'\''"), "{text}");
-        assert!(!text.contains("file 'H:\\Andy's"), "the quote was not escaped: {text}");
+        assert!(
+            !text.contains("file 'H:\\Andy's"),
+            "the quote was not escaped: {text}"
+        );
     }
 
     #[test]
@@ -1168,7 +1223,9 @@ mod tests {
         assert!(geometry_forces_encode(&media, vertical.geometry));
         assert!(!geometry_forces_encode(
             &media,
-            trimmer_core::delivery::standard_preset("master").expect("preset").geometry
+            trimmer_core::delivery::standard_preset("master")
+                .expect("preset")
+                .geometry
         ));
     }
 

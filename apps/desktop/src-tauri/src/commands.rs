@@ -49,8 +49,7 @@ fn clock() -> Arc<dyn Clock> {
 
 /// Build a workspace over the shared engine and transcript service.
 fn new_workspace(state: &AppState, name: &str, created_by: &str) -> Workspace {
-    let transcripts: Arc<dyn TranscriptSource> =
-        Arc::new(trimmer_app::ports::FileTranscripts);
+    let transcripts: Arc<dyn TranscriptSource> = Arc::new(trimmer_app::ports::FileTranscripts);
     Workspace::new(
         name,
         created_by,
@@ -70,7 +69,10 @@ pub async fn doctor(state: State<'_, AppState>) -> Reply<serde_json::Value> {
     let tools = ToolPaths::resolve().map_err(explain)?;
     let prober = trimmer_media::Prober::new(tools.clone());
     let capabilities = prober.capabilities().await.map_err(explain)?;
-    let ffmpeg = prober.ffmpeg_version().await.unwrap_or_else(|_| "not found".to_owned());
+    let ffmpeg = prober
+        .ffmpeg_version()
+        .await
+        .unwrap_or_else(|_| "not found".to_owned());
     let ffprobe = ffmpeg.clone();
     Ok(serde_json::json!({
         "version": VERSION,
@@ -112,9 +114,7 @@ pub async fn create_project(
         return Err("a project needs a name".to_owned());
     }
     let mut workspace = new_workspace(&state, trimmed, &created_by);
-    workspace
-        .save(state.store.as_ref())
-        .map_err(explain)?;
+    workspace.save(state.store.as_ref()).map_err(explain)?;
     let id = workspace.project().id;
     state.set_workspace(workspace);
     Ok(serde_json::json!({ "id": id.to_string() }))
@@ -203,12 +203,14 @@ pub async fn add_source(state: State<'_, AppState>, path: String) -> Reply<serde
     state.with_workspace(|workspace| {
         let canonical = media_path.canonicalised();
         let transcript = trimmer_core::caption::find_for(canonical.as_path());
-        workspace.project_mut().upsert_source(trimmer_core::SegmentSource {
-            path: canonical.clone(),
-            media: probed.clone(),
-            available: media_path.exists(),
-            label: None,
-        });
+        workspace
+            .project_mut()
+            .upsert_source(trimmer_core::SegmentSource {
+                path: canonical.clone(),
+                media: probed.clone(),
+                available: media_path.exists(),
+                label: None,
+            });
         let summary = probed.as_ref().map_or_else(
             || "the file is not on disk; it was added anyway so the marks can be fixed".to_owned(),
             trimmer_core::MediaInfo::summary,
@@ -231,9 +233,8 @@ pub async fn add_source(state: State<'_, AppState>, path: String) -> Reply<serde
 #[tauri::command]
 pub async fn refresh_sources(state: State<'_, AppState>) -> Reply<()> {
     // Re-probe outside the lock, then apply, so a probe of six masters does not block the window.
-    let paths: Vec<MediaPath> = state.with_workspace(|workspace| {
-        Ok(workspace.project().sources.keys().cloned().collect())
-    })?;
+    let paths: Vec<MediaPath> = state
+        .with_workspace(|workspace| Ok(workspace.project().sources.keys().cloned().collect()))?;
     let engine = Arc::clone(&state.engine);
     let mut probed: Vec<(MediaPath, bool, Option<trimmer_core::MediaInfo>)> = Vec::new();
     for path in paths {
@@ -303,9 +304,7 @@ pub async fn segments(state: State<'_, AppState>) -> Reply<serde_json::Value> {
 /// The summary line above the run button.
 #[tauri::command]
 pub async fn summary(state: State<'_, AppState>) -> Reply<serde_json::Value> {
-    state.with_workspace(|workspace| {
-        serde_json::to_value(workspace.summary()).map_err(explain)
-    })
+    state.with_workspace(|workspace| serde_json::to_value(workspace.summary()).map_err(explain))
 }
 
 /// The delivery presets this project offers, with what each one costs.
@@ -320,10 +319,7 @@ pub async fn presets(state: State<'_, AppState>) -> Reply<serde_json::Value> {
                 // Whether a preset preserves the picture depends on the *source's* geometry, so a
                 // preset with no segment to apply to reports the geometry rule alone.
                 let preserves = preset.video.is_copy()
-                    && matches!(
-                        preset.geometry.fit,
-                        trimmer_core::AspectFit::Native
-                    );
+                    && matches!(preset.geometry.fit, trimmer_core::AspectFit::Native);
                 serde_json::json!({
                     "name": preset.name,
                     "description": preset.description,
@@ -350,7 +346,12 @@ pub async fn add_segment(
 ) -> Reply<serde_json::Value> {
     state.with_workspace(|workspace| {
         let path = MediaPath::new(source);
-        let mut segment = Segment::new(path, name, start_frame, end_frame.unwrap_or(start_frame + 1));
+        let mut segment = Segment::new(
+            path,
+            name,
+            start_frame,
+            end_frame.unwrap_or(start_frame + 1),
+        );
         segment.end_frame = end_frame;
         segment.preset = preset;
         segment.handle_frames = handle_frames;
@@ -465,7 +466,9 @@ pub async fn parse_timecode(
             .project()
             .media(&path)
             .map(|media| media.rate)
-            .ok_or_else(|| "that source has not been probed, so its frame rate is unknown".to_owned())?;
+            .ok_or_else(|| {
+                "that source has not been probed, so its frame rate is unknown".to_owned()
+            })?;
         let frame = trimmer_core::timecode::parse_timecode(&text, rate).map_err(explain)?;
         Ok(serde_json::json!({
             "frame": frame,
@@ -498,7 +501,11 @@ pub async fn preview(state: State<'_, AppState>, id: String) -> Reply<serde_json
             .media(&segment.source)
             .cloned()
             .ok_or_else(|| "that source has not been probed yet".to_owned())?;
-        let preset = workspace.project().preset_for(&segment).map_err(explain)?.clone();
+        let preset = workspace
+            .project()
+            .preset_for(&segment)
+            .map_err(explain)?
+            .clone();
         Ok((media, segment, preset))
     })?;
 
@@ -573,7 +580,11 @@ pub async fn preview_all(state: State<'_, AppState>) -> Reply<serde_json::Value>
 
 /// Cut one segment, emitting `cut-progress` events as it goes.
 #[tauri::command]
-pub async fn cut_segment(app: AppHandle, state: State<'_, AppState>, id: String) -> Reply<serde_json::Value> {
+pub async fn cut_segment(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Reply<serde_json::Value> {
     let segment_id = id
         .parse::<uuid::Uuid>()
         .map(trimmer_core::SegmentId)
@@ -609,7 +620,11 @@ async fn run_one(
             .media(&segment.source)
             .cloned()
             .ok_or_else(|| "that source has not been probed yet".to_owned())?;
-        let preset = workspace.project().preset_for(&segment).map_err(explain)?.clone();
+        let preset = workspace
+            .project()
+            .preset_for(&segment)
+            .map_err(explain)?
+            .clone();
         let output = workspace.output_path(&segment);
         Ok((media, segment, preset, output))
     })?;
@@ -623,9 +638,7 @@ async fn run_one(
         plan: Some(plan),
     };
 
-    let sink = Arc::new(EmitterSink {
-        app: app.clone(),
-    });
+    let sink = Arc::new(EmitterSink { app: app.clone() });
     let options = RunOptions {
         policy: PollPolicy::long(),
         cancel,
@@ -681,9 +694,7 @@ pub async fn run_batch(
         cancel: cancel.clone(),
     });
 
-    let sink = Arc::new(EmitterSink {
-        app: app.clone(),
-    });
+    let sink = Arc::new(EmitterSink { app: app.clone() });
     let options = QueueOptions {
         stop_on_error,
         skip_verification,
@@ -858,11 +869,11 @@ pub async fn search_transcript(
             .project()
             .media(&path)
             .map(|media| media.rate)
-            .ok_or_else(|| "that source has not been probed, so its frame rate is unknown".to_owned())?;
-        let service = trimmer_app::TranscriptService::new(
-            workspace.transcripts(),
-            Grouping::Sentence,
-        );
+            .ok_or_else(|| {
+                "that source has not been probed, so its frame rate is unknown".to_owned()
+            })?;
+        let service =
+            trimmer_app::TranscriptService::new(workspace.transcripts(), Grouping::Sentence);
         let view = service.load(&path).map_err(explain)?;
         let Some(view) = view else {
             return Ok(serde_json::json!([]));

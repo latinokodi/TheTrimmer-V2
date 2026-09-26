@@ -35,8 +35,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use serde_json::{json, Value};
-use trimmer_core::{caption, plan_cut, timecode, FrameRate, KeyframeGrid, MediaInfo, MediaPath,
-    Segment};
+use trimmer_core::{
+    caption, plan_cut, timecode, FrameRate, KeyframeGrid, MediaInfo, MediaPath, Segment,
+};
 
 /// Where the V1 engine lives, overridable for a checkout in an unusual place.
 fn v1_root() -> PathBuf {
@@ -106,8 +107,9 @@ fn ask_the_oracle(cases: &[Value]) -> Vec<Value> {
         .lines()
         .filter(|line| !line.trim().is_empty())
         .map(|line| {
-            serde_json::from_str(line)
-                .unwrap_or_else(|error| panic!("the oracle wrote unreadable output: {error}\n{line}"))
+            serde_json::from_str(line).unwrap_or_else(|error| {
+                panic!("the oracle wrote unreadable output: {error}\n{line}")
+            })
         })
         .collect();
 
@@ -223,14 +225,14 @@ fn plan_cases() -> Vec<Value> {
     let keyframes = vec![0, 250, 900, 1_150, 1_400, 1_650, 4_000, 100_000];
     let mut cases = Vec::new();
     for (start, end) in [
-        (1_000, 1_600),    // between keyframes: a head patch
-        (1_150, 1_600),    // on a keyframe: a pure copy
-        (1_100, 1_110),    // a keyframe outside the range: a whole re-encode
-        (0, 500),          // from the very start
+        (1_000, 1_600),     // between keyframes: a head patch
+        (1_150, 1_600),     // on a keyframe: a pure copy
+        (1_100, 1_110),     // a keyframe outside the range: a whole re-encode
+        (0, 500),           // from the very start
         (215_000, 216_000), // to the very end
-        (4_000, 4_001),    // one frame
-        (500, 501),        // one frame between keyframes
-        (1_150, 1_151),    // one frame on a keyframe
+        (4_000, 4_001),     // one frame
+        (500, 501),         // one frame between keyframes
+        (1_150, 1_151),     // one frame on a keyframe
     ] {
         cases.push(json!({
             "op": "plan",

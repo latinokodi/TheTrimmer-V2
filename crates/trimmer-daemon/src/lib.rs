@@ -6,7 +6,7 @@
 //!
 //! ## Why it binds to `127.0.0.1` and never to `0.0.0.0`
 //!
-//! **This API can cut files, read a licence, and read every project on the machine.** It has no
+//! **This API can cut files and read every project on the machine.** It has no
 //! user accounts, no rate limiting, no TLS and no audit of *who* is asking beyond a shared
 //! token. It is a **local control surface, not a service**: the process that owns the port owns
 //! the machine's media.

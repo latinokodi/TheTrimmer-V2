@@ -123,7 +123,7 @@ pub fn openapi_document() -> Value {
                                 "service": { "type": "string" },
                                 "version": { "type": "string" },
                                 "ffmpeg": { "type": "boolean" },
-                                "licensed": { "type": "boolean" }
+                                "ffmpeg": { "type": "boolean" }
                             }
                         }}}},
                         "401": { "description": "No token, or the wrong one.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
@@ -132,7 +132,7 @@ pub fn openapi_document() -> Value {
             },
             "/v1/capabilities": {
                 "get": {
-                    "summary": "What this machine's ffmpeg can do, and what the licence allows.",
+                    "summary": "What this machine's ffmpeg can do.",
                     "operationId": "capabilities",
                     "responses": {
                         "200": { "description": "The capability report.", "content": { "application/json": { "schema": { "type": "object" } } } },

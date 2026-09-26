@@ -18,7 +18,9 @@ use trimmer_media::{CutOutcome, ExecutionStep, MediaError, MediaResult, Prepared
 use trimmer_verify::{CheckStatus, CutFacts, FrameHashes, Similarity};
 
 use trimmer_app::ports::{Clock, MediaEngine, SegmentCutRequest, TestClock, TranscriptSource};
-use trimmer_app::queue::{CollectingQueueSink, JobState, JobStatus, Queue, QueueEvent, QueueOptions};
+use trimmer_app::queue::{
+    CollectingQueueSink, JobState, JobStatus, Queue, QueueEvent, QueueOptions,
+};
 use trimmer_app::transcript::{TranscriptService, TranscriptView};
 use trimmer_app::watch::{ObservedFile, WatchAction, WatchFolder, WatchPolicy, WatchTrigger};
 use trimmer_app::workspace::Workspace;
@@ -44,7 +46,6 @@ enum FakeCut {
     Fail(String),
     /// Ask for cancellation, as a real engine does when the flag is set.
     Cancelled,
-
 }
 
 impl FakeEngine {
@@ -58,7 +59,6 @@ impl FakeEngine {
         })
     }
 
-
     fn set_outcome(&self, outcome: FakeCut) {
         if let Ok(mut guard) = self.outcome.lock() {
             *guard = outcome;
@@ -68,7 +68,6 @@ impl FakeEngine {
     fn cut_count(&self) -> usize {
         self.cuts.load(Ordering::SeqCst)
     }
-
 }
 
 #[async_trait::async_trait]
@@ -80,7 +79,11 @@ impl MediaEngine for FakeEngine {
         })
     }
 
-    async fn plan(&self, media: &MediaInfo, segment: &Segment) -> trimmer_core::CoreResult<CutPlan> {
+    async fn plan(
+        &self,
+        media: &MediaInfo,
+        segment: &Segment,
+    ) -> trimmer_core::CoreResult<CutPlan> {
         let grid = KeyframeGrid::new(
             self.keyframes.clone(),
             segment.start_frame,
@@ -168,7 +171,10 @@ impl MediaEngine for FakeEngine {
             }
         }
         let is_source = path == &self.media.path;
-        Ok(facts_for(path, if is_source { self.media.frame_count } else { 0 }))
+        Ok(facts_for(
+            path,
+            if is_source { self.media.frame_count } else { 0 },
+        ))
     }
 }
 
@@ -211,7 +217,11 @@ impl trimmer_verify::MediaMeasurer for FakeMeasurer {
             }
         }
         // The source is the file that already existed; anything else is an output this run wrote.
-        let frames = if path.as_path().file_name().is_some_and(|name| name == "master.mp4") {
+        let frames = if path
+            .as_path()
+            .file_name()
+            .is_some_and(|name| name == "master.mp4")
+        {
             self.source_frames
         } else {
             self.output_frames
@@ -350,10 +360,14 @@ impl Fixture {
     /// Add the source and `count` segments of 100 frames each.
     async fn with_segments(mut self, count: usize) -> Self {
         let path = self.master();
-        self.workspace.add_source(path.clone()).await.expect("probed");
+        self.workspace
+            .add_source(path.clone())
+            .await
+            .expect("probed");
         for index in 0..count {
             let start = 1_000 + (index as i64) * 200;
-            let segment = Segment::new(path.clone(), format!("segment {index}"), start, start + 100);
+            let segment =
+                Segment::new(path.clone(), format!("segment {index}"), start, start + 100);
             self.workspace.add_segment(segment).expect("added");
         }
         self
@@ -396,11 +410,19 @@ async fn a_source_is_probed_when_it_is_added() {
 async fn a_source_that_is_not_on_disk_is_still_added_and_says_so() {
     let mut fixture = Fixture::new("missing");
     let absent = MediaPath::new(fixture.dir.join("not-here.mp4"));
-    fixture.workspace.add_source(absent.clone()).await.expect("added");
+    fixture
+        .workspace
+        .add_source(absent.clone())
+        .await
+        .expect("added");
     let sources = fixture.workspace.sources();
     assert_eq!(sources.len(), 1);
     assert!(!sources[0].present);
-    assert!(sources[0].summary.contains("not on disk"), "{}", sources[0].summary);
+    assert!(
+        sources[0].summary.contains("not on disk"),
+        "{}",
+        sources[0].summary
+    );
     // The workspace still opens, which is the whole point: an editor without the drive attached
     // must be able to read and fix their marks.
     assert_eq!(fixture.workspace.summary().missing_sources, 1);
@@ -425,7 +447,11 @@ async fn a_segment_view_carries_its_timecodes_and_duration() {
 async fn a_segment_past_the_end_of_its_source_cannot_be_added() {
     let mut fixture = Fixture::new("past-end");
     let path = fixture.master();
-    fixture.workspace.add_source(path.clone()).await.expect("probed");
+    fixture
+        .workspace
+        .add_source(path.clone())
+        .await
+        .expect("probed");
     let segment = Segment::new(path, "way past the end", 200_000, 200_100);
     let error = fixture.workspace.add_segment(segment).expect_err("refused");
     assert!(
@@ -475,10 +501,7 @@ async fn a_source_with_an_exotic_codec_is_refused_at_add_time_with_the_codec_nam
 async fn a_preview_reports_the_cost_the_commands_and_the_full_encode_warning() {
     let mut fixture = Fixture::new("preview").with_segments(1).await;
     // A vertical preset reshapes the frame, so it cannot be a passthrough.
-    fixture
-        .workspace
-        .project_mut()
-        .default_preset = "vertical".to_owned();
+    fixture.workspace.project_mut().default_preset = "vertical".to_owned();
     let id = fixture.workspace.segments()[0].id;
     let preview = fixture.workspace.preview(id).await.expect("previewed");
     assert!(preview.forces_full_encode, "a crop preset must be flagged");
@@ -490,7 +513,10 @@ async fn a_preview_reports_the_cost_the_commands_and_the_full_encode_warning() {
         "{:?}",
         preview.notes
     );
-    assert!(!preview.commands.is_empty(), "a preview must show what will run");
+    assert!(
+        !preview.commands.is_empty(),
+        "a preview must show what will run"
+    );
     assert!(preview.estimated_bytes.unwrap_or(0) > 0);
 }
 
@@ -539,7 +565,10 @@ async fn a_disabled_segment_is_not_runnable_but_is_still_listed() {
 
 #[test]
 fn output_names_are_safe_and_carry_the_range() {
-    assert_eq!(sanitise_name("cold open: the question?"), "cold open the question");
+    assert_eq!(
+        sanitise_name("cold open: the question?"),
+        "cold open the question"
+    );
     assert_eq!(sanitise_name("a/b\\c|d*e"), "a b c d e");
     assert_eq!(sanitise_name("   "), "segment");
     assert_eq!(sanitise_name("trailing dots..."), "trailing dots");
@@ -558,10 +587,17 @@ fn output_names_are_safe_and_carry_the_range() {
 #[tokio::test]
 async fn a_batch_cuts_every_runnable_segment_and_reports_each_one() {
     let mut fixture = Fixture::new("batch").with_segments(3).await;
-    let queue = queue_for(fixture.engine.clone(), FakeMeasurer::reporting(100, 100_000));
+    let queue = queue_for(
+        fixture.engine.clone(),
+        FakeMeasurer::reporting(100, 100_000),
+    );
     let sink = Arc::new(CollectingQueueSink::new());
     let outcome = queue
-        .run(&mut fixture.workspace, &QueueOptions::default(), sink.clone())
+        .run(
+            &mut fixture.workspace,
+            &QueueOptions::default(),
+            sink.clone(),
+        )
         .await
         .expect("ran");
 
@@ -590,16 +626,20 @@ async fn a_batch_cuts_every_runnable_segment_and_reports_each_one() {
             failed,
             skipped,
         } => {
-            assert_eq!((*succeeded, *unverified, *failed, *skipped), (3, 0, 0, 0), "{events:#?}");
+            assert_eq!(
+                (*succeeded, *unverified, *failed, *skipped),
+                (3, 0, 0, 0),
+                "{events:#?}"
+            );
         }
         other => panic!("wrong event: {other:?}"),
     }
     // Every job was seen planning, cutting, verifying and done.
     for state in [JobState::Planning, JobState::Cutting, JobState::Verifying] {
         assert!(
-            events
-                .iter()
-                .any(|event| matches!(event, QueueEvent::State { state: seen, .. } if *seen == state)),
+            events.iter().any(
+                |event| matches!(event, QueueEvent::State { state: seen, .. } if *seen == state)
+            ),
             "no {state:?} event"
         );
     }
@@ -608,10 +648,17 @@ async fn a_batch_cuts_every_runnable_segment_and_reports_each_one() {
 #[tokio::test]
 async fn a_batch_runs_segments_one_at_a_time_in_project_order() {
     let mut fixture = Fixture::new("order").with_segments(3).await;
-    let queue = queue_for(fixture.engine.clone(), FakeMeasurer::reporting(100, 100_000));
+    let queue = queue_for(
+        fixture.engine.clone(),
+        FakeMeasurer::reporting(100, 100_000),
+    );
     let sink = Arc::new(CollectingQueueSink::new());
     queue
-        .run(&mut fixture.workspace, &QueueOptions::default(), sink.clone())
+        .run(
+            &mut fixture.workspace,
+            &QueueOptions::default(),
+            sink.clone(),
+        )
         .await
         .expect("ran");
 
@@ -629,10 +676,19 @@ async fn a_batch_runs_segments_one_at_a_time_in_project_order() {
 #[tokio::test]
 async fn one_failed_segment_does_not_abandon_the_others() {
     let mut fixture = Fixture::new("one-fails").with_segments(3).await;
-    let queue = queue_for(fixture.engine.clone(), FakeMeasurer::reporting(100, 100_000));
-    fixture.engine.set_outcome(FakeCut::Fail("disk full".to_owned()));
+    let queue = queue_for(
+        fixture.engine.clone(),
+        FakeMeasurer::reporting(100, 100_000),
+    );
+    fixture
+        .engine
+        .set_outcome(FakeCut::Fail("disk full".to_owned()));
     let outcome = queue
-        .run(&mut fixture.workspace, &QueueOptions::default(), Arc::new(CollectingQueueSink::new()))
+        .run(
+            &mut fixture.workspace,
+            &QueueOptions::default(),
+            Arc::new(CollectingQueueSink::new()),
+        )
         .await
         .expect("ran");
 
@@ -645,20 +701,32 @@ async fn one_failed_segment_does_not_abandon_the_others() {
         .iter()
         .map(|(_, _, _, status)| status.summary())
         .collect();
-    assert!(reasons.iter().all(|reason| reason.contains("disk full")), "{reasons:?}");
+    assert!(
+        reasons.iter().all(|reason| reason.contains("disk full")),
+        "{reasons:?}"
+    );
 }
 
 #[tokio::test]
 async fn stop_on_error_stops_at_the_first_failure() {
     let mut fixture = Fixture::new("stop-on-error").with_segments(3).await;
-    let queue = queue_for(fixture.engine.clone(), FakeMeasurer::reporting(100, 100_000));
-    fixture.engine.set_outcome(FakeCut::Fail("bad source".to_owned()));
+    let queue = queue_for(
+        fixture.engine.clone(),
+        FakeMeasurer::reporting(100, 100_000),
+    );
+    fixture
+        .engine
+        .set_outcome(FakeCut::Fail("bad source".to_owned()));
     let options = QueueOptions {
         stop_on_error: true,
         ..QueueOptions::default()
     };
     let outcome = queue
-        .run(&mut fixture.workspace, &options, Arc::new(CollectingQueueSink::new()))
+        .run(
+            &mut fixture.workspace,
+            &options,
+            Arc::new(CollectingQueueSink::new()),
+        )
         .await
         .expect("ran");
 
@@ -670,10 +738,17 @@ async fn stop_on_error_stops_at_the_first_failure() {
 #[tokio::test]
 async fn a_cancellation_stops_the_batch_and_says_which_segments_did_not_run() {
     let mut fixture = Fixture::new("cancel").with_segments(3).await;
-    let queue = queue_for(fixture.engine.clone(), FakeMeasurer::reporting(100, 100_000));
+    let queue = queue_for(
+        fixture.engine.clone(),
+        FakeMeasurer::reporting(100, 100_000),
+    );
     fixture.engine.set_outcome(FakeCut::Cancelled);
     let outcome = queue
-        .run(&mut fixture.workspace, &QueueOptions::default(), Arc::new(CollectingQueueSink::new()))
+        .run(
+            &mut fixture.workspace,
+            &QueueOptions::default(),
+            Arc::new(CollectingQueueSink::new()),
+        )
         .await
         .expect("ran");
 
@@ -690,21 +765,35 @@ async fn a_cancellation_stops_the_batch_and_says_which_segments_did_not_run() {
 #[tokio::test]
 async fn a_cancellation_raised_from_another_thread_stops_before_the_next_segment() {
     let mut fixture = Fixture::new("cancel-flag").with_segments(3).await;
-    let queue = queue_for(fixture.engine.clone(), FakeMeasurer::reporting(100, 100_000));
+    let queue = queue_for(
+        fixture.engine.clone(),
+        FakeMeasurer::reporting(100, 100_000),
+    );
     // Raise the flag before the run starts.
     queue.cancel_flag().cancel();
     let outcome = queue
-        .run(&mut fixture.workspace, &QueueOptions::default(), Arc::new(CollectingQueueSink::new()))
+        .run(
+            &mut fixture.workspace,
+            &QueueOptions::default(),
+            Arc::new(CollectingQueueSink::new()),
+        )
         .await
         .expect("ran");
 
     assert!(outcome.cancelled);
-    assert_eq!(fixture.engine.cut_count(), 0, "nothing should have been cut");
+    assert_eq!(
+        fixture.engine.cut_count(),
+        0,
+        "nothing should have been cut"
+    );
     assert_eq!(outcome.total(), 3, "every segment is accounted for");
-    assert!(outcome
-        .jobs
-        .iter()
-        .all(|(_, _, _, status)| matches!(status, JobStatus::Failed { cancelled: true, .. })));
+    assert!(outcome.jobs.iter().all(|(_, _, _, status)| matches!(
+        status,
+        JobStatus::Failed {
+            cancelled: true,
+            ..
+        }
+    )));
 }
 
 #[tokio::test]
@@ -719,9 +808,16 @@ async fn a_segment_that_cannot_be_cut_is_skipped_with_a_reason_not_failed() {
         .get_mut(&path)
         .expect("present");
     source.media = None;
-    let queue = queue_for(fixture.engine.clone(), FakeMeasurer::reporting(100, 100_000));
+    let queue = queue_for(
+        fixture.engine.clone(),
+        FakeMeasurer::reporting(100, 100_000),
+    );
     let outcome = queue
-        .run(&mut fixture.workspace, &QueueOptions::default(), Arc::new(CollectingQueueSink::new()))
+        .run(
+            &mut fixture.workspace,
+            &QueueOptions::default(),
+            Arc::new(CollectingQueueSink::new()),
+        )
         .await
         .expect("ran");
 
@@ -747,9 +843,16 @@ async fn a_disabled_segment_is_absent_from_the_batch_entirely() {
         .segment_mut(id)
         .expect("present")
         .enabled = false;
-    let queue = queue_for(fixture.engine.clone(), FakeMeasurer::reporting(100, 100_000));
+    let queue = queue_for(
+        fixture.engine.clone(),
+        FakeMeasurer::reporting(100, 100_000),
+    );
     let outcome = queue
-        .run(&mut fixture.workspace, &QueueOptions::default(), Arc::new(CollectingQueueSink::new()))
+        .run(
+            &mut fixture.workspace,
+            &QueueOptions::default(),
+            Arc::new(CollectingQueueSink::new()),
+        )
         .await
         .expect("ran");
 
@@ -760,13 +863,20 @@ async fn a_disabled_segment_is_absent_from_the_batch_entirely() {
 #[tokio::test]
 async fn verification_off_records_that_it_did_not_check() {
     let mut fixture = Fixture::new("verify-off").with_segments(1).await;
-    let queue = queue_for(fixture.engine.clone(), FakeMeasurer::reporting(100, 100_000));
+    let queue = queue_for(
+        fixture.engine.clone(),
+        FakeMeasurer::reporting(100, 100_000),
+    );
     let options = QueueOptions {
         skip_verification: true,
         ..QueueOptions::default()
     };
     let outcome = queue
-        .run(&mut fixture.workspace, &options, Arc::new(CollectingQueueSink::new()))
+        .run(
+            &mut fixture.workspace,
+            &options,
+            Arc::new(CollectingQueueSink::new()),
+        )
         .await
         .expect("ran");
 
@@ -798,7 +908,11 @@ async fn a_project_that_verifies_forensically_reports_a_failing_check() {
     );
     let queue = queue_for(fixture.engine.clone(), measurer);
     let outcome = queue
-        .run(&mut fixture.workspace, &QueueOptions::default(), Arc::new(CollectingQueueSink::new()))
+        .run(
+            &mut fixture.workspace,
+            &QueueOptions::default(),
+            Arc::new(CollectingQueueSink::new()),
+        )
         .await
         .expect("ran");
 
@@ -815,14 +929,25 @@ async fn a_project_that_verifies_forensically_reports_a_failing_check() {
 #[tokio::test]
 async fn the_audit_manifest_records_one_entry_per_job_and_signs() {
     let mut fixture = Fixture::new("audit").with_segments(2).await;
-    let queue = queue_for(fixture.engine.clone(), FakeMeasurer::reporting(100, 100_000));
+    let queue = queue_for(
+        fixture.engine.clone(),
+        FakeMeasurer::reporting(100, 100_000),
+    );
     let outcome = queue
-        .run(&mut fixture.workspace, &QueueOptions::default(), Arc::new(CollectingQueueSink::new()))
+        .run(
+            &mut fixture.workspace,
+            &QueueOptions::default(),
+            Arc::new(CollectingQueueSink::new()),
+        )
         .await
         .expect("ran");
 
     let manifest = &outcome.audit;
-    assert_eq!(manifest.entries.len(), 2 + 1, "two cuts plus the opening entry");
+    assert_eq!(
+        manifest.entries.len(),
+        2 + 1,
+        "two cuts plus the opening entry"
+    );
     assert_eq!(manifest.app_version, "2.0.0-test");
     assert_eq!(manifest.machine, "test-machine");
     let digest = manifest.digest();
@@ -835,9 +960,16 @@ async fn the_audit_manifest_records_one_entry_per_job_and_signs() {
 #[tokio::test]
 async fn the_batch_report_names_every_segment_and_its_verdict() {
     let mut fixture = Fixture::new("report").with_segments(2).await;
-    let queue = queue_for(fixture.engine.clone(), FakeMeasurer::reporting(100, 100_000));
+    let queue = queue_for(
+        fixture.engine.clone(),
+        FakeMeasurer::reporting(100, 100_000),
+    );
     let outcome = queue
-        .run(&mut fixture.workspace, &QueueOptions::default(), Arc::new(CollectingQueueSink::new()))
+        .run(
+            &mut fixture.workspace,
+            &QueueOptions::default(),
+            Arc::new(CollectingQueueSink::new()),
+        )
         .await
         .expect("ran");
 
@@ -867,7 +999,11 @@ fn a_file_still_arriving_is_not_a_job() {
     assert_eq!(plans.len(), 1);
     assert!(plans[0].blocked_by.is_some());
     assert!(
-        plans[0].blocked_by.as_deref().unwrap_or("").contains("changed 2s ago"),
+        plans[0]
+            .blocked_by
+            .as_deref()
+            .unwrap_or("")
+            .contains("changed 2s ago"),
         "{:?}",
         plans[0].blocked_by
     );
@@ -920,8 +1056,11 @@ fn a_marker_list_beside_a_settled_master_makes_a_job() {
     std::fs::create_dir_all(&dir).expect("temp dir");
     let master = dir.join("master.mp4");
     std::fs::write(&master, b"video").expect("write");
-    std::fs::write(dir.join("master.marks.txt"), "cold open, 00:00:10:00, 00:00:20:00\n")
-        .expect("write");
+    std::fs::write(
+        dir.join("master.marks.txt"),
+        "cold open, 00:00:10:00, 00:00:20:00\n",
+    )
+    .expect("write");
 
     let folder = WatchFolder::new(dir.clone());
     let file = ObservedFile {
@@ -1070,9 +1209,7 @@ async fn a_transcript_is_indexed_and_searched_through_the_workspace() {
 
     let hits = view.find_phrase("SEC", FrameRate::FPS_25, 10);
     assert_eq!(hits.len(), 1);
-    let (start, end) = view
-        .cut_for(&hits[0], FrameRate::FPS_25)
-        .expect("a range");
+    let (start, end) = view.cut_for(&hits[0], FrameRate::FPS_25).expect("a range");
     // The second sentence runs 7.0 s to 11.0 s, which at 25 fps is frames 175 to 275.
     assert_eq!(start, 175);
     assert_eq!(end, 275);
@@ -1107,7 +1244,10 @@ async fn a_transcript_that_runs_past_the_video_is_flagged() {
     // The fake source claims 100 000 frames at 25 fps, which is 4 000 s, so 5 000 s is past it.
     let summary = view.summary(Some(&fixture.engine.media));
     assert!(summary.warning.is_some(), "{summary:?}");
-    assert!(summary.warning.unwrap_or_default().contains("different file"));
+    assert!(summary
+        .warning
+        .unwrap_or_default()
+        .contains("different file"));
 }
 
 #[tokio::test]
@@ -1122,9 +1262,7 @@ async fn a_transcript_with_no_cues_is_an_error_with_the_path() {
         }),
         Grouping::Sentence,
     );
-    let error = service
-        .load(&fixture.master())
-        .expect_err("refused");
+    let error = service.load(&fixture.master()).expect_err("refused");
     assert!(error.to_string().contains("no readable cues"), "{error}");
 }
 
@@ -1228,17 +1366,25 @@ fn segments_can_be_reordered_and_removed_through_the_workspace() {
     let mut fixture = Fixture::new("edit");
     // Build a project by hand so the test does not need the async source probe.
     let path = fixture.master();
-    fixture.workspace.project_mut().upsert_source(trimmer_core::SegmentSource {
-        path: path.clone(),
-        media: Some(fixture.engine.media.clone()),
-        available: true,
-        label: None,
-    });
+    fixture
+        .workspace
+        .project_mut()
+        .upsert_source(trimmer_core::SegmentSource {
+            path: path.clone(),
+            media: Some(fixture.engine.media.clone()),
+            available: true,
+            label: None,
+        });
     let ids: Vec<SegmentId> = (0..3)
         .map(|index| {
             fixture
                 .workspace
-                .add_segment(Segment::new(path.clone(), format!("s{index}"), index * 10, index * 10 + 5))
+                .add_segment(Segment::new(
+                    path.clone(),
+                    format!("s{index}"),
+                    index * 10,
+                    index * 10 + 5,
+                ))
                 .expect("added")
         })
         .collect();

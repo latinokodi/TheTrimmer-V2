@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use trimmer_media::{CancelFlag, CutConfig, CutExecutor, PollPolicy, Prepared, Progress, ProgressSink, RunOptions};
+use trimmer_media::{
+    CancelFlag, CutConfig, CutExecutor, PollPolicy, Prepared, Progress, ProgressSink, RunOptions,
+};
 use trimmer_store::SqliteStore;
 
 use crate::cli::Cli;
@@ -129,19 +131,6 @@ impl Context {
         SqliteStore::open(&self.store_path).map_err(|error| Failure::internal(error.to_string()))
     }
 
-    /// Where a licence file lives: `THE_TRIMMER_LICENCE`, else beside the store.
-    #[must_use]
-    pub fn licence_path(&self) -> PathBuf {
-        if let Ok(path) = std::env::var("THE_TRIMMER_LICENCE") {
-            if !path.trim().is_empty() {
-                return PathBuf::from(path.trim());
-            }
-        }
-        self.store_path
-            .parent()
-            .map_or_else(|| PathBuf::from("licence.key"), |dir| dir.join("licence.key"))
-    }
-
     /// The run options a cut uses, with progress going to stderr.
     #[must_use]
     pub fn run_options(&self, label: impl Into<String>) -> RunOptions {
@@ -175,11 +164,7 @@ impl ProgressSink for StderrSink {
                 }
             }
             Progress::Elapsed { seconds } => eprintln!("  … {seconds:.0}s"),
-            Progress::Finished {
-                label,
-                seconds,
-                ok,
-            } => eprintln!(
+            Progress::Finished { label, seconds, ok } => eprintln!(
                 "  {} {label} ({seconds:.1}s)",
                 if ok { "ok" } else { "FAILED" }
             ),
