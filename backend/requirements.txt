@@ -1,1 +1,7 @@
+# The HTTP surface the window talks to.
 aiohttp>=3.9.0
+# The body copy. PyAV reads the container's packets and writes exactly the frames the plan
+# names; ffmpeg's own `-c copy` cannot, because `-t` is a time and it stops on a packet group
+# rather than on a frame. Wheels are published for Windows, macOS and Linux, so this needs no
+# compiler and no separate ffmpeg download -- the libraries come with it.
+av>=12.0.0

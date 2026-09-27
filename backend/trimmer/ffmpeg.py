@@ -660,11 +660,89 @@ def keyframes(path: Path, start_seconds: float, end_seconds: float) -> list[floa
         raise FFmpegError("could not list keyframes", ["ffprobe", str(path)], result.stderr)
     times = []
     for token in result.stdout.split():
+        # csv=p=0 still writes the record separator, so every token but the last carries a
+        # trailing comma. Without stripping it `float` raises and the token is dropped by the
+        # handler below -- which silently lost the file's *first* keyframe, and with it the
+        # knowledge that the opening GOP is copyable at all.
+        token = token.strip().rstrip(",")
+        if not token:
+            continue
         try:
             times.append(float(token))
         except ValueError:
             continue
     return sorted(times)
+
+
+def frame_pts(path: Path, count: int) -> list[float]:
+    """The presentation time of each of the first ``count`` video frames, in seconds.
+
+    This is the container's *own* statement of when each frame is shown, and it is the only
+    trustworthy answer for seeking. A frame's time can be computed as ``start_time +
+    frame / grid_rate`` instead, which is what this module does everywhere else, but that
+    assumes the frames sit on the average-rate grid -- and on a real master they do not: the
+    reference source's frames step by 0.0333 s while its average rate, stretched over
+    1872.633 s, implies a step very slightly larger. By frame 8596 the computed time is
+    0.28 ms *past* the frame it names, so ``-ss`` aimed there lands inside the next frame and
+    the delivered segment starts one frame late. The error grows with the frame number, which
+    is why a short clip is exact and a long one is not.
+
+    Read in one probe pass. ``pts_time`` is already in seconds and is written to six decimal
+    places, which is finer than a frame at any rate this product handles.
+    """
+    if count <= 0:
+        return []
+    result = _run_quiet(
+        [tool("ffprobe"), "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "frame=pts_time", "-of", "csv=p=0",
+         "-read_intervals", f"%+#{count}", str(path)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return []
+    times: list[float] = []
+    for token in result.stdout.split():
+        token = token.strip().rstrip(",")
+        if not token:
+            continue
+        try:
+            times.append(float(token))
+        except ValueError:
+            continue
+    return times
+
+
+class FrameTimes:
+    """The exact presentation time of a frame, read from the container on demand.
+
+    Built because a seek aimed at a *computed* time lands inside the wrong frame on a long
+    master, and only a long one: see :func:`frame_pts` for the measurement. The probe returns
+    every frame up to the one asked for, so one launch answers the head, the body and the tail
+    questions of a plan together, and the answers are kept.
+    """
+
+    #: Frames read beyond the one wanted, so the next question about a nearby frame is free.
+    LOOKAHEAD = 8
+
+    def __init__(self, path: Path, fallback) -> None:
+        self.path = path
+        self.fallback = fallback
+        self._times: list[float] = []
+
+    def __call__(self, frame: int) -> float:
+        if frame < 0:
+            return self.fallback(frame)
+        if frame < len(self._times):
+            return self._times[frame]
+        times = frame_pts(self.path, frame + self.LOOKAHEAD)
+        if len(times) <= frame:
+            # The container did not report times for this frame -- a damaged index, or a format
+            # that omits them. The computed time is the fallback: exact for any file whose
+            # frames really are on its average-rate grid.
+            return self.fallback(frame)
+        # Keep what was already known and append the rest, in order.
+        self._times = times[:max(len(self._times), len(times))]
+        return self._times[frame]
 
 
 def frame_md5s(path: Path, start_seconds: float, count: int) -> list[str]:
@@ -699,12 +777,24 @@ def frame_md5s(path: Path, start_seconds: float, count: int) -> list[str]:
     return digests
 
 
-def frame_png(path: Path, at_seconds: float, out: Path) -> bool:
-    """Write one frame to a PNG, for comparisons that need pixels rather than hashes."""
+def frame_png(path: Path, at_seconds: float, out: Path, *, from_end: bool = False) -> bool:
+    """Write one frame to a PNG, for comparisons that need pixels rather than hashes.
+
+    ``from_end`` reads the last frame by counting back from the end of the file instead of
+    forward from the start. It exists because the *last* frame cannot be reached reliably by
+    seeking forward to a time: a frame's timestamp is the instant it starts, so a seek aimed at
+    it is a coin toss, and a seek even slightly past it yields nothing at all because the
+    file's picture has ended. Measured on an eight-frame tail, every forward seek into it came
+    back empty while reading back from the end produced the frame every time.
+    """
     out.parent.mkdir(parents=True, exist_ok=True)
+    if from_end:
+        place = ["-sseof", f"-{max(at_seconds, 0.001):.6f}"]
+    else:
+        place = ["-ss", f"{at_seconds:.6f}"]
     result = _run_quiet(
-        [tool("ffmpeg"), "-hide_banner", "-v", "error", "-y", "-ss", f"{at_seconds:.6f}",
-         "-i", str(path), "-map", "0:v:0", "-frames:v", "1", str(out)],
+        [tool("ffmpeg"), "-hide_banner", "-v", "error", "-y", *place,
+         "-i", str(path), "-map", "0:v:0", "-frames:v", "1", "-update", "1", str(out)],
         capture_output=True, text=True,
     )
     return result.returncode == 0 and out.exists() and out.stat().st_size > 0

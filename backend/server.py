@@ -403,7 +403,6 @@ def _spec_from(body: dict[str, Any]) -> cutter.TrimSpec:
         crf=int(body.get("crf", 18)),
         preset=str(body.get("preset", "veryfast")),
         concat_offset=int(body.get("concatOffset", 0)),
-        head_audio_copy=bool(body.get("headAudioCopy", False)),
         audio_bitrate=str(body.get("audioBitrate", "192k")),
         subtitles=None if body.get("subtitles") is False else transcript,
     )

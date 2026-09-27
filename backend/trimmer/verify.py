@@ -86,23 +86,31 @@ class VerifyResult:
 def sample_frames(spec: TrimSpec, plan, media: MediaInfo, count: int = 3) -> list[int]:
     """Frames of the output at which to check alignment, counted from its start.
 
-    Deliberately away from both ends: the first frames are the re-encoded head, whose
-    pixels cannot match the source exactly, and the last may hold the body's tail
-    overshoot before the exact-frame trim runs. On a short segment those margins would
-    swallow every sample, so they shrink with it: a three-second cut still gets one.
+    Deliberately inside the **copied body and nowhere else**, because that is the only region
+    whose frames are the source's own packets and therefore the only one a hash comparison can
+    speak about. Both of the re-encoded regions are excluded: the head at the near end, and
+    now the tail at the far end, which used to be copied and stopped on a packet boundary. A
+    sample taken in either one reports "no matching frames in the source" for a file that is
+    perfectly correct, which is a false alarm rather than a finding.
+
+    On a short segment those margins would swallow every sample, so they shrink with it.
     """
     rate = float(media.grid_rate)
     margin = max(1, min(round(2.0 * rate), spec.frames // 8))
     first = max(plan.head_frames + margin, margin)
-    # The last sample's window has to sit inside what was asked for: the frames past the
-    # out point belong to the copy's packet boundary, not to the request, so matching
-    # them against the source would fail for a file that is perfectly correct.
-    last = spec.frames - WINDOW
+    # The last sample's *window* has to finish inside the copied body: frames at or after the
+    # tail's first frame are a fresh encode and can never match.
+    body_end = spec.frames - plan.tail_frames
+    last = body_end - WINDOW
     if last < first:
         if spec.frames <= 0:
             return []
-        middle = max(0, min(spec.frames - 1, max(plan.head_frames, spec.frames // 2)))
-        return [middle]
+        middle = max(0, min(body_end - 1, max(plan.head_frames, body_end // 2)))
+        if middle < plan.head_frames or middle >= body_end:
+            # Nothing of the copied body is wide enough to sample: the alignment check has
+            # nothing it can honestly say, and the head and tail checks carry the report.
+            return []
+        return [max(0, middle)]
     if count == 1 or first == last:
         return [(first + last) // 2]
     step = (last - first) / (count - 1)
@@ -111,35 +119,32 @@ def sample_frames(spec: TrimSpec, plan, media: MediaInfo, count: int = 3) -> lis
 
 def measure_offset(source: Path, output: Path, in_frame: int, rate, at_frame: int, *,
                    window: int = WINDOW, search: int = SEARCH, source_start: float = 0.0,
-                   output_start: float = 0.0) -> OffsetCheck:
+                   output_start: float = 0.0, source_time=None,
+                   output_time=None) -> OffsetCheck:
     """Which source frame the output shows ``at_frame`` frames into the segment.
 
-    Both windows are extracted on their file's own grid -- ``start + n / rate`` -- so
-    the comparison is frame for frame rather than "the frame at time t", which two
-    files whose first timestamps differ by a fraction of a frame would answer
-    differently. ``offset = 0`` is what we want: the frame the output shows is the one
-    the in point plus this frame number names. Positive means the output's content has
-    run ahead of the source's, negative that it lags.
+    The comparison is frame for frame rather than "the frame at time t", which two files whose
+    first timestamps differ by a fraction of a frame would answer differently. ``offset = 0`` is
+    what we want: the frame the output shows is the one the in point plus this frame number
+    names. Positive means the output's content has run ahead of the source's, negative that it
+    lags.
+
+    ``source_time`` and ``output_time`` map a frame number to the time each file states for it,
+    and the windows are seeked by those. Computing the times from the average rate instead is
+    a fraction of a millisecond out by the far end of a long file, which is enough for a seek
+    to land inside the next frame and for the window to start one frame late -- which matches
+    nowhere, and reads as a fault in a file that is exact.
     """
     rate_value = float(rate)
-    # Half a frame into each window's first frame, deliberately.
-    #
-    # Both windows are positioned by *time* and then hashed from whatever frame ffmpeg starts
-    # on, and a seek aimed exactly at a frame's own timestamp is ambiguous: it lands on that
-    # frame or the one before it, and which one it picks is not something the caller can see.
-    # That ambiguity was the whole of the remaining failure on real material -- content that a
-    # wider search showed sitting exactly on the mark was reported a frame early, because the
-    # source window had begun one frame late and every delta in the list shifted with it.
-    #
-    # Aiming into the middle of the frame removes the choice. It is the same correction the
-    # body copy needs, for the same reason.
-    half = 0.5
-    segment_start = output_start + (at_frame + half) / rate_value
-    source_start_time = source_start + (in_frame + at_frame - search + half) / rate_value
-    segment = ff.frame_md5s(output, segment_start, window)
+    segment = _frames_by_index(output, at_frame, window, rate_value, output_start,
+                               output_time)
     if len(segment) < window:
         return OffsetCheck(at_frame, None, rate_value)
-    source_frames = ff.frame_md5s(source, source_start_time, window + 2 * search)
+    source_frames = _frames_by_index(source, in_frame + at_frame - search,
+                                     window + 2 * search, rate_value, source_start,
+                                     source_time)
+    if len(source_frames) < window:
+        return OffsetCheck(at_frame, None, rate_value)
     # Closest match first, and only then further out.
     #
     # A window of near-identical frames -- a locked-off shot, a title card, a still -- matches
@@ -158,6 +163,7 @@ def measure_offset(source: Path, output: Path, in_frame: int, rate, at_frame: in
 def measure_offsets(source: Path, output: Path, spec: TrimSpec, plan, media: MediaInfo,
                     count: int = 3, *, source_start: float | None = None,
                     output_start: float | None = None,
+                    left_time=None, right_time=None,
                     workers: int = MAX_WORKERS) -> list[OffsetCheck]:
     """Measure every sample, in parallel.
 
@@ -174,10 +180,18 @@ def measure_offsets(source: Path, output: Path, spec: TrimSpec, plan, media: Med
         source_start = media.start_time
     if output_start is None:
         output_start = ff.stream_start_time(output)
+    # Both files are seeked to times they state themselves. `FrameTimes` reads them from the
+    # container and falls back to the computed grid time, so this is the same behaviour as
+    # before on a file that reports nothing.
+    source_time = left_time if left_time is not None else ff.FrameTimes(
+        source, lambda frame: source_start + frame / float(media.grid_rate))
+    output_time = right_time if right_time is not None else ff.FrameTimes(
+        output, lambda frame: output_start + frame / float(media.grid_rate))
 
     def one(frame: int) -> OffsetCheck:
         return measure_offset(source, output, spec.in_frame, media.grid_rate, frame,
-                              source_start=source_start, output_start=output_start)
+                              source_start=source_start, output_start=output_start,
+                              source_time=source_time, output_time=output_time)
 
     if len(frames) == 1 or workers <= 1:
         return [one(frame) for frame in frames]
@@ -204,21 +218,120 @@ def head_frame_offset(source: Path, output: Path, in_frame: int, rate, at_frame:
         source_start = ff.stream_start_time(source)
     if output_start is None:
         output_start = ff.stream_start_time(output)
+    # Just inside each frame rather than onto its stated time: a frame's timestamp is the
+    # instant it starts, so a seek aimed there is a coin toss between it and its neighbour.
+    # Same correction as the tail check and the window extraction.
+    nudge = 0.02 / rate_value
     with tempfile.TemporaryDirectory(prefix="thetrimmer-head-") as folder:
         work = Path(folder)
         segment = work / "segment.png"
-        if not ff.frame_png(output, output_start + at_frame / rate_value, segment):
+        if not ff.frame_png(output, output_start + at_frame / rate_value + nudge, segment):
             return None
         scores: dict[int, float] = {}
         for delta in range(-search, search + 1):
             frame = work / f"source{delta:+d}.png"
             at = source_start + (base + delta) / rate_value
+            if ff.frame_png(source, at + nudge, frame):
+                scores[delta] = ff.ssim(segment, frame)
+        if not scores:
+            return None
+        best = max(scores, key=lambda delta: scores[delta])
+        return best, scores[best]
+
+
+def tail_frame_offset(source: Path, output: Path, spec: TrimSpec, plan, media: MediaInfo,
+                      facts) -> tuple[int, float] | None:
+    """Which source frame the *re-encoded tail* ends on, and how well it matches.
+
+    The far end of the segment is the one place a fault is both most likely and least
+    visible: the tail is a fresh encode whose length is chosen by the engine, so it can be a
+    frame long or short, and the picture of a final frame is the last thing anyone checks by
+    playing the file. So it is checked the way the head is -- by looking -- but at the frame
+    a sequence would actually end on rather than in the middle of the patch.
+
+    Both extractions sit on their file's own frame grid, for the same reason as in
+    :func:`measure_offset`.
+    """
+    import tempfile
+
+    rate_value = float(media.grid_rate)
+    if facts.frames < 1:
+        return None
+    source_start = media.start_time if media.start_time is not None else 0.0
+    # A tail can be a single frame long, so the search is never wider than the tail itself.
+    search = min(plan.tail_frames, SEARCH) if plan.tail_frames else SEARCH
+    # The output's last frame is read back from the *end* of the file.
+    #
+    # Seeking forward to it cannot be made reliable: a frame's stated time is the instant it
+    # starts, so a seek there is a coin toss between that frame and its neighbour, and a seek
+    # even slightly past it produces nothing because the picture has ended. Read backwards, it
+    # is the first frame there is. See `ffmpeg.frame_png`.
+    back = max(0.02, 1.5 / rate_value)
+    with tempfile.TemporaryDirectory(prefix="thetrimmer-tail-") as folder:
+        work = Path(folder)
+        segment = work / "segment.png"
+        if not ff.frame_png(output, back, segment, from_end=True):
+            return None
+        scores: dict[int, float] = {}
+        for delta in range(-search, search + 1):
+            frame = work / f"source{delta:+d}.png"
+            # The source frame's mark, and a nudge just inside it, for the same reason.
+            at = source_start + (spec.out_frame - 1 + delta) / rate_value - 0.02 / rate_value
             if ff.frame_png(source, at, frame):
                 scores[delta] = ff.ssim(segment, frame)
         if not scores:
             return None
         best = max(scores, key=lambda delta: scores[delta])
         return best, scores[best]
+
+
+def _frames_by_index(path: Path, first: int, count: int, rate: float,
+                     start_time: float = 0.0, frame_time=None) -> list[str]:
+    """The MD5 of ``count`` decoded frames starting at frame ``first``, counted from the
+    start of the file.
+
+    The stream is seeked to a couple of frames *before* the first one wanted and the exact
+    frames are then cut out of what was decoded by index with ``select``. This is the
+    difference between asking for "the frame at 9.2917 s" and getting the frame that is
+    actually there: a window that starts one frame out cannot match anywhere, so the check
+    reports a correct cut as sitting in a "re-encoded region".
+
+    The seek target comes from ``frame_time`` when a caller can supply one -- the container's
+    own statement of when the frame is shown. Computing it as ``start + n / rate`` instead
+    drifts past the frame it names on a long file, for the same reason it does in the trim:
+    at 30 fps on a thirty-minute master the two are a fraction of a millisecond apart, which
+    is enough to land the seek inside the next frame.
+    """
+    if count <= 0 or first < 0 or rate <= 0:
+        return []
+    back = 2
+    base = max(0, first - back)
+    offset = first - base
+    if frame_time is not None:
+        seek_time = frame_time(base)
+    else:
+        seek_time = start_time + base / rate
+    # `select` addresses frames from the beginning of the *decoded* stream, and the seek drops
+    # everything before it, so the wanted frames are at `offset .. offset + count - 1` of what
+    # remains. `-vsync 0` stops the encoder duplicating frames to fill a constant rate.
+    expression = (f"select='between(n\\,{offset}\\,{offset + count - 1})'")
+    result = ff._run_quiet(
+        [ff.tool("ffmpeg"), "-hide_banner", "-v", "error",
+         "-ss", f"{seek_time:.6f}", "-i", str(path),
+         "-map", "0:v:0", "-an", "-vf", expression, "-vsync", "0",
+         "-f", "framemd5", "-"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return []
+    hashes: list[str] = []
+    for line in result.stdout.splitlines():
+        if line.startswith("#") or not line.strip():
+            continue
+        parts = [token.strip() for token in line.split(",")]
+        if len(parts) >= 6:
+            hashes.append(parts[5])
+    return hashes
 
 
 def check_subtitles(source_srt: Path, output_srt: Path, start: float,
@@ -401,6 +514,30 @@ def verify(source: Path, spec: TrimSpec, report: TrimReport, media: MediaInfo) -
         result.checks.append(
             f"head length the first {head_seconds:.3f}s are a crf-{spec.crf} re-encode, "
             "as designed; every frame after them is the original packet data"
+        )
+
+    # The tail is a re-encode for the same reason the head is, so it is checked the same way --
+    # and it matters more, because it is where the file ends. A tail that came out a frame long
+    # or short reads as a correct file and is wrong at the only frame a client will look for.
+    # Checked whenever there is a tail at all: the shortest useful one is a single frame.
+    tail_seconds = report.plan.tail_frames / float(media.grid_rate)
+    if report.plan.tail_frames:
+        looked = tail_frame_offset(source, output, spec, report.plan, media, facts)
+        if looked is None:
+            result.failures.append("tail        could not read the re-encoded tail")
+        else:
+            delta, score = looked
+            if abs(delta) <= 1 and score >= 0.85:
+                result.checks.append(
+                    f"tail        the last frame is the frame the out point names "
+                    f"({delta:+d} frame, ssim {score:.3f})")
+            else:
+                result.failures.append(
+                    f"tail        the file ends {delta:+d} frame(s) from the out point "
+                    f"(ssim {score:.3f})")
+        result.checks.append(
+            f"tail length the last {tail_seconds:.3f}s are a crf-{spec.crf} re-encode, "
+            "which is what makes the segment end on the frame that was asked for"
         )
 
     if spec.subtitles is not None:

@@ -13,14 +13,20 @@ Feature: Verification
       | failed           | failed      |
       | was not run      | not checked |
 
-  Scenario: alignment samples avoid the head and the overshoot
-    Given a head patch of 100 frames in a segment of 3000 frames
+  Scenario: alignment samples stay inside the copied body, which is the only part that can match
+    Given a head patch of 100 frames, a copied body of 2800, and a re-encoded tail of 100
     When I choose the frames to sample
     Then every sample is after the re-encoded head
+    And every sample's window ends before the re-encoded tail
     And every sample sits inside the range that was asked for
 
+  Scenario: a segment that is all re-encode gets no alignment sample at all
+    Given a head patch of 0 frames, a copied body of 0, and a re-encoded tail of 30
+    When I choose the frames to sample
+    Then no sample is chosen
+
   Scenario: a short segment still gets a sample
-    Given a head patch of 10 frames in a segment of 30 frames
+    Given a head patch of 10 frames, a copied body of 20, and a re-encoded tail of 10
     When I choose the frames to sample
     Then at least one sample is chosen
 

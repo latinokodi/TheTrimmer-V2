@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 from fractions import Fraction
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -98,14 +99,18 @@ def a_master(rate: int, frames: int) -> dict:
     return {"media": master(frames, Fraction(rate)), "keyframes": []}
 
 
-@given(parsers.parse("its keyframes are at {first:f} seconds and {second:f} seconds"))
-def two_keyframes(world: dict, first: float, second: float, monkeypatch) -> None:
-    monkeypatch.setattr(cutter.ff, "keyframes", lambda *a, **k: [first, second])
-
-
-@given(parsers.parse("its keyframes are at {only:f} seconds"))
-def one_keyframe(world: dict, only: float, monkeypatch) -> None:
-    monkeypatch.setattr(cutter.ff, "keyframes", lambda *a, **k: [only])
+@given(parsers.parse("its keyframes are at {marks}"))
+def keyframes_at(world: dict, marks: str, monkeypatch) -> None:
+    """One step for any number of keyframes: ``4.0 seconds`` or
+    ``4.0 seconds, 8.0 seconds and 12.0 seconds``. Both the keyframe that opens the body and
+    the last keyframe before the out point are read off this list, so a scenario that wants a
+    copied body needs two of them and one that wants a re-encoded tail needs a third."""
+    seconds = [
+        float(token.replace("seconds", "").strip())
+        for token in marks.replace(" and ", ",").split(",")
+        if token.replace("seconds", "").strip()
+    ]
+    monkeypatch.setattr(cutter.ff, "keyframes", lambda *a, **k: seconds)
 
 
 @given(parsers.parse("its video timescale is {ticks:d}"))
@@ -116,11 +121,6 @@ def timescale(world: dict, ticks: int) -> None:
 @given(parsers.parse("a keyframe that opens at {opens:f} seconds"))
 def a_keyframe_opens(world: dict, opens: float) -> None:
     world["keyframe_seconds"] = opens
-
-
-@given(parsers.parse("the next keyframe at {following:f} seconds"))
-def the_next_keyframe(world: dict, following: float) -> None:
-    world["next_keyframe_seconds"] = following
 
 
 @given(parsers.parse("a master that claims {claimed:d} fps and averages {num:d}/{den:d}"))
@@ -162,13 +162,21 @@ def a_check(world: dict, state: str) -> None:
     world["check"] = state
 
 
-@given(parsers.parse("a head patch of {head:d} frames in a segment of {frames:d} frames"),
+@given(parsers.parse("a head patch of {head:d} frames, a copied body of {body:d}, and a "
+                     "re-encoded tail of {tail:d}"),
        target_fixture="world")
-def a_head_patch(head: int, frames: int) -> dict:
+def a_three_piece_segment(head: int, body: int, tail: int) -> dict:
+    """A segment shaped like a real cut: a re-encoded head, the copied body, a re-encoded tail.
+
+    The alignment check can only speak about the copied body -- the other two are fresh encodes
+    whose frames cannot hash-match the source -- so this is the shape its sampling has to
+    respect.
+    """
+    frames = head + body + tail
     media = master(frames + head, Fraction(25))
-    plan = cutter.TrimPlan(media, "headpatch", head, head, frames)
-    spec = spec_for({}, 0, head + frames)
-    return {"media": media, "plan": plan, "spec": spec}
+    plan = cutter.TrimPlan(media, "headpatch", head, head, body, tail_frames=tail)
+    spec = spec_for({}, 0, frames)
+    return {"media": media, "plan": plan, "spec": spec, "segment_frames": frames}
 
 
 @given("samples that report -1, 0 and 2 frames")
@@ -212,14 +220,28 @@ def mark_frames(world: dict, in_frame: int, out_frame: int) -> None:
 
 
 @when(parsers.parse("a body of {frames:d} frames is copied from that keyframe"))
-def copy_a_body(world: dict, frames: int) -> None:
+def copy_a_body(world: dict, frames: int, monkeypatch, tmp_path) -> None:
     plan = cutter.TrimPlan(
         world["media"], "headpatch", 0, 1, frames,
         keyframe_seconds=world["keyframe_seconds"],
-        next_keyframe_seconds=world["next_keyframe_seconds"],
+        tail_frames=1,
+        tail_keyframe_seconds=9.0,
     )
     world["plan"] = plan
-    world["aim"], world["length"] = cutter.body_seek(plan, world["media"].grid_rate, frames)
+    world["spec"] = spec_for(world, 0, frames + 1)
+    world["copied"] = []
+    body = tmp_path / "body.mp4"
+
+    # The copy reads the source's packets, and there is no source here, so the reader is
+    # replaced by one that records the range it was asked for and writes a stub file.
+    def fake(source, destination, first, last):
+        world["copied"].append((first, last))
+        Path(destination).write_bytes(b"")
+
+    monkeypatch.setattr(cutter, "_copy_packets", fake)
+    monkeypatch.setattr(cutter.ff, "inspect", lambda path: SimpleNamespace(frames=frames))
+    world["body_commands"], world["body_frames"] = cutter._copy_body(
+        world["media"], world["spec"], plan, body, lambda *_: None, None)
 
 
 @when(parsers.parse("I name the output for frames {first:d} to {last:d} at {rate:d} fps"))
@@ -364,7 +386,15 @@ def plan_is(world: dict, mode: str) -> None:
 
 @then(parsers.parse("the plan re-encodes {frames:d} frames"))
 def plan_reencodes(world: dict, frames: int) -> None:
-    assert world["plan"].head_frames == frames
+    """Both patches together: the run to the opening keyframe and the run from the last
+    keyframe before the out point. Everything between them is the original packets."""
+    plan = world["plan"]
+    assert plan.head_frames + plan.tail_frames == frames
+
+
+@then(parsers.parse("the plan re-encodes {head:d} frames at the head and {tail:d} at the tail"))
+def plan_reencodes_ends(world: dict, head: int, tail: int) -> None:
+    assert (world["plan"].head_frames, world["plan"].tail_frames) == (head, tail)
 
 
 @then(parsers.parse("the plan copies {frames:d} frames untouched"))
@@ -377,20 +407,25 @@ def plan_says_no_keyframe(world: dict) -> None:
     assert any("no keyframe inside the segment" in note for note in world["plan"].notes)
 
 
-@then("the copy is aimed inside the GOP and not on its boundary")
-def aimed_inside(world: dict) -> None:
-    aim = float(world["aim"])
-    opens = world["keyframe_seconds"]
-    following = world["next_keyframe_seconds"]
-    assert opens < aim < following, f"{aim} is not inside ({opens}, {following})"
+@then("the copy takes exactly the frames the plan names, by index")
+def copy_takes_the_named_frames(world: dict) -> None:
+    """The claim the packet copy makes, and the one a time-based copy could not.
+
+    ``ffmpeg -ss … -t … -c copy`` stops when a timestamp passes the length it was given, and
+    its answer moves in steps of a whole packet group: measured on a master whose frames are
+    33.3 ms apart, five milliseconds off the request moved the stop fifteen frames, and a
+    request for 189 frames came back with 191. Reading the container's packets and writing the
+    ones wanted is exact by construction, so the range is asserted here rather than the pixels.
+    """
+    plan = world["plan"]
+    assert world["copied"] == [(plan.keyframe, plan.keyframe + plan.body_frames - 1)]
+    assert world["body_frames"] == plan.body_frames
 
 
-@then("the length asked for is short by exactly the preroll the aim will include")
-def length_gives_preroll_back(world: dict) -> None:
-    frames = world["plan"].body_frames
-    wanted = frames / float(world["media"].grid_rate)
-    preroll = float(world["aim"]) - world["keyframe_seconds"]
-    assert world["length"] == pytest.approx(wanted - preroll, abs=1e-6)
+@then("the length is not asked for as a span of time")
+def no_time_span(world: dict) -> None:
+    """There is no ``-t``/``-ss`` pair left to be imprecise: the copy issues no command at all."""
+    assert world["body_commands"] == []
 
 
 @then(parsers.parse("the head pass pins the timescale to {ticks:d}"))
@@ -404,15 +439,89 @@ def head_pins_timescale(world: dict, ticks: int) -> None:
     assert commands[commands.index("-video_track_timescale") + 1] == str(ticks)
 
 
-@then("no pass counts frames")
-def no_pass_counts_frames(world: dict) -> None:
-    head = world["plan"].head_frames
-    plan = cutter.TrimPlan(world["media"], "headpatch", head, head, world["plan"].body_frames)
-    for step in [cutter._encode_head(world["media"], world["spec"], plan, Path("h.mp4"),
-                                     lambda *_: None, None)]:
-        assert "-frames:v" not in step
-    assert "-frames:v" not in cutter._copy(world["media"], world["spec"], plan,
-                                           Path("o.mp4"), lambda *_: None, None)
+@then("no pass that copies packets counts frames")
+def no_copy_pass_counts_frames(world: dict, monkeypatch, tmp_path) -> None:
+    """A copy of the source's own packets must not pin its length with ``-frames:v``.
+
+    With B-frames ``-frames:v`` counts packets in **decode** order, so it drops a frame near
+    the end that has not been handed over yet and keeps one that comes after the out point.
+    Measured on a 91-frame cut: the last frame kept was the source's 151st while the 150th
+    that was asked for had gone.
+
+    There is nothing left to assert about a command, though, because the copy issues none: it
+    selects the packets it wants by frame index and writes them itself, which cannot drop a
+    frame. So the check is that the packet reader runs and no ffmpeg pass is launched for it.
+    """
+    plan = world["plan"]
+    calls = []
+
+    def fake(source, destination, first, last):
+        calls.append((first, last))
+        Path(destination).write_bytes(b"")
+
+    def no_pass(*args, **kwargs):
+        raise AssertionError("the body copy launched an ffmpeg pass")
+
+    monkeypatch.setattr(cutter, "_copy_packets", fake)
+    monkeypatch.setattr(cutter.ff, "run", no_pass)
+    monkeypatch.setattr(cutter.ff, "inspect", lambda path: SimpleNamespace(frames=plan.body_frames))
+    commands, measured = cutter._copy_body(world["media"], world["spec"], plan,
+                                           tmp_path / "b.mp4", lambda *_: None, None)
+    assert calls == [(plan.keyframe, plan.keyframe + plan.body_frames - 1)]
+    assert measured == plan.body_frames
+    assert commands == []
+
+
+@then("both re-encoded ends are bounded by the frame count the plan names")
+def reencoded_ends_pin_their_length(world: dict) -> None:
+    """The rule for a piece that is re-encoded is the opposite of the rule for a copy: nothing
+    can be dropped by counting, because the frames are being produced rather than selected, and
+    bounding it by time leaves the count to how many of the source's own frames fall inside the
+    interval -- which came back one frame long on a master that averages 29.999431."""
+    plan = world["plan"]
+    steps = [
+        cutter._encode_head(world["media"], world["spec"], plan, Path("h.mp4"),
+                            lambda *_: None, None),
+        cutter._encode_tail(world["media"], world["spec"], plan, Path("t.mp4"),
+                            lambda *_: None, None),
+    ]
+    for step, frames in zip(steps, (plan.head_frames, plan.tail_frames)):
+        assert "-frames:v" in step
+        assert step[step.index("-frames:v") + 1] == str(frames)
+
+
+@when("the plan carries the container's own time for the in point")
+def plan_carries_container_time(world: dict) -> None:
+    """No ffmpeg is run; the plan is built with, and without, the container's timestamps."""
+    world["container_time"] = 286.533000
+
+
+@then("both re-encoded ends are seeked to the time the container states")
+def reencoded_ends_seek_exactly(world: dict) -> None:
+    """A seek aimed at a time *computed* from the average rate lands past the frame it names on
+    a long master, so the re-encoded end starts one frame late. The container's own timestamps
+    are what the seek is aimed at when they are available, and the computed time remains the
+    fallback for a file that does not report them."""
+    media = world["media"]
+    in_time = world["container_time"]
+    spec = spec_for(world, 8596, 28100)
+
+    with_container = cutter.TrimPlan(
+        media, "headpatch", 8750, 154, 19250, tail_frames=100,
+        keyframe_seconds=291.667, tail_keyframe_seconds=933.333,
+        in_seconds=in_time, out_seconds=291.633000,
+    )
+    head = cutter._encode_head(media, spec, with_container, Path("h.mp4"),
+                               lambda *_: None, None)
+    assert head[head.index("-ss") + 1] == f"{in_time:.6f}"
+
+    # Without one, the computed grid time is used -- which is what every build before this
+    # did, and what a source with no timestamps still gets.
+    without = cutter.TrimPlan(media, "headpatch", 8750, 154, 19250, tail_frames=100,
+                              keyframe_seconds=291.667, tail_keyframe_seconds=933.333)
+    fallback = cutter._encode_head(media, spec, without, Path("h.mp4"),
+                                   lambda *_: None, None)
+    assert fallback[fallback.index("-ss") + 1] == f"{media.seconds_of(8596):.6f}"
 
 
 @then(parsers.parse('the name is "{name}"'))
@@ -485,6 +594,21 @@ def it_reads(world: dict, verdict: str) -> None:
 @then("every sample is after the re-encoded head")
 def samples_after_head(world: dict) -> None:
     assert all(frame >= world["plan"].head_frames for frame in world["samples"])
+
+
+@then("every sample's window ends before the re-encoded tail")
+def samples_before_tail(world: dict) -> None:
+    """The far end is a fresh encode too, so a window that runs into it matches nowhere and the
+    check reports a fault in a file that is exact. This is what the sampling has to guarantee."""
+    body_end = world["spec"].frames - world["plan"].tail_frames
+    assert all(frame + verifier.WINDOW <= body_end for frame in world["samples"])
+
+
+@then("no sample is chosen")
+def no_sample(world: dict) -> None:
+    """When every frame of the segment is a re-encode there is nothing the hash comparison can
+    honestly speak about, and saying nothing is better than a false alarm."""
+    assert world["samples"] == []
 
 
 @then("every sample sits inside the range that was asked for")

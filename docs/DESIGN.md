@@ -209,6 +209,51 @@ The same measurement found two more faults in the same area:
   is why the picture ran ahead of the sound. `body_seek` aims inside the GOP instead and takes the
   preroll — now a known quantity — off the copied length.
 
+## 17a. The body copy reads packets, because ffmpeg's own copy cannot count
+
+A stream copy bounded by `ffmpeg -ss … -t … -c copy` stops when the timestamp it is watching passes
+the length it was given, and its answer moves in steps of a whole packet group. That was measured
+rather than assumed:
+
+* On the 60 fps master, shortening the request by **5 ms** moved the stop by **15 frames** — where a
+  frame is 16.7 ms, so five milliseconds should have moved it by a third of one.
+* A request for 189 frames came back with **191**; a request for 19250 came back 19252, then 19249,
+  then 19251 as the length was corrected. It never lands on the number asked for, so no arithmetic
+  can make it. The delivered file was a frame long and the seam against the re-encoded tail was a
+  frame out.
+
+**Decision.** The body — the one region that must be the source's own packets — is written by
+reading the container with PyAV and muxing exactly the frames the plan names. Measured on the same
+range: 189 packets in, 189 frames out, every one byte-identical to the source.
+
+This is the architecture the two reference implementations use, and for this reason. `avcut`
+re-encodes the GOP either side of a cut point; `smartcut` cuts at the packet level and re-encodes
+only around the cut points. Both are doing what the head and tail patches do, and both had to reach
+below the command line to do it.
+
+**Consequences, stated plainly.** The engine now depends on PyAV, which brings its own ffmpeg
+libraries (27.6 MB wheel, no compiler, wheels for all three platforms) alongside the system `ffmpeg`
+binary the re-encodes still use. Two copies of the same libraries on disk is the price of an exact
+frame count. The corpus is no longer "one dependency"; it is one dependency and one binary.
+
+## 17b. A frame's time comes from the container, not from the average rate
+
+`seconds_of(frame)` computes `start_time + frame / grid_rate`, and `grid_rate` is the container's
+*average* rate. On a master whose frames do not sit exactly on that average — the reference source's
+frames step by 0.0333 s while its average rate, stretched over 1872.633 s, implies a very slightly
+larger step — the computed time drifts ahead of the frame it names. By frame 8596 it was 0.28 ms
+past, which is enough for `-ss` aimed there to land **inside the next frame**.
+
+The symptom was a head that started exactly one frame late on a 31-minute master and was exact on a
+10-minute one: the error grows with the frame number, so only a long file shows it. The product had
+been reporting the drift as a warning on the plan and then seeking by the computed time anyway.
+
+**Decision.** A seek is aimed at the time the container states for the frame, read once per file by
+`FrameTimes` and kept. The computed time remains the fallback for a source that reports no
+timestamps, so nothing that worked before stops working. The verifier's own window extraction uses
+the same reader: it had the same drift, and it was reporting a correct cut as one frame late —
+a checker failing the file it was checking.
+
 ## 18. The log is read at its top, so the newest line is at its top
 
 The log is the record of a cut, and the line being read is the one that just happened. It used to

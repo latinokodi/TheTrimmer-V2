@@ -23,7 +23,7 @@ NTSC_30 = Fraction(30000, 1001)
 CINEMA = Fraction(24000, 1001)
 
 
-def media(frames: int = 300, rate: Fraction = Fraction(25), codec: str = "h264") -> MediaInfo:
+def media(frames: int = 500, rate: Fraction = Fraction(25), codec: str = "h264") -> MediaInfo:
     """A source with the fields the planner reads. No file behind it, deliberately: the
     planner's decisions are arithmetic and arithmetic does not need a disk."""
     return MediaInfo(
@@ -63,37 +63,67 @@ def keyframes(monkeypatch):
 
 
 # ---------------------------------------------------------------------------------------
-# The three modes
+# The three pieces: the run to the opening keyframe, the copied packets, the run to the mark
 # ---------------------------------------------------------------------------------------
 
-def test_an_in_point_on_a_keyframe_is_copied_whole(keyframes):
+def test_an_in_point_on_a_keyframe_re_encodes_only_the_tail(keyframes):
+    # Keyframes at 4.0s and 8.0s (frames 100 and 200 at 25 fps). The in point is the first
+    # keyframe, so nothing needs re-encoding at the front; the body is the original packets
+    # from 100 to 199; the tail is re-encoded from 200 to the out point.
+    keyframes(4.0, 8.0)
+    plan = cutter.plan_trim(spec(100, 300), media())
+    assert plan.mode == "copy"
+    assert (plan.keyframe, plan.head_frames, plan.body_frames, plan.tail_frames) == \
+        (100, 0, 100, 100)
+    assert plan.requested == 200
+
+
+def test_both_ends_are_re_encoded_and_the_middle_is_copied(keyframes):
+    # Keyframes at frames 100, 200 and 300 at 25 fps; in point at frame 150, out point at 350.
+    # The in point sits inside the first GOP, so frames 150..199 are re-encoded; 200..299 are
+    # the original packets; and 300..349 are re-encoded again so the segment ends on the frame
+    # that was asked for. Getting the first split wrong is the slow-motion bug: the copied
+    # body is rescanned against a timescale it did not have.
+    keyframes(4.0, 8.0, 12.0)
+    plan = cutter.plan_trim(spec(150, 350), media())
+    assert plan.mode == "headpatch"
+    assert plan.keyframe == 200
+    assert plan.head_frames == 50
+    assert plan.body_frames == 100
+    assert plan.tail_frames == 50
+    assert plan.requested == 200
+
+
+def test_the_tail_re_encodes_from_the_last_keyframe_before_the_out_point(keyframes):
+    """Its length is whatever is left after that keyframe, not a whole GOP."""
+    keyframes(4.0, 8.0, 12.0)
+    plan = cutter.plan_trim(spec(150, 450), media())
+    # Out point is frame 450; the last keyframe before it is frame 300, so 150 frames are
+    # re-encoded at the tail -- not until some later keyframe, and not a whole GOP.
+    assert plan.tail_frames == 150
+    assert plan.tail_keyframe_seconds == 12.0
+    assert plan.requested == 300
+
+
+def test_a_tail_that_ends_before_the_next_keyframe_needs_no_body(keyframes):
+    """The tail is a run of frames, so it does not wait for the next keyframe: a range that
+    ends before one is re-encoded whole rather than lengthened to reach a boundary."""
+    keyframes(4.0, 12.0)
+    plan = cutter.plan_trim(spec(150, 200), media())
+    assert plan.mode == "reencode"
+    assert plan.tail_frames == 0
+    assert any("no keyframe inside the segment" in note for note in plan.notes)
+
+
+def test_a_single_keyframe_leaves_nothing_to_copy(keyframes):
+    """A copied middle needs two keyframes: one to open it and one to close it. A file that
+    only has the first has no packets that can be passed through untouched."""
     keyframes(4.0)
     plan = cutter.plan_trim(spec(100, 200), media())
-    assert plan.mode == "copy"
-    assert (plan.keyframe, plan.head_frames, plan.body_frames) == (100, 0, 100)
-
-
-def test_an_in_point_between_keyframes_re_encodes_only_the_head(keyframes):
-    # Keyframe at frame 75; in point at frame 50. Frames 50..74 are re-encoded, 75..199 are
-    # the original packets. Getting this split wrong is the slow-motion bug: the copied body
-    # is rescanned against a timescale it did not have.
-    keyframes(3.0)
-    plan = cutter.plan_trim(spec(50, 200), media())
-    assert plan.mode == "headpatch"
-    assert plan.keyframe == 75
-    assert plan.head_frames == 25
-    assert plan.body_frames == 125
-    assert plan.requested == 150
-
-
-def test_a_range_with_no_keyframe_in_it_is_re_encoded_whole(keyframes):
-    # The next keyframe is past the out point, so there is no packet boundary to copy from.
-    keyframes(9.0)
-    plan = cutter.plan_trim(spec(50, 200), media())
     assert plan.mode == "reencode"
-    assert plan.keyframe == -1
     assert plan.body_frames == 0
-    assert any("no keyframe inside the segment" in note for note in plan.notes)
+    assert plan.tail_frames == 0
+    assert any("no copied body fits" in note for note in plan.notes)
 
 
 def test_no_keyframe_at_all_is_re_encoded_whole(keyframes):
@@ -122,7 +152,7 @@ def test_a_negative_in_point_is_refused(keyframes):
 def test_an_out_point_past_the_end_is_refused_and_says_where_the_end_is(keyframes):
     keyframes(4.0)
     with pytest.raises(cutter.TrimError, match="past the end of the file"):
-        cutter.plan_trim(spec(100, 301), media())
+        cutter.plan_trim(spec(100, 501), media())
 
 
 def test_a_source_whose_codec_cannot_be_patched_is_refused_with_a_reason(keyframes):
@@ -135,14 +165,15 @@ def test_a_source_whose_codec_cannot_be_patched_is_refused_with_a_reason(keyfram
 # The two things that are warnings rather than refusals
 # ---------------------------------------------------------------------------------------
 
-def test_a_concat_offset_that_would_empty_the_head_is_clamped_and_recorded(keyframes):
-    # A head of zero frames is not a head. Clamping silently would hide a bad offset, so the
-    # plan carries a note saying what it did.
-    keyframes(3.0)
-    plan = cutter.plan_trim(spec(50, 200, concat_offset=25), media())
-    assert plan.head_frames >= 1
-    assert any("clamped" in note for note in plan.notes)
-
+def test_a_concat_offset_that_would_empty_the_head_is_re_encoded_whole(keyframes):
+    # A tail cannot absorb a concat offset the way a head does -- it is anchored to the out
+    # point -- so when the offset would leave no copied middle, the segment is re-encoded
+    # whole. It used to clamp the head to one frame instead, which silently left the out
+    # point overshooting, so the note is the evidence that it refused rather than guessed.
+    keyframes(4.0, 8.0, 12.0)
+    plan = cutter.plan_trim(spec(150, 450, concat_offset=50), media())
+    assert plan.mode == "reencode"
+    assert any("no copied body fits" in note for note in plan.notes)
 
 def test_a_file_whose_timestamps_are_off_its_grid_is_planned_anyway_and_says_so(keyframes):
     # No check can make a mark exact against a frame grid that does not exist, so the honest

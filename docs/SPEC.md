@@ -26,14 +26,15 @@ section follows from that one fact.
 
 | Id | Requirement | Verified by |
 |---|---|---|
-| **R1.1** | A range whose in point is a keyframe is copied whole, with nothing re-encoded. | `cutting.feature:a range that begins on a keyframe is copied whole` |
-| **R1.2** | A range whose in point falls between keyframes re-encodes **only** the frames from the in point to the first keyframe at or after it, and copies every frame after that untouched. | `cutting.feature:a range that begins between keyframes re-encodes only the head` |
+| **R1.1** | A range whose in point is a keyframe copies its body with nothing re-encoded at the front. | `cutting.feature:a range that begins on a keyframe re-encodes only its far end` |
+| **R1.2** | Both ends of a range are re-encoded — the run to the keyframe that opens the body, and the run from the last keyframe before the out point — and every frame between them is copied untouched. | `cutting.feature:a range that begins between keyframes re-encodes both ends` |
 | **R1.3** | A range containing no keyframe is re-encoded whole, and the plan says so **before** anything is written. | `cutting.feature:a range with no keyframe in it is re-encoded whole, and the plan says so first` |
-| **R1.4** | The copied body begins on the keyframe it was aimed at, and is not a whole GOP long. | `cutting.feature:a body copy is aimed inside the GOP, because aiming at the keyframe takes the one before it` |
+| **R1.4** | The copied body holds **exactly** the frames the plan names, taken by frame index from the container's packets, and the copy is not bounded by a span of time. | `cutting.feature:a body copy takes exactly the frames the plan names, by index` |
 | **R1.5** | The output's video timescale is the source's own. | `cutting.feature:the output is written on the source's own timescale` |
-| **R1.6** | A pass is bounded by time and never by a frame count. | `cutting.feature:a pass is bounded by time, never by a frame count` |
-| **R1.7** | The copied body may run past the out point as far as the next packet boundary, and that overshoot is recorded rather than treated as a failure. | `verification.feature:overshoot is recorded and not failed` |
-| **R1.8** | The output is written beside the source, named for the range it holds, with no character Windows refuses. | `cutting.feature:the finished file is named for the range it holds` |
+| **R1.6** | A pass that copies the source's packets is never bounded by a frame count; a pass that re-encodes is bounded by the frame count the plan names. | `cutting.feature:a re-encoded piece pins its own length, because nothing is dropped by counting` |
+| **R1.7** | A seek is aimed at the time the container states for the frame, so a long source does not start its re-encoded end one frame late. | `cutting.feature:the ends are seeked to the time the container states, not to a computed one` |
+| **R1.8** | The far end of a segment is a re-encode, so it is checked against the frame the out point names rather than by hashing, and no alignment sample is taken where a hash comparison could not be honest. | `verification.feature:alignment samples stay inside the copied body, which is the only part that can match` |
+| **R1.9** | The output is written beside the source, named for the range it holds, with no character Windows refuses. | `cutting.feature:the finished file is named for the range it holds` |
 
 ## 2. Rates and frame grids
 
