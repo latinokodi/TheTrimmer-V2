@@ -165,36 +165,6 @@ def a_check(world: dict, state: str) -> None:
 @given(parsers.parse("a head patch of {head:d} frames, a copied body of {body:d}, and a "
                      "re-encoded tail of {tail:d}"),
        target_fixture="world")
-def a_three_piece_segment(head: int, body: int, tail: int) -> dict:
-    """A segment shaped like a real cut: a re-encoded head, the copied body, a re-encoded tail.
-
-    The alignment check can only speak about the copied body -- the other two are fresh encodes
-    whose frames cannot hash-match the source -- so this is the shape its sampling has to
-    respect.
-    """
-    frames = head + body + tail
-    media = master(frames + head, Fraction(25))
-    plan = cutter.TrimPlan(media, "headpatch", head, head, body, tail_frames=tail)
-    spec = spec_for({}, 0, frames)
-    return {"media": media, "plan": plan, "spec": spec, "segment_frames": frames}
-
-
-@given("samples that report -1, 0 and 2 frames")
-def disagreeing_samples(world: dict) -> None:
-    world["offsets"] = [verifier.OffsetCheck(0, -1), verifier.OffsetCheck(1, 0),
-                        verifier.OffsetCheck(2, 2)]
-
-
-@given(parsers.parse("samples that all report {offset:d} frames"))
-def agreeing_samples(world: dict, offset: int) -> None:
-    world["offsets"] = [verifier.OffsetCheck(0, offset), verifier.OffsetCheck(1, offset)]
-
-
-@given("samples that could not be measured")
-def unmeasurable_samples(world: dict) -> None:
-    world["offsets"] = [verifier.OffsetCheck(0, None), verifier.OffsetCheck(1, None)]
-
-
 @given("a transcript with a cue across the in point and one across the out point")
 def cues_across_the_marks(world: dict) -> None:
     world["cues"] = [
@@ -299,16 +269,6 @@ def window_is_told(world: dict) -> None:
         )
     )
     world["verdict"] = world["rows"][0]["status"]["kind"] if world["rows"] else "not checked"
-
-
-@when("I choose the frames to sample")
-def choose_samples(world: dict) -> None:
-    world["samples"] = verifier.sample_frames(world["spec"], world["plan"], world["media"], 3)
-
-
-@when("I ask what offset they agree on")
-def ask_consensus(world: dict) -> None:
-    world["agreed"] = verifier.consensus(world["offsets"])
 
 
 @when("the segment is cut")
@@ -595,41 +555,6 @@ def round_trip_holds(world: dict) -> None:
 @then(parsers.parse('it reads "{verdict}"'))
 def it_reads(world: dict, verdict: str) -> None:
     assert world["verdict"] == verdict
-
-
-@then("every sample is after the re-encoded head")
-def samples_after_head(world: dict) -> None:
-    assert all(frame >= world["plan"].head_frames for frame in world["samples"])
-
-
-@then("every sample's window ends before the re-encoded tail")
-def samples_before_tail(world: dict) -> None:
-    """The far end is a fresh encode too, so a window that runs into it matches nowhere and the
-    check reports a fault in a file that is exact. This is what the sampling has to guarantee."""
-    body_end = world["spec"].frames - world["plan"].tail_frames
-    assert all(frame + verifier.WINDOW <= body_end for frame in world["samples"])
-
-
-@then("no sample is chosen")
-def no_sample(world: dict) -> None:
-    """When every frame of the segment is a re-encode there is nothing the hash comparison can
-    honestly speak about, and saying nothing is better than a false alarm."""
-    assert world["samples"] == []
-
-
-@then("every sample sits inside the range that was asked for")
-def samples_inside(world: dict) -> None:
-    assert all(frame + verifier.WINDOW <= world["spec"].frames for frame in world["samples"])
-
-
-@then("at least one sample is chosen")
-def one_sample(world: dict) -> None:
-    assert len(world["samples"]) >= 1
-
-
-@then("there is no agreed offset")
-def no_agreement(world: dict) -> None:
-    assert world["agreed"] is None
 
 
 @then(parsers.parse("the agreed offset is {offset:d}"))

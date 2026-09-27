@@ -14,8 +14,6 @@ no third-party libraries.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -81,52 +79,6 @@ class VerifyResult:
         lines += [f"  FAIL {failure}" for failure in self.failures]
         lines.append("PASS" if self.ok else f"{len(self.failures)} check(s) failed")
         return "\n".join(lines)
-
-
-def sample_frames(spec: TrimSpec, plan, media: MediaInfo, count: int = 3) -> list[int]:
-    """Frames of the output at which to check alignment, counted from its start.
-
-    Deliberately inside the **copied body and nowhere else**, because that is the only region
-    whose frames are the source's own packets and therefore the only one a hash comparison can
-    speak about. Both of the re-encoded regions are excluded: the head at the near end, and
-    now the tail at the far end, which used to be copied and stopped on a packet boundary. A
-    sample taken in either one reports "no matching frames in the source" for a file that is
-    perfectly correct, which is a false alarm rather than a finding.
-
-    On a short segment those margins would swallow every sample, so they shrink with it.
-    """
-    rate = float(media.grid_rate)
-    # The margin keeps samples clear of the re-encoded head, and on a long segment two seconds
-    # is right. It must never be larger than the copied body itself, though: a 38-frame body
-    # with a 60-frame margin puts every sample in the tail, which is a fresh encode and matches
-    # nothing -- measured, all three samples reported "no matching frames" for a file whose body
-    # was frame-for-frame the source's own packets.
-    body_frames = max(0, spec.frames - plan.head_frames - plan.tail_frames)
-    margin = max(1, min(round(2.0 * rate), spec.frames // 8, max(1, body_frames // 4)))
-    # The re-encoded head occupies output frames 1..head_frames, so the first frame a hash
-    # comparison can speak about is the one after it. `plan.head_frames` is a count and the
-    # output's frames are counted from one, which is the off-by-one that put every sample inside
-    # the head on a six-frame cut -- measured, all three samples reported "no matching frames"
-    # for a file whose body was frame-exact.
-    body_start = plan.head_frames + 1
-    first = max(body_start + margin, margin)
-    # The last sample's *window* has to finish inside the copied body: frames at or after the
-    # tail's first frame are a fresh encode and can never match.
-    body_end = spec.frames - plan.tail_frames
-    last = body_end - WINDOW
-    if last < first:
-        if spec.frames <= 0:
-            return []
-        middle = max(body_start, min(body_end - 1, max(body_start, body_end // 2)))
-        if middle < body_start or middle >= body_end:
-            # Nothing of the copied body is wide enough to sample: the alignment check has
-            # nothing it can honestly say, and the head and tail checks carry the report.
-            return []
-        return [max(0, middle)]
-    if count == 1 or first == last:
-        return [(first + last) // 2]
-    step = (last - first) / (count - 1)
-    return [first + round(step * index) for index in range(count)]
 
 
 def body_is_intact(source: Path, output: Path, spec: TrimSpec, plan, media: MediaInfo,
@@ -217,146 +169,6 @@ def head_within_frame(source: Path, output: Path, media: MediaInfo, facts,
         return ff.ssim(mine, theirs)
 
 
-def measure_offset(source: Path, output: Path, in_frame: int, rate, at_frame: int, *,
-                   window: int = WINDOW, search: int = SEARCH, source_start: float = 0.0,
-                   output_start: float = 0.0, source_time=None,
-                   output_time=None) -> OffsetCheck:
-    """Which source frame the output shows ``at_frame`` frames into the segment.
-
-    The comparison is frame for frame rather than "the frame at time t", which two files whose
-    first timestamps differ by a fraction of a frame would answer differently. ``offset = 0`` is
-    what we want: the frame the output shows is the one the in point plus this frame number
-    names. Positive means the output's content has run ahead of the source's, negative that it
-    lags.
-
-    ``source_time`` and ``output_time`` map a frame number to the time each file states for it,
-    and the windows are seeked by those. Computing the times from the average rate instead is
-    a fraction of a millisecond out by the far end of a long file, which is enough for a seek
-    to land inside the next frame and for the window to start one frame late -- which matches
-    nowhere, and reads as a fault in a file that is exact.
-    """
-    rate_value = float(rate)
-    segment = _window_by_time(output, at_frame, window, rate_value, output_start,
-                              output_time)
-    if len(segment) < window:
-        return OffsetCheck(at_frame, None, rate_value)
-    source_frames = _window_by_time(source, in_frame + at_frame - search,
-                                    window + 2 * search, rate_value, source_start,
-                                    source_time)
-    if len(source_frames) < window:
-        return OffsetCheck(at_frame, None, rate_value)
-
-    # Where the output's pictures sit in the source is looked up by content. The output's window
-    # is a run of *pictures*, and the answer comes from the frame numbers the source's container
-    # states for the same pictures -- so nothing here depends on counting decoded frames.
-    wanted = [digest for _, digest in segment]
-    lookup: dict[str, int] = {}
-    for number, digest in source_frames:
-        lookup.setdefault(digest, number)
-    found = [lookup.get(digest) for digest in wanted]
-    if any(number is None for number in found):
-        # A picture the output shows is nowhere near that place in the source: either the
-        # segment is re-encoded there or the cut moved. The caller decides which.
-        return OffsetCheck(at_frame, None, rate_value)
-    # Every frame of a window is consecutive, so every one of them must give the same offset.
-    # Any disagreement means the lookup matched the wrong pictures -- a still, a title card, a
-    # shot where neighbouring frames are near-identical -- and a guess is worse than no answer.
-    # Both sides are 1-based now, so the frame the output shows t_frame frames in -- its
-    # frame t_frame -- is the source's frame in_frame + at_frame - 1. The index within the
-    # window shifts that by one per frame.
-    base = in_frame + at_frame - 1
-    offsets = {number - (base + index) for index, number in enumerate(found)}
-    if len(offsets) != 1:
-        return OffsetCheck(at_frame, None, rate_value)
-    return OffsetCheck(at_frame, offsets.pop(), rate_value)
-
-
-def measure_offsets(source: Path, output: Path, spec: TrimSpec, plan, media: MediaInfo,
-                    count: int = 3, *, source_start: float | None = None,
-                    output_start: float | None = None,
-                    left_time=None, right_time=None,
-                    workers: int = MAX_WORKERS) -> list[OffsetCheck]:
-    """Measure every sample, in parallel.
-
-    Each sample is two ffmpeg calls waiting on a disk that is doing seeks, which is the
-    one part of this app that is genuinely wait-bound, so they run together. They are
-    independent -- each opens the files, hashes a window and exits -- and the results
-    come back in sample order. With a single sample, or with ``workers=1``, the calls
-    stay on this thread.
-    """
-    frames = sample_frames(spec, plan, media, count)
-    if not frames:
-        return []
-    # The origin of each file, used only to aim the seek. The frame *numbers* that come back are
-    # absolute -- `frames_near` keeps the container's own timestamps -- so both windows are
-    # addressed from zero and the two files' numbers mean the same thing.
-    source_seek_base = media.start_time if source_start is None else source_start
-    output_seek_base = (ff.stream_start_time(output) if output_start is None
-                        else output_start)
-    # Both files are seeked to times they state themselves. `FrameTimes` reads them from the
-    # container and falls back to the computed grid time, so this is the same behaviour as
-    # before on a file that reports nothing. The rate is what lets it read *near* the frame
-    # rather than from the start, which is the difference between instant and thirty seconds
-    # on a long master.
-    rate_value = float(media.grid_rate)
-    source_time = left_time if left_time is not None else ff.FrameTimes(
-        source, lambda frame: source_seek_base + frame / rate_value, rate_value,
-        source_seek_base)
-    output_time = right_time if right_time is not None else ff.FrameTimes(
-        output, lambda frame: output_seek_base + frame / rate_value, rate_value,
-        output_seek_base)
-
-    def one(frame: int) -> OffsetCheck:
-        return measure_offset(source, output, spec.in_frame, media.grid_rate, frame,
-                              source_start=0.0, output_start=0.0,
-                              source_time=source_time, output_time=output_time)
-
-    if len(frames) == 1 or workers <= 1:
-        return [one(frame) for frame in frames]
-    with ThreadPoolExecutor(max_workers=min(workers, len(frames))) as pool:
-        return list(pool.map(one, frames))
-
-
-def head_frame_offset(source: Path, output: Path, in_frame: int, rate, at_frame: int,
-                      search: int = 3, *, source_start: float | None = None,
-                      output_start: float | None = None) -> tuple[int, float] | None:
-    """Which source frame the *re-encoded* head shows, and how well it matches.
-
-    The head cannot be compared by hash -- it is a fresh encode -- so this scores the
-    output's frame against the source's frames either side of the mark and takes the
-    best. Neighbouring frames of a moving picture score clearly lower, which is what
-    makes the peak meaningful. Both extractions sit on their file's own frame grid, for
-    the same reason as in :func:`measure_offset`.
-    """
-    import tempfile
-
-    rate_value = float(rate)
-    base = in_frame + at_frame
-    if source_start is None:
-        source_start = ff.stream_start_time(source)
-    if output_start is None:
-        output_start = ff.stream_start_time(output)
-    # Just inside each frame rather than onto its stated time: a frame's timestamp is the
-    # instant it starts, so a seek aimed there is a coin toss between it and its neighbour.
-    # Same correction as the tail check and the window extraction.
-    nudge = 0.02 / rate_value
-    with tempfile.TemporaryDirectory(prefix="thetrimmer-head-") as folder:
-        work = Path(folder)
-        segment = work / "segment.png"
-        if not ff.frame_png(output, output_start + at_frame / rate_value + nudge, segment):
-            return None
-        scores: dict[int, float] = {}
-        for delta in range(-search, search + 1):
-            frame = work / f"source{delta:+d}.png"
-            at = source_start + (base + delta) / rate_value
-            if ff.frame_png(source, at + nudge, frame):
-                scores[delta] = ff.ssim(segment, frame)
-        if not scores:
-            return None
-        best = max(scores, key=lambda delta: scores[delta])
-        return best, scores[best]
-
-
 def tail_frame_offset(source: Path, output: Path, spec: TrimSpec, plan, media: MediaInfo,
                       facts) -> tuple[int, float] | None:
     """Which source frame the *re-encoded tail* ends on, and how well it matches.
@@ -401,43 +213,6 @@ def tail_frame_offset(source: Path, output: Path, spec: TrimSpec, plan, media: M
             return None
         best = max(scores, key=lambda delta: scores[delta])
         return best, scores[best]
-
-
-def _window_by_time(path: Path, at_frame: int, count: int, rate: float,
-                    start_time: float = 0.0, frame_time=None) -> list[tuple[int, str]]:
-    """Frames of ``path`` from just before ``at_frame`` on, as ``(frame number, MD5)`` pairs.
-
-    The frame number comes from the time **the container states for that frame**, not from a
-    position in what was decoded, and that is the whole point of this function.
-
-    Two earlier attempts addressed the window by position and both were wrong on real material.
-    Seeking to a time and hashing from there can land a frame off; cutting the window out of
-    what was decoded with ``select`` can come up one frame short, because the decoder and the
-    seek between them do not guarantee the first frame handed over is the first one asked for.
-    Either way every index in the window slides by one, so a cut that is exactly right is
-    reported as four to six frames out -- and those phantom offsets were fed to the calibration
-    loop, which "corrected" a correct cut and made it genuinely wrong, six frames short.
-
-    A frame addressed by its own stated time cannot slide. The times are absolute, because
-    ``ff.frames_near`` keeps the container's own timestamps rather than rebasing them to the
-    seek, which is what makes the numbers comparable between two files that begin at different
-    instants: the caller passes ``start_time=0`` and the number is the frame's own position.
-    """
-    if count <= 0 or at_frame < 0 or rate <= 0:
-        return []
-    back = 3
-    first = max(0, at_frame - back)
-    if frame_time is not None:
-        seek = frame_time(first)
-    else:
-        seek = start_time + first / rate
-    frames = ff.frames_near(path, seek, count + 2 * back)
-    out: list[tuple[int, str]] = []
-    for at, digest in frames:
-        # +1 because the container hands over its first packet as frame 1, which is the numbering
-        # the marks are typed in and the one the copy selects by.
-        out.append((round((at - start_time) * rate) + 1, digest))
-    return out
 
 
 def check_subtitles(source_srt: Path, output_srt: Path, start: float,
@@ -503,21 +278,6 @@ def check_subtitles(source_srt: Path, output_srt: Path, start: float,
     return checks, failures
 
 
-def consensus(offsets: Iterable[OffsetCheck]) -> int | None:
-    """The offset the checks agree on, or None when they are not usable.
-
-    Several checks all reporting the same non-zero number is the concat drift; checks
-    that disagree mean the timeline is not simply shifted, and nothing automated should
-    paper over that.
-    """
-    values = [check.offset for check in offsets if check.offset is not None]
-    if not values:
-        return None
-    if len(set(values)) > 1:
-        return None
-    return values[0]
-
-
 def verify(source: Path, spec: TrimSpec, report: TrimReport, media: MediaInfo) -> VerifyResult:
     """Check the finished file: structure, length, and frame-for-frame alignment."""
     result = VerifyResult()
@@ -564,27 +324,26 @@ def verify(source: Path, spec: TrimSpec, report: TrimReport, media: MediaInfo) -
         result.checks.append("audio       the source has none, and neither does the cut")
 
     if report.plan.mode == "reencode":
-        # Nothing in this file is a stream copy -- there was no keyframe to copy from --
-        # so hashes cannot match the source and looking is the only honest check.
-        looked = head_frame_offset(source, output, spec.in_frame, media.grid_rate,
-                                   at_frame=spec.frames // 2,
-                                   source_start=media.start_time,
-                                   output_start=facts.video_start)
+        # Nothing in this file is a stream copy -- there was no keyframe to copy from -- so
+        # hashes cannot match the source and looking is the only honest check. The whole segment
+        # is a re-encode, so its frame `n` is the source's frame `in_frame + n - 1`, the same
+        # relationship the head has; there is nothing to search for.
         result.checks.append(
             "alignment   no keyframe fell inside the segment, so all of it was "
             "re-encoded; hashes cannot match by construction")
-        if looked is None:
+        at = max(1, spec.frames // 2)
+        score = head_within_frame(source, output, media, facts,
+                                  output_frame=at, source_frame=spec.in_frame + at - 1)
+        if score is None:
             result.failures.append("alignment   could not read the re-encoded segment")
+        elif score >= 0.85:
+            result.checks.append(
+                f"alignment   the re-encoded picture shows the frame the in point names "
+                f"(ssim {score:.3f})")
         else:
-            delta, score = looked
-            if abs(delta) <= 1 and score >= 0.85:
-                result.checks.append(
-                    f"alignment   the re-encoded picture is on the mark "
-                    f"({delta:+d} frame, ssim {score:.3f})")
-            else:
-                result.failures.append(
-                    f"alignment   the re-encoded picture sits {delta:+d} frame(s) off "
-                    f"(ssim {score:.3f})")
+            result.failures.append(
+                f"alignment   the re-encoded picture does not show the frame the in point "
+                f"names (ssim {score:.3f})")
         _check_subtitles(result, spec, output, media)
         return result
 

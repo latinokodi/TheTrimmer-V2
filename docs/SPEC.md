@@ -33,7 +33,7 @@ section follows from that one fact.
 | **R1.5** | The output's video timescale is the source's own. | `cutting.feature:the output is written on the source's own timescale` |
 | **R1.6** | A pass that copies the source's packets is never bounded by a frame count; a pass that re-encodes is bounded by the frame count the plan names. | `cutting.feature:a re-encoded piece pins its own length, because nothing is dropped by counting` |
 | **R1.7** | A seek is aimed at the time the container states for the frame, so a long source does not start its re-encoded end one frame late. | `cutting.feature:the ends are seeked to the time the container states, not to a computed one` |
-| **R1.8** | The far end of a segment is a re-encode, so it is checked against the frame the out point names rather than by hashing, and no alignment sample is taken where a hash comparison could not be honest. | `verification.feature:alignment samples stay inside the copied body, which is the only part that can match` |
+| **R1.8** | The far end of a segment is a re-encode, so it is checked against the frame the out point names rather than by hashing. | erify.head_within_frame, erify.tail_frame_offset |
 | **R1.9** | The output is written beside the source, named for the range it holds, with no character Windows refuses. | `cutting.feature:the finished file is named for the range it holds` |
 
 ## 2. Rates and frame grids
@@ -52,13 +52,12 @@ A cut nobody measured is a cut nobody can vouch for.
 
 | Id | Requirement | Verified by |
 |---|---|---|
-| **R3.1** | The copied body is compared with the source frame for frame, by hash; a re-encoded frame cannot pass. | `verification.feature:the copied body is compared with the source by frame hash` |
-| **R3.2** | The re-encoded head is measured differently — it cannot hash-match — and the report says which of the two was done and why. | `verification.feature:the head is measured by similarity, and the report says so` |
-| **R3.3** | Every check reports **passed**, **failed** or **not checked**, and the interface never collapses those into two. | `verification.feature:a verdict never means two things at once` |
-| **R3.4** | Alignment samples avoid the re-encoded head and stay inside the range that was asked for. | `verification.feature:alignment samples avoid the head and the overshoot` |
-| **R3.5** | Two samples that disagree mean the timeline is not simply shifted, so nothing corrects on them. | `verification.feature:disagreeing samples are not corrected on` |
-| **R3.6** | A cut where the body landed off the mark is re-cut once with the measurement applied, before it is reported. | `verification.feature:a body off the mark is re-cut from the measurement` |
-| **R3.7** | Captions are moved onto the segment, clamped at the marks, and the file written is named in the report. | `verification.feature:captions move with the segment and are clamped at the marks` |
+| **R3.1** | The copied body is compared with the source frame for frame, by hash; anything that is not the source's own packet is reported **with the frame it is at**. | \	est_verify.py:test_a_body_that_is_the_source_packets_passes\, \	est_verify.py:test_a_body_that_is_not_is_reported_with_the_frame\ |
+| **R3.2** | A re-encoded end cannot hash-match its original, so it is checked against the single frame the mark names by looking, and never by searching for the best match. | \erify.head_within_frame\ |
+| **R3.3** | Every check reports **passed**, **failed** or **not checked**, and the interface never collapses those into two. | \erification.feature:a verdict never means two things at once\ |
+| **R3.4** | A file that holds fewer frames than its own head and body need is reported as short rather than compared into nonsense. | \	est_verify.py:test_a_file_shorter_than_its_own_head_and_body_is_reported\ |
+| **R3.5** | The engine cuts once. It does not measure its own result and re-cut on what it finds. | \docs/DESIGN.md §17b\ |
+| **R3.6** | Captions are moved onto the segment, clamped at the marks, and the file written is named in the report. | \erification.feature:captions move with the segment and are clamped at the marks\ |
 
 ## 4. The engine's interface
 
