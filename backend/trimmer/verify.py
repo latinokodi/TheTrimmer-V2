@@ -701,20 +701,22 @@ def trim_with_calibration(
     The correction is no longer needed. The body is selected by the container's own packet order
     (see :mod:`trimmer.container`), so it is where the marks say it is by construction rather
     than by measurement -- and when it is not, the honest answer is to say so, not to adjust the
-    head and hope. So the cut is made once and the *body itself* is compared against the source,
-    frame for frame, which is a statement about the file rather than about a search.
+    head and hope.
+
+    ## Why it measures nothing
+
+    It used to compare the body against the source here, which meant the comparison ran on every
+    cut whether or not the operator had asked for the result to be measured -- the `Verify`
+    setting could be turned off and the work still happened, because it lived in the cutting path
+    rather than in the checking one. Measured, it was most of the twenty seconds a cut spent
+    after its last ffmpeg pass.
+
+    The measurement belongs to :func:`verify`, which the caller skips when the setting is off and
+    which already makes exactly this comparison. So all this does now is cut.
 
     ``samples`` and ``attempts`` are kept in the signature because both of V1's front ends and
-    the command line pass them; neither is used now.
+    the command line pass them; neither is used.
     """
     media = ff.probe(spec.source)
     report = trim(spec, log=log, cancel=cancel, media=media, progress=progress)
-
-    compared, matched, wrong = body_is_intact(spec.source, spec.output, spec, report.plan, media)
-    if compared == 0 or not wrong:
-        log(f"alignment   all {compared} copied frame(s) match the source")
-        return report, [OffsetCheck(0, 0, float(media.grid_rate))]
-    log(f"alignment   {compared - matched} of {compared} copied frame(s) do not match the source")
-    for line in wrong:
-        log("alignment   " + line)
-    return report, [OffsetCheck(0, 1, float(media.grid_rate))]
+    return report, []
