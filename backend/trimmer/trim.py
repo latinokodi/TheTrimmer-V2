@@ -675,7 +675,12 @@ def _copy_packets(source: Path, body: Path, first: int, last: int, cancel=None) 
         if rate <= 0:
             raise ValueError("the source reports no usable frame rate")
         origin_ts: int | None = None
-        collected = []
+        # Grouped by *frame number*, not one entry per packet. A master whose timestamps are
+        # locally irregular -- this one has frames 0.033 s apart on average but not evenly --
+        # can give two packets whose times round to the same frame index, and appending both
+        # put an extra frame in the body: measured, 8539 packets selected for the 8538 frame
+        # numbers 48..8585, which is exactly the extra frame in the delivered file.
+        collected: dict[int, object] = {}
         for seen, packet in enumerate(src.demux(stream)):
             if seen % 2000 == 0 and cancel is not None and cancel.cancelled:
                 raise Cancelled("cancelled")
@@ -688,13 +693,24 @@ def _copy_packets(source: Path, body: Path, first: int, last: int, cancel=None) 
             # around by a whole GOP and stopping at the first frame past `last` would cut off
             # wanted frames still in flight.
             if first <= frame <= last:
-                collected.append(packet)
-        if not collected:
+                collected.setdefault(frame, packet)
+        missing = [frame for frame in range(first, last + 1) if frame not in collected]
+        if missing:
+            # A frame with no packet of its own cannot be placed by this method: the copy can
+            # only pass through packets that exist. Said rather than silently delivered, and the
+            # tail's re-encode cannot absorb it because the tail starts at a fixed keyframe.
+            raise ValueError(
+                f"{len(missing)} frame(s) of {first}..{last} have no packet of their own "
+                f"(first is frame {missing[0]}); this source's timestamps do not map one "
+                f"packet to one frame over this range"
+            )
+        packets = [collected[frame] for frame in range(first, last + 1)]
+        if not packets:
             raise ValueError(f"no packets found for frames {first}..{last}")
-        origin = min(packet.dts for packet in collected)
+        origin = min(packet.dts for packet in packets)
         with av.open(str(body), "w", format="mp4") as dst:
             out_stream = dst.add_stream_from_template(stream)
-            for packet in collected:
+            for packet in packets:
                 packet.pts -= origin
                 packet.dts -= origin
                 packet.stream = out_stream
