@@ -129,6 +129,94 @@ def sample_frames(spec: TrimSpec, plan, media: MediaInfo, count: int = 3) -> lis
     return [first + round(step * index) for index in range(count)]
 
 
+def body_is_intact(source: Path, output: Path, spec: TrimSpec, plan, media: MediaInfo,
+                   limit: int | None = None) -> tuple[int, int, list[str]]:
+    """Compare the copied body of the delivered file with the source, frame for frame.
+
+    Returns ``(compared, matched, examples)``, where ``examples`` names the first few frames that
+    did not match, so a failure can say *where* it went wrong rather than only that it did.
+
+    ## Why this replaces the search
+
+    The previous check asked "where in the source does this run of frames appear?", which needs a
+    window of frames, a range to search over, and a frame number worked out from a timestamp at
+    both ends. Every one of those steps produced false failures: a window that starts a frame out
+    matches nowhere, and the offsets it reported were fed to the calibration loop, which then
+    "corrected" a correct cut and made it genuinely wrong.
+
+    None of that searching is necessary, because the answer is already known. The copied body is
+    the source's packets taken in order, so output body frame *k* **is** source frame
+    ``keyframe + k``. There is no offset to discover and nothing that can slide. All that is left
+    is to hash both sides and compare -- which is exactly what the product's claim, "the body is
+    the original packets", says.
+
+    Frames are addressed through :mod:`trimmer.container`'s numbering -- the container's own
+    packet order -- which is the numbering the copy selects by, so the two sides cannot disagree
+    about which frame is which.
+    """
+    body = plan.body_frames
+    if body <= 0:
+        return 0, 0, []
+    facts = ff.inspect(output)
+    if facts.frames < plan.head_frames + body:
+        return 0, 0, [f"the file holds {facts.frames} frames, short of the "
+                      f"{plan.head_frames + body} its head and body need"]
+
+    rate = float(media.grid_rate)
+    # The body sits after the re-encoded head in the output, and after the opening keyframe in
+    # the source. Both counts start at one, which is what `frames_near` reports.
+    output_first = plan.head_frames + 1
+    source_first = plan.keyframe + 1
+
+    checked = body if limit is None else min(body, limit)
+    mine = ff.frames_near(output, (output_first - 1) / rate, checked)
+    theirs = ff.frames_near(source, (source_first - 1) / rate, checked)
+    if len(mine) < checked or len(theirs) < checked:
+        return 0, 0, [f"could not read {checked} frames from both files "
+                      f"(output {len(mine)}, source {len(theirs)})"]
+
+    matched = 0
+    wrong: list[str] = []
+    for index in range(checked):
+        if mine[index][1] == theirs[index][1]:
+            matched += 1
+        elif len(wrong) < 5:
+            wrong.append(f"body frame {index + 1} (output frame {output_first + index}, source "
+                         f"frame {source_first + index}) is not the source's packet")
+    return checked, matched, wrong
+
+
+def head_within_frame(source: Path, output: Path, media: MediaInfo, facts,
+                      output_frame: int, source_frame: int) -> float | None:
+    """How well the delivered file's ``output_frame`` matches the source's ``source_frame``.
+
+    Both numbers are in the container's own packet order, and the caller knows which source frame
+    the head should be showing -- the run begins at the in point, so head frame ``n`` is source
+    frame ``in_frame + n - 1``. Comparing those two directly removes the search entirely, and the
+    search was the problem: it looked for the best match within a few frames and reported the
+    peak as an offset, so a head that was exactly right came back as "sits -3 frames off" with an
+    ssim of 0.899 whenever neighbouring frames were similar.
+
+    A re-encode cannot match its original by hash, so this is the one check that must look at
+    pixels. It returns ``None`` when either frame cannot be read.
+    """
+    import tempfile
+
+    rate = float(media.grid_rate)
+    half = 0.5 / rate
+    with tempfile.TemporaryDirectory(prefix="thetrimmer-head-") as folder:
+        work = Path(folder)
+        mine = work / "output.png"
+        theirs = work / "source.png"
+        # Into the middle of the frame rather than onto its stated time: a timestamp is the
+        # instant a frame starts, so a seek aimed there is a coin toss with its neighbour.
+        if not ff.frame_png(output, (output_frame - 1) / rate + half, mine):
+            return None
+        if not ff.frame_png(source, (source_frame - 1) / rate + half, theirs):
+            return None
+        return ff.ssim(mine, theirs)
+
+
 def measure_offset(source: Path, output: Path, in_frame: int, rate, at_frame: int, *,
                    window: int = WINDOW, search: int = SEARCH, source_start: float = 0.0,
                    output_start: float = 0.0, source_time=None,
@@ -500,35 +588,43 @@ def verify(source: Path, spec: TrimSpec, report: TrimReport, media: MediaInfo) -
         _check_subtitles(result, spec, output, media)
         return result
 
-    result.offsets = measure_offsets(source, output, spec, report.plan, media,
-                                     source_start=media.start_time,
-                                     output_start=facts.video_start)
-    for check in result.offsets:
-        if check.ok:
-            result.checks.append("alignment   " + check.describe())
-        else:
-            result.failures.append("alignment   " + check.describe())
+    # The copied body, compared frame for frame against the source. This is the product's whole
+    # claim -- that the body is the original packets -- so it is checked directly and completely
+    # rather than sampled. The offset is not searched for, because it is not in doubt: the body
+    # is the source's packets in order.
+    compared, matched, wrong = body_is_intact(source, output, spec, report.plan, media)
+    if compared == 0 and wrong:
+        result.failures.extend("body        " + line for line in wrong)
+    elif compared and matched == compared:
+        result.checks.append(
+            f"body        all {compared} copied frame(s) are the source's own packets"
+        )
+    elif compared:
+        result.failures.append(
+            f"body        {compared - matched} of {compared} copied frame(s) are not the "
+            f"source's packets")
+        result.failures.extend("body        " + line for line in wrong)
+
     head_seconds = report.plan.head_frames / float(media.grid_rate)
-    # The head is a re-encode, so it is checked by looking, not by hashing: the frame
-    # the segment shows a little way in must be the frame the in point plus that time
-    # names, within one frame.
+    # The head is a re-encode, so it cannot be checked by hashing. It is checked by looking, and
+    # against the frame the mark names rather than by searching for where it landed: the run
+    # begins at the in point, so the head's frame `n` is the source's frame `in_frame + n - 1`
+    # and comparing those two directly is both simpler and unambiguous -- searching is what
+    # produced the phantom "sits -3 frames off" on a head that was where it should be.
     if head_seconds >= 0.3:
-        looked = head_frame_offset(source, output, spec.in_frame, media.grid_rate,
-                                   at_frame=max(1, report.plan.head_frames // 2),
-                                   source_start=media.start_time,
-                                   output_start=facts.video_start)
-        if looked is None:
+        at = max(1, report.plan.head_frames // 2)
+        score = head_within_frame(source, output, media, facts,
+                                  output_frame=at, source_frame=spec.in_frame + at - 1)
+        if score is None:
             result.failures.append("head        could not read the re-encoded head")
+        elif score >= 0.85:
+            result.checks.append(
+                f"head        the re-encoded head shows the frame the in point names "
+                f"(ssim {score:.3f})")
         else:
-            delta, score = looked
-            if abs(delta) <= 1 and score >= 0.85:
-                result.checks.append(
-                    f"head        the re-encoded head is on the mark "
-                    f"({delta:+d} frame, ssim {score:.3f})")
-            else:
-                result.failures.append(
-                    f"head        the re-encoded head sits {delta:+d} frame(s) off "
-                    f"(ssim {score:.3f})")
+            result.failures.append(
+                f"head        the re-encoded head does not show the frame the in point names "
+                f"(ssim {score:.3f})")
         result.checks.append(
             f"head length the first {head_seconds:.3f}s are a crf-{spec.crf} re-encode, "
             "as designed; every frame after them is the original packet data"
@@ -590,37 +686,35 @@ def trim_with_calibration(
 ) -> tuple[TrimReport, list[OffsetCheck]]:
     """Trim, measure, and re-cut once if the body landed off the mark.
 
-    Returns the report of the file that was kept, and the alignment checks for it. The
-    correction is applied to ``concat_offset``: the measurement says how far ahead or
-    behind the content is, and the head absorbs exactly that many frames.
+    Returns the report of the file that was kept, and the checks made of it.
 
-    This is the path both of V1's front ends took and the default of its command line. The
-    migration to this backend called :func:`trim` directly, which is why a whole-GOP error in
-    the copied body went unnoticed: nothing measured it before the run was reported done.
+    ## What changed, and why the correction is gone
+
+    This used to cut, *search* the result for where its content had landed, and re-cut with a
+    ``concat_offset`` when the answer was not zero. The search was the fault: it looked for the
+    best match over a range of frames and reported the peak as a number of frames out, so a head
+    that was exactly right came back as "-3 frames off" whenever neighbouring frames were
+    similar. Those phantom offsets were then "corrected", which shortened the re-encoded head --
+    and because the head's length is pinned, shortening it deleted real frames. A 500-frame cut
+    arrived six frames short that way, and the picture ran 100 ms ahead of the sound.
+
+    The correction is no longer needed. The body is selected by the container's own packet order
+    (see :mod:`trimmer.container`), so it is where the marks say it is by construction rather
+    than by measurement -- and when it is not, the honest answer is to say so, not to adjust the
+    head and hope. So the cut is made once and the *body itself* is compared against the source,
+    frame for frame, which is a statement about the file rather than about a search.
+
+    ``samples`` and ``attempts`` are kept in the signature because both of V1's front ends and
+    the command line pass them; neither is used now.
     """
     media = ff.probe(spec.source)
-    last_offsets: list[OffsetCheck] = []
-    for attempt in range(1, attempts + 1):
-        report = trim(spec, log=log, cancel=cancel, media=media, progress=progress)
-        # The output's timestamps are read inside the measurement, once per attempt: the
-        # file has just been rewritten. The source's come from the probe above.
-        last_offsets = measure_offsets(spec.source, spec.output, spec, report.plan, media,
-                                       count=samples, source_start=media.start_time)
-        for check in last_offsets:
-            log("alignment   " + check.describe())
-        measured = consensus(last_offsets)
-        if measured is None:
-            return report, last_offsets
-        if measured == 0:
-            return report, last_offsets
-        if attempt == attempts:
-            log(f"alignment   still {measured:+d} frame(s) out after {attempt} attempts; "
-                "keeping the last cut")
-            return report, last_offsets
-        # The content is `measured` frames ahead of the mark, so the head has to give
-        # that many frames back: a shorter head pushes the copied body later.
-        correction = -measured
-        log(f"calibration content is {measured:+d} frame(s) off; re-cutting with "
-            f"concat offset {spec.concat_offset} -> {spec.concat_offset + correction}")
-        spec = TrimSpec(**{**spec.__dict__, "concat_offset": spec.concat_offset + correction})
-    return report, last_offsets
+    report = trim(spec, log=log, cancel=cancel, media=media, progress=progress)
+
+    compared, matched, wrong = body_is_intact(spec.source, spec.output, spec, report.plan, media)
+    if compared == 0 or not wrong:
+        log(f"alignment   all {compared} copied frame(s) match the source")
+        return report, [OffsetCheck(0, 0, float(media.grid_rate))]
+    log(f"alignment   {compared - matched} of {compared} copied frame(s) do not match the source")
+    for line in wrong:
+        log("alignment   " + line)
+    return report, [OffsetCheck(0, 1, float(media.grid_rate))]
