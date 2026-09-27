@@ -868,6 +868,36 @@ class FrameTimes:
         self._known[frame] = exact
         return exact
 
+    def row_of(self, frame: int) -> int | None:
+        """Which container row carries the time this frame's mark names.
+
+        Container row and frame number are **not** a fixed distance apart: measured on three
+        masters the offset is +1 on one and +2 on the other two, because the row whose stated
+        time equals a frame's time depends on where the file's frames actually sit. So the row is
+        found by asking the container's own index, never by computing it.
+
+        Returns ``None`` when the container cannot say, and the caller keeps the arithmetic it
+        used before.
+        """
+        from . import container as packets
+
+        try:
+            index = packets.read(self.path)
+        except (OSError, ValueError):
+            return None
+        want = self(frame)
+        best: tuple[float, int] | None = None
+        for row in range(1, min(index.count, frame + 64) + 1):
+            distance = abs(index.time_of(row) - want)
+            if best is None or distance < best[0]:
+                best = (distance, row)
+                if distance == 0.0:
+                    break
+        if best is None or not self.rate:
+            return best[1] if best else None
+        # A row a whole frame away is not the row meant.
+        return best[1] if best[0] <= 0.25 / self.rate else None
+
 
 def frames_near(path: Path, at_seconds: float, count: int) -> list[tuple[float, str]]:
     """Frames decoded from ``at_seconds`` onward: each one's time and its MD5.
