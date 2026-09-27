@@ -411,6 +411,33 @@ def test_the_head_is_long_enough_to_reach_the_body_row(monkeypatch):
 out_frame, in_frame = 240, 20
 
 
+def test_the_reported_spans_join_up_and_cover_the_request(keyframes):
+    """What the log says must not read as a gap.
+
+    The report used to give the head in frame numbers and the body in container rows, so a real
+    cut printed head 7514..7741 and ody 7743..9492 -- row 7742 in neither, which reads as a
+    missing frame. It was read as one, and sent a diagnosis down the wrong path. Spans are now
+    given in one grid, and this asserts they join end to end and cover exactly the range asked
+    for.
+    """
+    keyframes(2.0, 6.0, 10.0)
+    plan = cutter.plan_trim(spec(20, 240), media())
+    spans = plan.rows()
+
+    assert spans["head"][1] + 1 == spans["body"][0], "head and body do not join"
+    assert spans["body"][1] + 1 == spans["tail"][0], "body and tail do not join"
+    covered = spans["tail"][1] - spans["head"][0] + 1
+    assert covered == plan.requested == 220
+
+
+def test_the_report_names_rows_and_says_so(keyframes):
+    """The word is part of the contract: a reader has to know which grid the numbers are on."""
+    keyframes(2.0, 6.0, 10.0)
+    text = cutter.plan_trim(spec(20, 240), media()).describe(Fraction(25))
+    assert "rows" in text
+    assert "frames 20.." not in text, "a span is still being given in frame numbers"
+
+
 def test_a_body_copy_keeps_every_packet_of_the_range_asked_for():
     """The frames wanted are 10..14, with a keyframe at 10 -- so 10, 11, 12, 13, 14 and nothing
     else, whatever the internal indexing says."""

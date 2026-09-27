@@ -128,22 +128,54 @@ class TrimPlan:
     def requested(self) -> int:
         return self.head_frames + self.body_frames + self.tail_frames
 
+    @property
+    def body_row(self) -> int:
+        """The container **row** the copied body opens on: the keyframe's own row.
+
+        The copy selects packets by their position in decode order, which is a different grid from
+        the frame numbers a mark is given in. This is the one place that difference is stated, so
+        that everything reporting a span reports it in rows and the spans join up.
+        """
+        return self.keyframe + 1
+
+    def rows(self) -> dict[str, tuple[int, int]]:
+        """Each piece's span of container rows, in order. Contiguous by construction.
+
+        Reported instead of frame numbers because the two grids do not line up: the log used to
+        say ``head 7514..7741`` and ``body 7743..9492``, which reads as a missing frame at 7742,
+        while in rows the same cut is ``7515..7742`` then ``7743..9492`` with nothing between
+        them. That apparent gap was read as a real one and sent a diagnosis down the wrong path.
+        """
+        first = self.body_row - self.head_frames
+        head = (first, first + self.head_frames - 1) if self.head_frames else (0, -1)
+        body = ((self.body_row, self.body_row + self.body_frames - 1) if self.body_frames
+                else (0, -1))
+        tail = ((body[1] + 1, body[1] + self.tail_frames) if self.tail_frames else (0, -1))
+        return {"head": head, "body": body, "tail": tail}
+
     def describe(self, rate) -> str:
+        # Spans are given as container rows, which is the grid the copy selects by, so the three
+        # of them join end to end. Frame numbers would leave an apparent gap wherever the two
+        # grids differ -- see `rows`.
+        spans = self.rows()
         lines = [f"mode        {self.mode}"]
         if self.mode == "headpatch":
             if self.head_frames:
+                first, last = spans["head"]
                 lines.append(
-                    f"head        frames {self.head_frames} "
-                    f"({self.head_frames / float(rate):.3f}s) re-encoded from the in point "
-                    f"to keyframe {self.keyframe}"
+                    f"head        rows {first}..{last} "
+                    f"({self.head_frames} frames, {self.head_frames / float(rate):.3f}s) "
+                    f"re-encoded from the in point to the keyframe at row {self.keyframe}"
                 )
             if self.body_frames:
-                lines.append(f"body        frames {self.body_frames} copied untouched")
+                first, last = spans["body"]
+                lines.append(f"body        rows {first}..{last} copied untouched")
             if self.tail_frames:
+                first, last = spans["tail"]
                 lines.append(
-                    f"tail        frames {self.tail_frames} "
-                    f"({self.tail_frames / float(rate):.3f}s) re-encoded from the last "
-                    f"keyframe to the out point, so the segment ends on the frame asked for"
+                    f"tail        rows {first}..{last} "
+                    f"({self.tail_frames} frames, {self.tail_frames / float(rate):.3f}s) "
+                    f"re-encoded from the last keyframe to the row the out point names"
                 )
         elif self.mode == "copy":
             lines.append("in point    lands on a keyframe: the whole segment is copied")
@@ -524,7 +556,8 @@ def _encode_head(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, head: Path,
         *extra,
         "-an", "-movflags", "+faststart", str(head),
     ]
-    log(f"head        re-encoding frames {spec.in_frame}..{plan.keyframe - 1} "
+    first, last = plan.rows()["head"]
+    log(f"head        re-encoding rows {first}..{last} from the in point "
         f"with {encoder} (crf {spec.crf}, {spec.preset})")
     ff.run(args, cancel=cancel, log=log, progress=progress,
            expected_seconds=head_seconds)
@@ -572,9 +605,9 @@ def _encode_tail(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, tail: Path,
         *extra,
         "-an", "-movflags", "+faststart", str(tail),
     ]
-    log(f"tail        re-encoding frames "
-        f"{tail_start_frame}..{spec.out_frame - 1} with {encoder}, so the "
-        f"segment ends on the frame asked for")
+    tail_first, tail_last = plan.rows()["tail"]
+    log(f"tail        re-encoding rows {tail_first}..{tail_last} with {encoder}, so the "
+        f"segment ends on the row the out point names")
     ff.run(args, cancel=cancel, log=log, progress=progress, expected_seconds=tail_seconds)
     return args
 
@@ -650,7 +683,7 @@ def _copy_body(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, body: Path,
     # out, which showed up as "the re-encoded head sits -3 frames off".
     first = plan.keyframe + 1
     last = first + want - 1
-    log(f"body        copying frames {first}..{last} from the original packets")
+    log(f"body        copying rows {first}..{last} from the original packets")
     # The copy is a packet read rather than a subprocess, so nothing else checks the token for
     # the length of it. A long body is the longest single operation in a trim, and without this
     # Cancel would sit dead for the whole of it.
