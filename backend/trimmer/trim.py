@@ -630,11 +630,16 @@ def _copy_body(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, body: Path,
     (:func:`_encode_sound`), so that failure cannot recur *and* the joins cannot clip.
     """
     want = plan.body_frames
-    # `plan.keyframe` is a zero-based frame number, while the marks the operator typed and the
-    # packets the container hands over are both counted from one. Converting once, here, is what
-    # keeps the two numberings from being confused: measured on the TY Gellasch master, mixing
-    # them copied 37 packets where 38 were wanted, missing the keyframe frame and including one
-    # the tail was about to re-encode.
+    # `plan.keyframe` is the container's own row number for the keyframe that opens the body, and
+    # the copy counts rows from one. The row matching the in point's *time* is `in_frame + 2` on
+    # both masters measured, so container row `N` corresponds to frame `N - 2` -- and the body's
+    # rows are therefore `keyframe + 1` through `keyframe + body_frames`, which is the same as
+    # frames `keyframe - 1` through `keyframe + body_frames - 2`.
+    #
+    # Measured on the Andy Ross master: the container's keyframe at or after the in point is row
+    # 242, the body is 2250 frames, and rows 243..2492 are exactly those frames -- 2250 packets.
+    # Taking `keyframe` itself (or `keyframe + 1` as the frame number) leaves the seam a frame
+    # out, which showed up as "the re-encoded head sits -3 frames off".
     first = plan.keyframe + 1
     last = first + want - 1
     log(f"body        copying frames {first}..{last} from the original packets")

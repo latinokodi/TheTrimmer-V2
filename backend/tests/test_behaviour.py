@@ -418,8 +418,8 @@ def copy_takes_the_named_frames(world: dict) -> None:
     ones wanted is exact by construction, so the range is asserted here rather than the pixels.
     """
     plan = world["plan"]
-    # The plan numbers frames from zero; the container counts packets from one. The copy is given
-    # the container's numbering, which is why this is shifted.
+    # The container counts rows from one and the plan's keyframe is its own row number, so the
+    # body opens on the row after it.
     first = plan.keyframe + 1
     assert world["copied"] == [(first, first + plan.body_frames - 1)]
     assert world["body_frames"] == plan.body_frames
@@ -470,8 +470,8 @@ def no_copy_pass_counts_frames(world: dict, monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(cutter.ff, "inspect", lambda path: SimpleNamespace(frames=plan.body_frames))
     commands, measured = cutter._copy_body(world["media"], world["spec"], plan,
                                            tmp_path / "b.mp4", lambda *_: None, None)
-    # The plan numbers frames from zero and the container counts packets from one, so the range
-    # handed to the copy is the plan's, shifted by one.
+    # The container counts rows from one and the plan's keyframe is its own row number, so the
+    # body opens on the row after it.
     first = plan.keyframe + 1
     assert calls == [(first, first + plan.body_frames - 1)]
     assert measured == plan.body_frames
