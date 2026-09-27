@@ -675,12 +675,20 @@ def _copy_packets(source: Path, body: Path, first: int, last: int, cancel=None) 
         if rate <= 0:
             raise ValueError("the source reports no usable frame rate")
         origin_ts: int | None = None
-        # Grouped by *frame number*, not one entry per packet. A master whose timestamps are
-        # locally irregular -- this one has frames 0.033 s apart on average but not evenly --
-        # can give two packets whose times round to the same frame index, and appending both
-        # put an extra frame in the body: measured, 8539 packets selected for the 8538 frame
-        # numbers 48..8585, which is exactly the extra frame in the delivered file.
-        collected: dict[int, object] = {}
+        # Kept in **decode order**, which is the order the demuxer hands them over, with one
+        # packet per frame number.
+        #
+        # Two separate requirements, and getting either wrong breaks the muxer:
+        #   * One packet per frame. A master whose timestamps are locally irregular -- this one
+        #     averages 0.033 s a frame but not evenly -- can give two packets whose times round
+        #     to the same frame index. Appending both put an extra frame in the body: measured,
+        #     8539 packets selected for the 8538 frame numbers 48..8585, which was exactly the
+        #     extra frame in the delivered file.
+        #   * Decode order, not frame order. Sorting by frame number is presentation order, and
+        #     with B-frames that writes a frame before the frame it is coded against -- ffmpeg
+        #     rejects it with "Invalid argument ... returned 22". This was tried and failed.
+        collected: list = []
+        taken: set[int] = set()
         for seen, packet in enumerate(src.demux(stream)):
             if seen % 2000 == 0 and cancel is not None and cancel.cancelled:
                 raise Cancelled("cancelled")
@@ -692,9 +700,10 @@ def _copy_packets(source: Path, body: Path, first: int, last: int, cancel=None) 
             # No early exit: packets arrive in *decode* order, so the presentation times jump
             # around by a whole GOP and stopping at the first frame past `last` would cut off
             # wanted frames still in flight.
-            if first <= frame <= last:
-                collected.setdefault(frame, packet)
-        missing = [frame for frame in range(first, last + 1) if frame not in collected]
+            if first <= frame <= last and frame not in taken:
+                taken.add(frame)
+                collected.append(packet)
+        missing = [frame for frame in range(first, last + 1) if frame not in taken]
         if missing:
             # A frame with no packet of its own cannot be placed by this method: the copy can
             # only pass through packets that exist. Said rather than silently delivered, and the
@@ -704,13 +713,13 @@ def _copy_packets(source: Path, body: Path, first: int, last: int, cancel=None) 
                 f"(first is frame {missing[0]}); this source's timestamps do not map one "
                 f"packet to one frame over this range"
             )
-        packets = [collected[frame] for frame in range(first, last + 1)]
-        if not packets:
+        if not collected:
             raise ValueError(f"no packets found for frames {first}..{last}")
-        origin = min(packet.dts for packet in packets)
+        # Rebased on the first *decode* timestamp, and written in the order they were read.
+        origin = min(packet.dts for packet in collected)
         with av.open(str(body), "w", format="mp4") as dst:
             out_stream = dst.add_stream_from_template(stream)
-            for packet in packets:
+            for packet in collected:
                 packet.pts -= origin
                 packet.dts -= origin
                 packet.stream = out_stream

@@ -35,8 +35,6 @@ import sys
 import threading
 import time
 import traceback
-from dataclasses import asdict, is_dataclass
-from fractions import Fraction
 from pathlib import Path
 from typing import Any
 

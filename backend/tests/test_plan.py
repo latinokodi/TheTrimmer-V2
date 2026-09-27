@@ -315,3 +315,38 @@ def test_the_packet_reader_stops_when_the_job_is_cancelled():
     source_text = _inspect.getsource(cutter._copy_packets)
     assert "cancel.cancelled" in source_text, "the demux loop does not poll the token"
     assert "raise Cancelled" in source_text
+
+
+def test_the_keyframe_reader_uses_the_fast_path(monkeypatch, tmp_path):
+    """The packet-flag reader is the reason listing keyframes is affordable, and the first
+    implementation named `av` without importing it -- the outer handler caught the NameError and
+    fell back to ffprobe every single time, silently, at 2.7x the cost. A fallback that is
+    reached by an error rather than by an inability is invisible unless something asserts the
+    fast path was taken, which is what this does.
+
+    Measured on a 35-minute master: PyAV's packet flags are 2.6 s against ffprobe's 7.0 s for an
+    identical list of 252 keyframes.
+    """
+    from trimmer import ffmpeg
+
+    reached = []
+    monkeypatch.setattr(ffmpeg, "_keyframes_by_packet",
+                        lambda path, start, end: reached.append("packet") or [1.0, 2.0])
+    monkeypatch.setattr(ffmpeg, "_keyframes_by_probe",
+                        lambda path, start, end: reached.append("probe") or [9.0])
+
+    marks = ffmpeg.keyframes(tmp_path / "absent.mp4", 0.0, 10.0)
+    assert reached == ["packet"], f"the slow path was taken: {reached}"
+    assert marks == [1.0, 2.0]
+
+
+def test_the_keyframe_reader_falls_back_when_the_container_cannot_be_read(monkeypatch, tmp_path):
+    """And the fallback still works, for a source PyAV will not open."""
+    from trimmer import ffmpeg
+
+    def refuse(path, start, end):
+        raise ValueError("cannot open")
+
+    monkeypatch.setattr(ffmpeg, "_keyframes_by_packet", refuse)
+    monkeypatch.setattr(ffmpeg, "_keyframes_by_probe", lambda path, start, end: [3.0])
+    assert ffmpeg.keyframes(tmp_path / "absent.mp4", 0.0, 10.0) == [3.0]

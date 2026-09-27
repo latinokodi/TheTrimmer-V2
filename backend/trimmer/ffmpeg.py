@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 
+import av
+
 from .timecode import format_rate, parse_rate
 
 #: How long to wait between checks for a cancelled job. Long enough to be free, short
