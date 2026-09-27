@@ -490,6 +490,91 @@ def reencoded_ends_seek_exactly(world: dict) -> None:
     assert fallback[fallback.index("-ss") + 1] == f"{media.seconds_of(8596):.6f}"
 
 
+@given("a 30 fps master whose frames are 1/30 of a second apart")
+def frames_on_a_thirty_grid(world: dict) -> None:
+    world["rate"] = 30.0
+    world["wanted"] = 10048
+
+
+def _answer_windows(monkeypatch, world: dict, frame_of) -> None:
+    """Stand in for ffprobe answering a `-read_intervals` window.
+
+    ``frame_of`` decides which frames come back, so one helper can serve a container that
+    answers with the frames around the one asked about and one that answers from an earlier
+    keyframe. The windows asked for are kept, so a scenario can check the read was aimed.
+    """
+    asked: list[tuple[float, float]] = []
+
+    class Done:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, text: str) -> None:
+            self.stdout = text
+
+    def fake(args, **kwargs):
+        window = args[args.index("-read_intervals") + 1]
+        begin_text, span_text = window.split("%+")
+        begin, span = float(begin_text), float(span_text)
+        asked.append((begin, span))
+        return Done("\n".join(f"{at:.6f}," for at in frame_of(begin, span)))
+
+    monkeypatch.setattr(ff, "_run_quiet", fake)
+    world["asked"] = asked
+
+
+@when("I ask the container for the stated time of a frame deep in the file")
+def ask_for_a_deep_frame(world: dict, monkeypatch) -> None:
+    """A file whose frames are exactly on the grid, so the answer is checkable by arithmetic."""
+    rate = world["rate"]
+
+    def frame_of(begin, span):
+        return [begin + i / rate for i in range(int(span * rate) + 1)]
+
+    _answer_windows(monkeypatch, world, frame_of)
+    world["answer"] = ff.frame_pts_near(Path("absent.mp4"), world["wanted"], rate)
+
+
+@when("the container answers with frames that are not the one asked about")
+def answer_from_an_earlier_keyframe(world: dict, monkeypatch) -> None:
+    """What a seek to a keyframe really returns when the window is too short to reach the frame:
+    frames from *before* the one asked about, one of which is nearer the computed guess than
+    anything else on offer."""
+    def frame_of(begin, span):
+        return [frame / 30.0 for frame in range(750, 781)]
+
+    _answer_windows(monkeypatch, world, frame_of)
+    world["answer"] = ff.frame_pts_near(Path("absent.mp4"), 1000, 30.0)
+    world["fallback"] = ff.FrameTimes(Path("absent.mp4"), lambda frame: frame / 30.0,
+                                      30.0, 0.0)(1000)
+
+
+@then("the read opens before that frame and closes after it")
+def read_contains_the_frame(world: dict) -> None:
+    wanted = world["wanted"] / world["rate"]
+    for begin, span in world["asked"]:
+        assert begin <= wanted <= begin + span, "the window does not contain the frame"
+
+
+@then("the read does not begin at the start of the file")
+def read_is_aimed(world: dict) -> None:
+    begin, _ = world["asked"][0]
+    assert begin > 0, "the read started at the beginning of the file"
+    assert world["answer"] is not None
+
+
+@then("no time is returned for that frame")
+def nothing_is_returned(world: dict) -> None:
+    """Refusing is the point: the nearest time in the window belongs to a different frame, and
+    handing it back is what put a cut's re-encoded end 7.3 s from where it was asked to be."""
+    assert world["answer"] is None
+
+
+@then("the plan falls back to the time computed from the grid")
+def falls_back_to_the_grid(world: dict) -> None:
+    assert world["fallback"] == pytest.approx(1000 / 30.0)
+
+
 @then(parsers.parse('the name is "{name}"'))
 def name_is(world: dict, name: str) -> None:
     assert world["name"].name == name

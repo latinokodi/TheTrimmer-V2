@@ -33,8 +33,9 @@ section follows from that one fact.
 | **R1.5** | The output's video timescale is the source's own. | `cutting.feature:the output is written on the source's own timescale` |
 | **R1.6** | A pass that copies the source's packets is never bounded by a frame count; a pass that re-encodes is bounded by the frame count the plan names. | `cutting.feature:a re-encoded piece pins its own length, because nothing is dropped by counting` |
 | **R1.7** | A seek is aimed at the time the container states for the frame, so a long source does not start its re-encoded end one frame late. | `cutting.feature:the ends are seeked to the time the container states, not to a computed one` |
-| **R1.8** | The far end of a segment is a re-encode, so it is checked against the frame the out point names rather than by hashing. | erify.head_within_frame, erify.tail_frame_offset |
+| **R1.8** | The re-encoded ends cannot be hashed, so they are compared by picture against the frame the mark names **and the two frames beside it**, and the offset found is reported. | `verify.head_within_frame`, `verify.tail_frame_offset` |
 | **R1.9** | The output is written beside the source, named for the range it holds, with no character Windows refuses. | `cutting.feature:the finished file is named for the range it holds` |
+| **R1.10** | A frame's stated time is read from the container over a window wide enough to contain that frame, and **nothing** is returned when it does not — the computed grid time is used instead. | `cutting.feature:a frame's stated time comes from a window wide enough to contain it`, `cutting.feature:the container is never asked to guess which frame was meant` |
 
 ## 2. Rates and frame grids
 
@@ -52,12 +53,12 @@ A cut nobody measured is a cut nobody can vouch for.
 
 | Id | Requirement | Verified by |
 |---|---|---|
-| **R3.1** | The copied body is compared with the source frame for frame, by hash; anything that is not the source's own packet is reported **with the frame it is at**. | \	est_verify.py:test_a_body_that_is_the_source_packets_passes\, \	est_verify.py:test_a_body_that_is_not_is_reported_with_the_frame\ |
-| **R3.2** | A re-encoded end cannot hash-match its original, so it is checked against the single frame the mark names by looking, and never by searching for the best match. | \erify.head_within_frame\ |
-| **R3.3** | Every check reports **passed**, **failed** or **not checked**, and the interface never collapses those into two. | \erification.feature:a verdict never means two things at once\ |
-| **R3.4** | A file that holds fewer frames than its own head and body need is reported as short rather than compared into nonsense. | \	est_verify.py:test_a_file_shorter_than_its_own_head_and_body_is_reported\ |
-| **R3.5** | The engine cuts once. It does not measure its own result and re-cut on what it finds. | \docs/DESIGN.md §17b\ |
-| **R3.6** | Captions are moved onto the segment, clamped at the marks, and the file written is named in the report. | \erification.feature:captions move with the segment and are clamped at the marks\ |
+| **R3.1** | The copied body is compared with the source frame for frame, by hash; anything that is not the source's own packet is reported **with the frame it is at**. | `test_verify.py:test_a_body_that_is_the_source_packets_passes`, `test_verify.py:test_a_body_that_is_not_is_reported_with_the_frame` |
+| **R3.2** | A re-encoded end cannot hash-match its original, so it is checked by picture against the frame the mark names **and the two frames beside it**, one frame wide because that is the measured drift; the offset found is named in the report and is not itself a failure. | `verify.head_within_frame` |
+| **R3.3** | Every check reports **passed**, **failed** or **not checked**, and the interface never collapses those into two. | `verification.feature:a verdict never means two things at once` |
+| **R3.4** | A file that holds fewer frames than its own head and body need is reported as short rather than compared into nonsense. | `test_verify.py:test_a_file_shorter_than_its_own_head_and_body_is_reported` |
+| **R3.5** | The engine cuts once. It does not measure its own result and re-cut on what it finds. | `docs/DESIGN.md §17b` |
+| **R3.6** | Captions are moved onto the segment, clamped at the marks, and the file written is named in the report. | `verification.feature:captions move with the segment and are clamped at the marks` |
 
 ## 4. The engine's interface
 

@@ -59,6 +59,18 @@ Feature: Cutting a marked range out of a master
     When the plan carries the container's own time for the in point
     Then both re-encoded ends are seeked to the time the container states
 
+  Scenario: a frame's stated time comes from a window wide enough to contain it
+    Given a 30 fps master whose frames are 1/30 of a second apart
+    When I ask the container for the stated time of a frame deep in the file
+    Then the read opens before that frame and closes after it
+    And the read does not begin at the start of the file
+
+  Scenario: the container is never asked to guess which frame was meant
+    Given a 30 fps master whose frames are 1/30 of a second apart
+    When the container answers with frames that are not the one asked about
+    Then no time is returned for that frame
+    And the plan falls back to the time computed from the grid
+
   Scenario: the finished file is named for the range it holds
     When I name the output for frames 100 to 199 at 25 fps
     Then the name is "reel 00.00.04.00-00.00.07.24.mp4"
