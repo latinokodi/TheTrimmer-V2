@@ -366,13 +366,19 @@ def plan_trim(spec: TrimSpec, media: MediaInfo, frame_time=None) -> TrimPlan:
     # The seek targets, from the container where it can say: a computed time drifts past the
     # frame it names on a long master, and `-ss` aimed there lands inside the next frame.
     #
-    # NOTE: the container counts its rows from one and the marks are counted from zero, so the
-    # row whose stated time corresponds to a mark is `mark + 1`. Asking for `time_of(mark + 1)`
-    # here is correct and was measured to agree with `seconds_of(mark)` to the microsecond -- but
-    # it shifts the keyframe arithmetic below (`keyframe = round((opens_at - start) * rate)`),
-    # which is still computed on the engine's older numbering, and three planner tests fail. The
-    # numbering needs unifying across `plan_trim` in one change rather than two; until then the
-    # computed time stands, and the resulting one-frame head offset is documented.
+    # `frame_time` is `ff.FrameTimes`, which asks the container. That reader was answering with
+    # a time up to 222 frames out -- it read a window shorter than the gap between keyframes and
+    # then returned whichever frame in it was nearest the computed guess -- so this value, the
+    # one the re-encoded ends are seeked with, was the least trustworthy number in the planner.
+    # See `ffmpeg.frame_pts_near`, which now refuses to answer unless it found the frame asked
+    # for.
+    #
+    # The head still lands one frame after the mark on the reference master, and that is the
+    # container's timing rather than a fault: a mark is a time, the seek is a time, and the
+    # frames of an OBS master do not sit exactly on the grid the marks are counted in, so the
+    # frame the mark names by time is the one after it by packet order. The delivered count is
+    # exact, the sound is cut in one pass so there is no seam to clip, and the alignment check
+    # names the offset instead of assuming it away.
     in_seconds = frame_time(spec.in_frame)
     out_seconds = frame_time(spec.out_frame)
     # Every keyframe up to the out point, then filtered to the segment. Two are wanted and they

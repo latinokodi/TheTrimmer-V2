@@ -138,19 +138,42 @@ def body_is_intact(source: Path, output: Path, spec: TrimSpec, plan, media: Medi
     return checked, matched, wrong
 
 
+def _beside(offset: int) -> str:
+    """How to say where a re-encoded frame sat relative to the mark.
+
+    ``0`` is silent, because on a file whose timing is exactly its nominal grid -- which is most
+    of them -- that is every cut and there is nothing to say. A non-zero offset is worth naming
+    rather than hiding: it is the container's own timing showing through, it is within the one
+    packet the master's grid is known to drift by, and a reader who sees it should know it was
+    seen. It is not a fault and must not read like one.
+    """
+    if offset == 0:
+        return ""
+    return f" {abs(offset)} frame{'s' if abs(offset) != 1 else ''} {'after' if offset > 0 else 'before'} the mark"
+
+
 def head_within_frame(source: Path, output: Path, media: MediaInfo, facts,
-                      output_frame: int, source_frame: int) -> float | None:
-    """How well the delivered file's ``output_frame`` matches the source's ``source_frame``.
+                      output_frame: int, source_frame: int) -> tuple[int, float] | None:
+    """Which source frame the delivered file's ``output_frame`` actually shows, and how well.
 
-    Both numbers are in the container's own packet order, and the caller knows which source frame
-    the head should be showing -- the run begins at the in point, so head frame ``n`` is source
-    frame ``in_frame + n - 1``. Comparing those two directly removes the search entirely, and the
-    search was the problem: it looked for the best match within a few frames and reported the
-    peak as an offset, so a head that was exactly right came back as "sits -3 frames off" with an
-    ssim of 0.899 whenever neighbouring frames were similar.
+    Both numbers are in the container's own packet order. The caller knows which source frame the
+    head should be showing -- the run begins at the in point, so head frame ``n`` is source frame
+    ``in_frame + n - 1`` -- so this compares against that frame and its immediate neighbours and
+    returns the best match as ``(offset, ssim)``.
 
-    A re-encode cannot match its original by hash, so this is the one check that must look at
-    pixels. It returns ``None`` when either frame cannot be read.
+    The neighbours are not optional, and they are the reason an earlier version of this check was
+    wrong in both directions. A frame is addressed here by time, because that is the only handle
+    ffmpeg offers, but on a master recorded by OBS the packet grid is not exactly the nominal one:
+    a frame's true time sits up to one packet either side of ``frame / rate``. Asking for the mark
+    alone therefore sometimes draws the frame next to it and reports a good cut as a bad one. The
+    window is bounded at one because that same measurement says the drift never exceeds it, so a
+    match further away would mean something else is wrong and should still fail.
+
+    An offset of ``0`` is the mark, ``-1`` the frame before it, ``+1`` the frame after. A
+    non-zero offset is reported as information, not as a fault: on the sources this product is
+    built for, it is what the container's own timing does. It returns ``None`` -- not a failure --
+    when the file cannot be looked at one frame at a time, which is a different answer from being
+    wrong.
     """
     import tempfile
 
@@ -159,25 +182,32 @@ def head_within_frame(source: Path, output: Path, media: MediaInfo, facts,
     with tempfile.TemporaryDirectory(prefix="thetrimmer-head-") as folder:
         work = Path(folder)
         mine = work / "output.png"
-        theirs = work / "source.png"
-        neighbour = work / "neighbour.png"
         # Into the middle of the frame rather than onto its stated time: a timestamp is the
-        # instant a frame starts, so a seek aimed there is a coin toss with its neighbour.
+        # instant a frame starts, so a seek aimed at the edge is a coin toss with its neighbour.
         if not ff.frame_png(output, (output_frame - 1) / rate + half, mine):
             return None
-        if not ff.frame_png(source, (source_frame - 1) / rate + half, theirs):
+        scores: dict[int, float] = {}
+        for delta in (-1, 0, 1):
+            frame = work / f"source{delta:+d}.png"
+            if not ff.frame_png(source, (source_frame - 1 + delta) / rate + half, frame):
+                continue
+            scores[delta] = ff.ssim(mine, frame)
+        if not scores:
             return None
-        # Ask for the *next* frame as well, to find out whether this file can be looked at one
-        # frame at a time at all. Where it cannot -- an MPEG program stream seek lands on the
-        # keyframe, so every -ss inside a GOP gives back the same picture -- the two extractions
-        # are identical and any comparison against them says nothing about alignment. Measured:
-        # five different frames of an MPEG-2 file all returned ssim 0.8394 against one delivered
-        # frame. A check that cannot see must say so rather than fail the file.
-        if not ff.frame_png(source, source_frame / rate + half, neighbour):
+        # Whether this file can be looked at one frame at a time at all. Where it cannot -- an
+        # MPEG program stream seek lands on the keyframe, so every -ss inside a GOP gives back the
+        # same picture -- the candidates are one image and the best of them means nothing.
+        # Measured: five different frames of an MPEG-2 file all returned ssim 0.8394 against one
+        # delivered frame. A check that cannot see must say so rather than fail the file.
+        #
+        # The two outermost candidates are compared rather than two adjacent ones, because they
+        # are the furthest apart this check can ask for and therefore the clearest evidence that
+        # the extractions are following the frames at all.
+        low, high = work / "source-1.png", work / "source+1.png"
+        if low.exists() and high.exists() and ff.ssim(low, high) > 0.999:
             return None
-        if ff.ssim(theirs, neighbour) > 0.999:
-            return None
-        return ff.ssim(mine, theirs)
+        best = max(scores, key=lambda delta: scores[delta])
+        return best, scores[best]
 
 
 def tail_frame_offset(source: Path, output: Path, spec: TrimSpec, plan, media: MediaInfo,
@@ -352,22 +382,22 @@ def verify(source: Path, spec: TrimSpec, report: TrimReport, media: MediaInfo) -
             "alignment   no keyframe fell inside the segment, so all of it was "
             "re-encoded; hashes cannot match by construction")
         at = max(1, spec.frames // 2)
-        score = head_within_frame(source, output, media, facts,
-                                  output_frame=at, source_frame=spec.in_frame + at - 1)
-        if score is None:
+        looked = head_within_frame(source, output, media, facts,
+                                   output_frame=at, source_frame=spec.in_frame + at - 1)
+        if looked is None:
             # Not a failure: the file could not be *looked at*, which is a different answer
             # from being wrong. The verdict has three values for exactly this reason.
             result.checks.append(
                 "alignment   not checked: this container will not give up one frame at a time, "
                 "so the re-encoded picture could not be compared")
-        elif score >= 0.85:
+        elif looked[1] >= 0.85:
             result.checks.append(
-                f"alignment   the re-encoded picture shows the frame the in point names "
-                f"(ssim {score:.3f})")
+                f"alignment   the re-encoded picture shows the frame the in point names"
+                f"{_beside(looked[0])} (ssim {looked[1]:.3f})")
         else:
             result.failures.append(
                 f"alignment   the re-encoded picture does not show the frame the in point "
-                f"names (ssim {score:.3f})")
+                f"names (ssim {looked[1]:.3f})")
         _check_subtitles(result, spec, output, media)
         return result
 
@@ -396,23 +426,23 @@ def verify(source: Path, spec: TrimSpec, report: TrimReport, media: MediaInfo) -
     # produced the phantom "sits -3 frames off" on a head that was where it should be.
     if head_seconds >= 0.3:
         at = max(1, report.plan.head_frames // 2)
-        score = head_within_frame(source, output, media, facts,
-                                  output_frame=at, source_frame=spec.in_frame + at - 1)
-        if score is None:
+        looked = head_within_frame(source, output, media, facts,
+                                   output_frame=at, source_frame=spec.in_frame + at - 1)
+        if looked is None:
             # Not a failure -- see the note on the same branch above. An MPEG program stream
             # seek lands on the keyframe, so every frame inside a GOP comes back identical and
             # there is nothing to compare; saying "failed" there would be a lie about the file.
             result.checks.append(
                 "head        not checked: this container will not give up one frame at a time, "
                 "so the re-encoded head could not be compared")
-        elif score >= 0.85:
+        elif looked[1] >= 0.85:
             result.checks.append(
-                f"head        the re-encoded head shows the frame the in point names "
-                f"(ssim {score:.3f})")
+                f"head        the re-encoded head shows the frame the in point names"
+                f"{_beside(looked[0])} (ssim {looked[1]:.3f})")
         else:
             result.failures.append(
                 f"head        the re-encoded head does not show the frame the in point names "
-                f"(ssim {score:.3f})")
+                f"(ssim {looked[1]:.3f})")
         result.checks.append(
             f"head length the first {head_seconds:.3f}s are a crf-{spec.crf} re-encode, "
             "as designed; every frame after them is the original packet data"

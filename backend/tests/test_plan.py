@@ -577,9 +577,44 @@ def test_a_frame_time_is_read_from_near_the_frame_not_from_the_start(monkeypatch
     assert len(asked) == 1, "more than one probe for one frame"
     begin, span = asked[0]
     assert begin < 10048 / rate < begin + span, "the window does not contain the frame"
-    assert span < 2.0, f"the window is {span:.2f}s wide, which is a walk not a read"
     assert begin > 0, "the read started at the beginning of the file"
+    # Near, not a walk: the frame is 334 s into the file and the read opens a few seconds before
+    # it. The window has to be wide enough to survive the seek `-read_intervals` performs, which
+    # lands on the keyframe *before* the time asked for rather than on the time -- on the
+    # reference master that is 219 frames back, so a window of a few frames came back holding
+    # frames from before the one wanted and the reader answered with the wrong one.
+    assert 10048 / rate - begin <= 20, f"the read opens {10048 / rate - begin:.1f}s early"
+    assert span <= 20, f"the window is {span:.2f}s wide, which is a walk not a read"
     assert at is not None
+
+
+def test_a_frame_time_is_refused_when_the_window_never_reaches_the_frame(monkeypatch, tmp_path):
+    """And when the read comes back without the frame that was asked about, the answer is
+    *nothing* rather than the nearest thing in the window.
+
+    This is the fault that mattered. `-read_intervals` seeks to the keyframe before the time, so
+    a window shorter than the gap between keyframes holds frames from before the one wanted, and
+    picking the nearest to the computed guess hands one of those back as though it were the
+    answer. Measured on the reference master: a request for frame 162241 was answered with the
+    time of a frame 222 earlier, 7.3 s out, and that was used as the seek target for a cut.
+    Nothing may be returned unless it is the frame that was asked for.
+    """
+    from trimmer import ffmpeg
+
+    class Done:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, text):
+            self.stdout = text
+
+    # Frames 750..780 of a 30 fps file: nowhere near the 1000 that was asked for, so the window
+    # came back from an earlier keyframe. The nearest of them to the guess is still 7 s out.
+    def fake(args, **kwargs):
+        return Done("\n".join(f"{frame / 30.0:.6f}," for frame in range(750, 781)))
+
+    monkeypatch.setattr(ffmpeg, "_run_quiet", fake)
+    assert ffmpeg.frame_pts_near(tmp_path / "absent.mp4", 1000, 30.0) is None
 
 
 def test_a_frame_time_is_the_one_the_container_states(monkeypatch, tmp_path):

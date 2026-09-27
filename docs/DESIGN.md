@@ -254,6 +254,27 @@ timestamps, so nothing that worked before stops working. The verifier's own wind
 the same reader: it had the same drift, and it was reporting a correct cut as one frame late —
 a checker failing the file it was checking.
 
+**And the reader was wrong for longer than the writer.** This was found by asking it, on the
+reference master, for frames whose time the container's own packet index already knew — and
+comparing the two answers. For frame 162241 it answered 5400.700 where the container states
+5408.033: **222 frames and 7.3 s out**. Frame 162900 came back 131 frames early, frame 8596
+forty-two early. Only the luckiest frames got a usable answer.
+
+Two mistakes, both in the same ten lines. `-read_intervals` **seeks, and a seek lands on the
+keyframe at or before the time asked for**, not on the time — so a 32-frame window opened after
+that keyframe and closed long before the frame wanted, whose GOP is 219 frames on this master. And
+a frame is **not** the one whose stated time is nearest the computed guess: on a master off its
+average-rate grid a B-frame one position along has a later presentation time, so a request for
+frame 162000 was answered with the time of the row two along. The reader then returned the nearest
+thing it had, with no way for the caller to tell it was not the frame asked about.
+
+**Decision.** The window is wide enough to survive the seek (480 frames), the answer is selected by
+the numbering the rest of the engine uses — the frame whose time is `round((t - start) * rate)` —
+and when the window holds no such frame the reader returns **nothing** rather than something close.
+Nothing is lost by refusing: the caller falls back to the computed time, which is exactly what it
+did when the probe failed before. A wrong answer passed off as a right one is the one outcome that
+is not survivable, and it is the one that was happening.
+
 ## 18. The log is read at its top, so the newest line is at its top
 
 The log is the record of a cut, and the line being read is the one that just happened. It used to

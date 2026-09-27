@@ -169,3 +169,75 @@ def test_a_source_with_no_audio_is_not_given_one():
                            in_frame=0, out_frame=100)
     args = cutter._reencode_args(silent, spec, Path("C:/media/out.mp4"))
     assert "0:a:0" not in args
+
+
+# ---------------------------------------------------------------------------------------
+# The head, which can only be checked by looking
+# ---------------------------------------------------------------------------------------
+
+def fake_looks(monkeypatch, scores: dict) -> None:
+    """Stand in for reading frames as pictures.
+
+    `scores` is keyed by the pair of frames compared, so a test can say what a frame looks like
+    without a file existing. Anything unlisted scores 0.5, which is well under the bar -- a test
+    that forgets to describe a frame gets a failure rather than a pass by accident.
+    """
+    def frame_png(path, at, dest, from_end=False):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"png")
+        return True
+
+    monkeypatch.setattr(ff, "frame_png", frame_png)
+    monkeypatch.setattr(ff, "ssim", lambda a, b: scores.get((a.stem, b.stem), 0.5))
+
+
+def test_a_head_that_lands_on_the_mark_says_so(monkeypatch):
+    """The ordinary case, and the one that must not read as a fault."""
+    fake_looks(monkeypatch, {("output", "source+0"): 0.98, ("output", "source-1"): 0.55,
+                             ("output", "source+1"): 0.57})
+
+    looked = verifier.head_within_frame(Path("C:/media/out.mp4"), Path("C:/media/src.mp4"),
+                                        media(), None, output_frame=5, source_frame=104)
+    assert looked is not None
+    assert looked[0] == 0
+    assert looked[1] > 0.85
+    assert verifier._beside(0) == "", "on the mark is the ordinary case and needs no comment"
+
+
+def test_a_head_one_frame_along_is_reported_rather_than_failed(monkeypatch):
+    """An OBS master's packet grid is not exactly its nominal one.
+
+    A frame is addressed by time here because that is the only handle ffmpeg gives, so on such a
+    file the mark sometimes draws the frame beside it. That is the container's own timing, not a
+    bad cut: the check has to look at the neighbours, and when one of them matches it must report
+    where the frame sat instead of calling the file wrong.
+    """
+    fake_looks(monkeypatch, {("output", "source+0"): 0.61, ("output", "source+1"): 0.97})
+
+    looked = verifier.head_within_frame(Path("C:/media/out.mp4"), Path("C:/media/src.mp4"),
+                                        media(), None, output_frame=5, source_frame=104)
+    assert looked is not None
+    assert looked[0] == 1, "the frame beside the mark matched, and that is where it sat"
+    assert looked[1] > 0.85, "a cut that is one frame along is still a good cut"
+    assert verifier._beside(1) == " 1 frame after the mark"
+
+
+def test_a_head_that_matches_no_nearby_frame_still_fails(monkeypatch):
+    """The window is one frame wide, so it cannot be used to excuse a real fault."""
+    fake_looks(monkeypatch, {("output", "source+0"): 0.61, ("output", "source+1"): 0.60})
+
+    looked = verifier.head_within_frame(Path("C:/media/out.mp4"), Path("C:/media/src.mp4"),
+                                        media(), None, output_frame=5, source_frame=104)
+    assert looked is not None
+    assert looked[1] < 0.85, "nothing nearby matched, so this is a failure and must read as one"
+
+
+def test_a_container_that_gives_back_one_frame_is_not_checked(monkeypatch):
+    """An MPEG program stream seek lands on the keyframe, so every frame inside a GOP is the
+    same picture. The candidates are then one image and the best of them means nothing; the
+    honest answer is that the file could not be looked at, not that it is wrong."""
+    fake_looks(monkeypatch, {("source-1", "source+1"): 1.0})
+
+    assert verifier.head_within_frame(Path("C:/media/out.mp4"), Path("C:/media/src.mp4"),
+                                      media(), None, output_frame=5,
+                                      source_frame=104) is None

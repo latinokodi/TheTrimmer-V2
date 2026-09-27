@@ -783,7 +783,7 @@ def frame_pts(path: Path, count: int) -> list[float]:
 
 
 def frame_pts_near(path: Path, frame: int, rate: float, start_time: float = 0.0,
-                   window: int = 32) -> float | None:
+                   window: int = 480) -> float | None:
     """The presentation time of one frame, read from *near* it rather than from the start.
 
     :func:`frame_pts` reads frames from the file's beginning up to the one wanted, which is
@@ -792,19 +792,35 @@ def frame_pts_near(path: Path, frame: int, rate: float, start_time: float = 0.0,
     timestamp -- and it ran before the first log line, so the window showed a started run and
     then nothing at all, looking hung.
 
-    So the read is aimed at the frame. `-read_intervals` with a starting point seeks there
-    (the read is fast) and the frame wanted lands a few frames after the seek, because a seek
-    to a time lands on the frame *at* it. Which frame that is cannot be known before reading,
-    so the whole small window is returned to the caller, which finds the one it asked for by
-    its timestamp: frames inside the window are evenly spaced, so
-    ``start_time + frame / rate`` picks the right one.
+    So the read is aimed at the frame. Two things about that are easy to get wrong, and this
+    function got both of them wrong for a long time:
+
+    ``-read_intervals`` **seeks, and a seek lands on the keyframe at or before the time asked
+    for** -- not on the time. The window therefore has to reach past the longest gap between
+    keyframes, not a few frames. Asking for 32 frames got the 32 frames after the *keyframe*:
+    measured on the reference master, whose keyframes are 219 frames apart, a request for frame
+    162241 returned a time 7.3 s and 222 frames early, one for frame 162900 came back 131
+    frames early and one for frame 8596 came back 42 frames early.
+
+    And a frame is **not** the one whose time is nearest the computed guess. On a master whose
+    frames do not sit on its average-rate grid the nearest time belongs to a different frame --
+    a B-frame one position along has a later presentation time -- so a request for frame 162000
+    came back with the time of row 161998. Returning that as an answer is worse than returning
+    nothing, because the caller cannot tell: it was used as the seek target for the re-encoded
+    ends, and the head of a cut started in the wrong place.
+
+    So the answer is validated against the numbering the rest of the engine uses -- the frame
+    whose time is ``round((at - start_time) * rate)`` -- and ``None`` is returned when the
+    window holds no such frame. The caller then falls back to the computed time, which is
+    exactly what it did when the probe failed before, so nothing is lost and a wrong answer can
+    no longer be passed off as a right one.
     """
     if frame < 0 or rate <= 0:
         return None
     guess = start_time + frame / rate
-    # Far enough back that the frame wanted is inside the window even if the seek lands a frame
-    # or two early, and far enough forward to cover a seek that lands late.
-    lead = window / 4.0 / rate
+    # Far enough back that the frame wanted is inside the window even if the seek lands a whole
+    # keyframe early, and far enough forward to cover a seek that lands late.
+    lead = window / 2.0 / rate
     begin = max(0.0, guess - lead)
     span = window / rate
     result = _run_quiet(
@@ -815,20 +831,17 @@ def frame_pts_near(path: Path, frame: int, rate: float, start_time: float = 0.0,
     )
     if result.returncode != 0:
         return None
-    times = []
     for token in result.stdout.split():
         token = token.strip().rstrip(",")
         if not token:
             continue
         try:
-            times.append(float(token))
+            at = float(token)
         except ValueError:
             continue
-    if not times:
-        return None
-    # The frame wanted sits `frame - first_frame_in_window` along the window, and the frames are
-    # one rate apart, so the nearest timestamp to the computed guess is the one meant.
-    return min(times, key=lambda at: abs(at - guess))
+        if round((at - start_time) * rate) == frame:
+            return at
+    return None
 
 
 class FrameTimes:
