@@ -350,3 +350,121 @@ def test_the_keyframe_reader_falls_back_when_the_container_cannot_be_read(monkey
     monkeypatch.setattr(ffmpeg, "_keyframes_by_packet", refuse)
     monkeypatch.setattr(ffmpeg, "_keyframes_by_probe", lambda path, start, end: [3.0])
     assert ffmpeg.keyframes(tmp_path / "absent.mp4", 0.0, 10.0) == [3.0]
+
+
+# ---------------------------------------------------------------------------------------
+# Reading one frame's own time
+# ---------------------------------------------------------------------------------------
+
+def _fake_probe(monkeypatch, rate: float, first: float = 0.0):
+    """Stand in for ffprobe, answering a `-read_intervals` window from a synthetic file whose
+    frames sit exactly ``1 / rate`` apart starting at ``first``.
+
+    Returns the list of windows it was asked for, so a test can assert the read was *near* the
+    frame rather than from the beginning.
+    """
+    from trimmer import ffmpeg
+
+    asked: list[tuple[float, float]] = []
+
+    class Done:
+        returncode = 0
+
+        def __init__(self, text: str) -> None:
+            self.stdout = text
+            self.stderr = ""
+
+    def fake(args, **kwargs):
+        window = args[args.index("-read_intervals") + 1]
+        start_text, span_text = window.split("%+")
+        begin = float(start_text)
+        span = float(span_text)
+        asked.append((begin, span))
+        count = max(1, int(span * rate))
+        lines = [f"{first + (begin * rate + i) / rate:.6f}," for i in range(count + 1)]
+        return Done("\n".join(lines))
+
+    monkeypatch.setattr(ffmpeg, "_run_quiet", fake)
+    return asked
+
+
+def test_a_frame_time_is_read_from_near_the_frame_not_from_the_start(monkeypatch, tmp_path):
+    """The fault this fixes: reading frames from the beginning to learn one timestamp took over
+    27 s for frame 10048 of a 2.6 GB master, before the first log line -- so a run that was
+    working looked hung. The window must open near the frame."""
+    from trimmer import ffmpeg
+
+    rate = 30.0
+    asked = _fake_probe(monkeypatch, rate)
+    at = ffmpeg.frame_pts_near(tmp_path / "absent.mp4", 10048, rate)
+
+    assert len(asked) == 1, "more than one probe for one frame"
+    begin, span = asked[0]
+    assert begin < 10048 / rate < begin + span, "the window does not contain the frame"
+    assert span < 2.0, f"the window is {span:.2f}s wide, which is a walk not a read"
+    assert begin > 0, "the read started at the beginning of the file"
+    assert at is not None
+
+
+def test_a_frame_time_is_the_one_the_container_states(monkeypatch, tmp_path):
+    """And the answer is the frame's own time, not the computed grid time -- which is the whole
+    reason this reader exists."""
+    from trimmer import ffmpeg
+
+    rate = 30.0
+    _fake_probe(monkeypatch, rate)
+    for frame in (0, 1, 23, 10048, 56178):
+        got = ffmpeg.frame_pts_near(tmp_path / "absent.mp4", frame, rate)
+        assert got == pytest.approx(frame / rate, abs=1e-5), f"frame {frame}"
+
+
+def test_a_frame_time_survives_a_seek_that_lands_a_frame_off(monkeypatch, tmp_path):
+    """The seek inside `-read_intervals` lands on the frame at the time it is given, which is
+    not knowable before reading. The frame wanted is found by its timestamp, so a window that
+    starts a frame early or late still answers with the frame that was asked about."""
+    from trimmer import ffmpeg
+
+    rate = 25.0
+    frames = [i / rate for i in range(200)]        # 25 fps, frames 0..199
+
+    class Done:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, text):
+            self.stdout = text
+
+    def fake(args, **kwargs):
+        window = args[args.index("-read_intervals") + 1]
+        begin = float(window.split("%+")[0])
+        span = float(window.split("%+")[1])
+        # Start one frame *after* the time asked for: a legal place for a seek inside the window
+        # to land, and the frame wanted is still inside what comes back.
+        begin = begin + 1.0 / rate
+        inside = [t for t in frames if begin <= t <= begin + span]
+        return Done("\n".join(f"{t:.6f}," for t in inside))
+
+    monkeypatch.setattr(ffmpeg, "_run_quiet", fake)
+    for frame in (5, 50, 150):
+        assert ffmpeg.frame_pts_near(tmp_path / "absent.mp4", frame, rate) == \
+            pytest.approx(frame / rate, abs=1e-5)
+
+
+def test_a_frame_time_falls_back_when_the_container_reports_none(monkeypatch, tmp_path):
+    """No timestamps at all: the computed grid time is used, which is what every build before
+    this did."""
+    from trimmer import ffmpeg
+
+    class Done:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(ffmpeg, "_run_quiet", lambda *a, **k: Done())
+    media_times = ffmpeg.FrameTimes(tmp_path / "absent.mp4",
+                                    lambda frame: frame / 25.0, 25.0, 0.0)
+    assert media_times(100) == pytest.approx(4.0)
+
+    # And with no rate to aim by, the computed time is used directly.
+    without_rate = ffmpeg.FrameTimes(tmp_path / "absent.mp4", lambda frame: frame / 25.0)
+    assert without_rate(100) == pytest.approx(4.0)

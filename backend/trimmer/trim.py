@@ -365,7 +365,8 @@ def trim(
     # from the average-rate grid. The two agree on a short file and drift apart on a long one,
     # and where they differ the computed time is past the frame it names, so the seek starts
     # one frame late. See `ffmpeg.frame_pts`.
-    plan = plan_trim(spec, media, frame_time=ff.FrameTimes(spec.source, media.seconds_of))
+    plan = plan_trim(spec, media, frame_time=ff.FrameTimes(
+        spec.source, media.seconds_of, float(media.grid_rate), media.start_time))
     rate = media.grid_rate
     whole = spec.frames / float(rate)
 

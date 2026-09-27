@@ -182,11 +182,14 @@ def measure_offsets(source: Path, output: Path, spec: TrimSpec, plan, media: Med
         output_start = ff.stream_start_time(output)
     # Both files are seeked to times they state themselves. `FrameTimes` reads them from the
     # container and falls back to the computed grid time, so this is the same behaviour as
-    # before on a file that reports nothing.
+    # before on a file that reports nothing. The rate is what lets it read *near* the frame
+    # rather than from the start, which is the difference between instant and thirty seconds
+    # on a long master.
+    rate_value = float(media.grid_rate)
     source_time = left_time if left_time is not None else ff.FrameTimes(
-        source, lambda frame: source_start + frame / float(media.grid_rate))
+        source, lambda frame: source_start + frame / rate_value, rate_value, source_start)
     output_time = right_time if right_time is not None else ff.FrameTimes(
-        output, lambda frame: output_start + frame / float(media.grid_rate))
+        output, lambda frame: output_start + frame / rate_value, rate_value, output_start)
 
     def one(frame: int) -> OffsetCheck:
         return measure_offset(source, output, spec.in_frame, media.grid_rate, frame,

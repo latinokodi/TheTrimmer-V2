@@ -750,37 +750,91 @@ def frame_pts(path: Path, count: int) -> list[float]:
     return times
 
 
+def frame_pts_near(path: Path, frame: int, rate: float, start_time: float = 0.0,
+                   window: int = 32) -> float | None:
+    """The presentation time of one frame, read from *near* it rather than from the start.
+
+    :func:`frame_pts` reads frames from the file's beginning up to the one wanted, which is
+    fine for a low frame number and ruinous for a high one: on a 2.6 GB 34-minute master,
+    asking for frame 10048 spent over 27 s reading ten thousand frames to learn a single
+    timestamp -- and it ran before the first log line, so the window showed a started run and
+    then nothing at all, looking hung.
+
+    So the read is aimed at the frame. `-read_intervals` with a starting point seeks there
+    (the read is fast) and the frame wanted lands a few frames after the seek, because a seek
+    to a time lands on the frame *at* it. Which frame that is cannot be known before reading,
+    so the whole small window is returned to the caller, which finds the one it asked for by
+    its timestamp: frames inside the window are evenly spaced, so
+    ``start_time + frame / rate`` picks the right one.
+    """
+    if frame < 0 or rate <= 0:
+        return None
+    guess = start_time + frame / rate
+    # Far enough back that the frame wanted is inside the window even if the seek lands a frame
+    # or two early, and far enough forward to cover a seek that lands late.
+    lead = window / 4.0 / rate
+    begin = max(0.0, guess - lead)
+    span = window / rate
+    result = _run_quiet(
+        [tool("ffprobe"), "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "frame=pts_time", "-of", "csv=p=0",
+         "-read_intervals", f"{begin:.6f}%+{span:.6f}", str(path)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return None
+    times = []
+    for token in result.stdout.split():
+        token = token.strip().rstrip(",")
+        if not token:
+            continue
+        try:
+            times.append(float(token))
+        except ValueError:
+            continue
+    if not times:
+        return None
+    # The frame wanted sits `frame - first_frame_in_window` along the window, and the frames are
+    # one rate apart, so the nearest timestamp to the computed guess is the one meant.
+    return min(times, key=lambda at: abs(at - guess))
+
+
 class FrameTimes:
     """The exact presentation time of a frame, read from the container on demand.
 
     Built because a seek aimed at a *computed* time lands inside the wrong frame on a long
-    master, and only a long one: see :func:`frame_pts` for the measurement. The probe returns
-    every frame up to the one asked for, so one launch answers the head, the body and the tail
-    questions of a plan together, and the answers are kept.
+    master, and only a long one: see :func:`frame_pts` for the measurement. Reads near the
+    frame rather than from the start -- see :func:`frame_pts_near` for why that matters -- and
+    keeps every answer, so the head, the body and the tail questions of a plan together cost
+    one or two launches rather than three.
     """
 
     #: Frames read beyond the one wanted, so the next question about a nearby frame is free.
     LOOKAHEAD = 8
 
-    def __init__(self, path: Path, fallback) -> None:
+    def __init__(self, path: Path, fallback, rate: float | None = None,
+                 start_time: float = 0.0) -> None:
         self.path = path
         self.fallback = fallback
-        self._times: list[float] = []
+        self.rate = rate
+        self.start_time = start_time
+        self._known: dict[int, float] = {}
 
     def __call__(self, frame: int) -> float:
         if frame < 0:
             return self.fallback(frame)
-        if frame < len(self._times):
-            return self._times[frame]
-        times = frame_pts(self.path, frame + self.LOOKAHEAD)
-        if len(times) <= frame:
-            # The container did not report times for this frame -- a damaged index, or a format
-            # that omits them. The computed time is the fallback: exact for any file whose
-            # frames really are on its average-rate grid.
-            return self.fallback(frame)
-        # Keep what was already known and append the rest, in order.
-        self._times = times[:max(len(self._times), len(times))]
-        return self._times[frame]
+        if frame in self._known:
+            return self._known[frame]
+        exact = None
+        if self.rate:
+            exact = frame_pts_near(self.path, frame, self.rate, self.start_time)
+        if exact is None:
+            # The container did not report a time for this frame -- a damaged index, or a format
+            # that omits them. The computed time is the fallback: exact for any file whose frames
+            # really are on its average-rate grid.
+            exact = self.fallback(frame)
+        self._known[frame] = exact
+        return exact
 
 
 def frame_md5s(path: Path, start_seconds: float, count: int) -> list[str]:
