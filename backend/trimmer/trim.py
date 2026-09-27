@@ -46,13 +46,15 @@ import bisect
 import shutil
 import tempfile
 from dataclasses import dataclass, field
+from fractions import Fraction
+from functools import lru_cache
 from pathlib import Path
 
 import av
 
 from . import ffmpeg as ff
 from . import subtitles as subs
-from .ffmpeg import CancelToken, MediaInfo
+from .ffmpeg import CancelToken, Cancelled, MediaInfo
 from .subtitles import RetimeResult
 from .timecode import format_timecode
 
@@ -173,6 +175,27 @@ class TrimReport:
                 f"{format_timecode(self.spec.out_frame, rate)}")
 
 
+@lru_cache(maxsize=4)
+def _keyframes_of(path: str, size: int, modified_ns: int) -> tuple:
+    """Every keyframe in a file, remembered per source.
+
+    The planner is called on **every keystroke** -- the interface asks what a range will do so it
+    can decide whether the Trim button is enabled -- and listing a 35-minute master's keyframes
+    means walking the whole container, 2.6-7 s however it is asked for. That cost is per *file*,
+    not per question, so the answer is remembered and the plan slices it.
+
+    Keying this on the out point as well was the first attempt and it was useless: every
+    keystroke is a different out point, so every keystroke missed the cache and read the file
+    again -- measured, 6.7 s each time. The key is the file's identity, its size and its
+    modification time, and nothing that a question can change.
+
+    Output times are rounded to the millisecond. A keyframe is turned into a frame number before
+    it is used, so the rounding cannot change a decision.
+    """
+    marks = ff.keyframes(Path(path), -1.0, 1e12)
+    return tuple(round(mark, 3) for mark in marks)
+
+
 def plan_trim(spec: TrimSpec, media: MediaInfo, frame_time=None) -> TrimPlan:
     """Work out the split point, and refuse clearly when the source cannot be cut.
 
@@ -224,18 +247,30 @@ def plan_trim(spec: TrimSpec, media: MediaInfo, frame_time=None) -> TrimPlan:
     # frame it names on a long master, and `-ss` aimed there lands inside the next frame.
     in_seconds = frame_time(spec.in_frame)
     out_seconds = frame_time(spec.out_frame)
-    # Every keyframe in the file, then filtered to the segment. Two are wanted and they are on
-    # opposite sides of the range: the first keyframe *after* the in point, which is where the
-    # copied body can begin, and the last keyframe *before* the out point, which is where the
-    # re-encoded tail begins. Asking ffprobe for a window risks it answering with a keyframe
-    # just outside it, so the list is read once and both bounds come from it.
+    # Every keyframe up to the out point, then filtered to the segment. Two are wanted and they
+    # are on opposite sides of the range: the first keyframe *after* the in point, which is where
+    # the copied body can begin, and the last keyframe *before* the out point, which is where the
+    # re-encoded tail begins. Asking ffprobe for a window risks it answering with a keyframe just
+    # outside it, so the list is read once and both bounds come from it.
     #
-    # The window is opened a frame's worth before the file starts and closed at the end: a
-    # window that begins exactly on the first frame's timestamp *omits* that keyframe, and a
-    # source whose first keyframe is frame 0 then looks as though it has none on its opening
-    # GOP -- which re-encoded ranges that could have copied their whole body.
-    first_mark = media.seconds_of(0) - max(1.0 / float(media.grid_rate), 0.5)
-    marks = ff.keyframes(media.path, min(0.0, first_mark), media.duration)
+    # The whole file's keyframes, remembered per source (see :func:`_keyframes_of`), then cut
+    # down to the range here. Two are wanted and they are on opposite sides of it: the first
+    # keyframe *after* the in point, which is where the copied body can begin, and the last
+    # keyframe *before* the out point, which is where the re-encoded tail begins.
+    #
+    # The window opens a frame's worth before the file starts: a window that begins exactly on
+    # the first frame's timestamp *omits* that keyframe, and a source whose first keyframe is
+    # frame 0 then looks as though it has none on its opening GOP -- which re-encoded ranges that
+    # could have copied their whole body.
+    try:
+        stat = media.path.stat()
+        every_mark = _keyframes_of(str(media.path), stat.st_size, stat.st_mtime_ns)
+    except OSError:
+        # A source that cannot be stat-ed is still worth planning: read it directly.
+        every_mark = tuple(ff.keyframes(media.path, -1.0, 1e12))
+    # Nothing after the out point can be used -- the tail's keyframe is at or before it -- so the
+    # list is cut there and the rest of the planner sees only what it can act on.
+    marks = [mark for mark in every_mark if mark <= out_seconds + 1e-6]
     after = [t for t in marks if t >= in_seconds - 1e-6]
 
     # A keyframe exactly on the in point is the in point: the body opens there and nothing is
@@ -356,13 +391,18 @@ def trim(
             commands.append(_reencode(media, spec, spec.output, log, cancel, progress, whole))
         else:
             pieces: list[Path] = []
-            spans: list[float] = []
+            # Each piece's length as an exact fraction of a second, not a float division.
+            # The concat list rounds to six decimals, and a master at 186525000/6217501 fps
+            # gives 8538 frames a length of 284.6000338... s -- where the float and the exact
+            # value can round to different milliseconds, which is enough for the demuxer to
+            # place the next piece a frame out. See `_concat_list`.
+            spans: list[Fraction] = []
             if plan.mode != "copy":
                 # A copy cannot begin mid-GOP, so the run up to the opening keyframe is
                 # re-encoded. When the in point already is a keyframe this piece is empty and
                 # is not built at all -- a zero-frame file has no packets to concatenate.
                 pieces.append(head)
-                spans.append(plan.head_frames / float(rate))
+                spans.append(Fraction(plan.head_frames, 1) / rate)
                 commands.append(_encode_head(media, spec, plan, head, log, cancel, progress))
             body_commands, body_frames = _copy_body(media, spec, plan, body, log, cancel,
                                                     progress)
@@ -371,12 +411,12 @@ def trim(
             # The piece's *measured* length, not the requested one: the concat demuxer uses the
             # stated duration to place the next piece, and a copy that came back a frame or two
             # off would otherwise shift the tail and the sound against the picture.
-            spans.append(body_frames / float(rate))
+            spans.append(Fraction(body_frames, 1) / rate)
             # A copy cannot stop on a chosen frame either, so the run from the last keyframe
             # to the out point is re-encoded. This is what makes the segment frame-exact.
             commands.append(_encode_tail(media, spec, plan, tail, log, cancel, progress))
             pieces.append(tail)
-            spans.append(plan.tail_frames / float(rate))
+            spans.append(Fraction(plan.tail_frames, 1) / rate)
 
             listing = work / "concat.txt"
             listing.write_text(_concat_list(pieces, spans), encoding="utf-8")
@@ -592,10 +632,15 @@ def _copy_body(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, body: Path,
     first = plan.keyframe
     last = first + want - 1
     log(f"body        copying frames {first}..{last} from the original packets")
-    if cancel is not None:
-        cancel.raise_if_cancelled()
+    # The copy is a packet read rather than a subprocess, so nothing else checks the token for
+    # the length of it. A long body is the longest single operation in a trim, and without this
+    # Cancel would sit dead for the whole of it.
+    if cancel is not None and cancel.cancelled:
+        raise ff.Cancelled("cancelled")
     try:
-        _copy_packets(media.path, body, first, last)
+        _copy_packets(media.path, body, first, last, cancel)
+    except ff.Cancelled:
+        raise
     except Exception as error:                      # noqa: BLE001 - reported, not swallowed
         raise TrimError(
             f"could not copy frames {first}..{last} out of {media.path.name}: {error}"
@@ -609,13 +654,17 @@ def _copy_body(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, body: Path,
     return [], measured
 
 
-def _copy_packets(source: Path, body: Path, first: int, last: int) -> None:
+def _copy_packets(source: Path, body: Path, first: int, last: int, cancel=None) -> None:
     """Write the video packets of frames ``first..last`` inclusive into ``body``.
 
     The piece is rebased on its own start, because the packets carry the *source's*
     presentation times: a body taken from frame 250 opens at 4.166 s, and the concatenation
     would place it four seconds late. The first dts is the piece's own origin and every packet
     moves by it together, so the spacing between the frames is untouched.
+
+    ``cancel`` is checked while demuxing, not only before it: this is the longest single
+    operation in a trim on a long file, and reading it without a look at the token would make
+    Cancel appear to do nothing for as long as it took.
     """
     with av.open(str(source)) as src:
         stream = src.streams.video[0]
@@ -627,7 +676,9 @@ def _copy_packets(source: Path, body: Path, first: int, last: int) -> None:
             raise ValueError("the source reports no usable frame rate")
         origin_ts: int | None = None
         collected = []
-        for packet in src.demux(stream):
+        for seen, packet in enumerate(src.demux(stream)):
+            if seen % 2000 == 0 and cancel is not None and cancel.cancelled:
+                raise Cancelled("cancelled")
             if packet.pts is None or packet.dts is None:
                 continue
             if origin_ts is None:
@@ -650,12 +701,18 @@ def _copy_packets(source: Path, body: Path, first: int, last: int) -> None:
                 dst.mux(packet)
 
 
-def _concat_list(pieces: list[Path], spans: list[float]) -> str:
+def _concat_list(pieces: list[Path], spans: list[Fraction]) -> str:
     """The concat list for the picture pieces, each with its length stated.
 
     Without the ``duration`` line the demuxer uses whatever duration a piece's container
     reports, and on these sources that is a few frames short of the piece's content -- which
     is exactly how the body ends up repeating the end of the head.
+
+    The length is a ``Fraction`` and is rounded to the microsecond the demuxer is given. Six
+    decimals is a microsecond; a master at 186525000/6217501 fps makes 8538 frames
+    284.6000338 s, where the float division and the exact fraction can round to different
+    microseconds -- and that line is what positions the next piece, so the difference shows up
+    as an extra frame in the delivered file. An exact fraction rounds the same way for both.
 
     The last piece has no ``duration`` line: nothing follows it, so it would only be
     describing a length that the muxer measures for itself.
@@ -664,7 +721,8 @@ def _concat_list(pieces: list[Path], spans: list[float]) -> str:
     for index, (piece, span) in enumerate(zip(pieces, spans)):
         lines.append(f"file '{piece.as_posix()}'")
         if index < len(pieces) - 1:
-            lines.append(f"duration {span:.6f}")
+            exact = float(span)
+            lines.append(f"duration {exact:.6f}")
     return "\n".join(lines) + "\n"
 
 

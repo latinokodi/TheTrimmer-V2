@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -264,3 +265,53 @@ def test_the_default_output_name_never_contains_a_character_windows_refuses():
     for rate in (Fraction(25), NTSC_30, CINEMA):
         named = cutter.default_output(SOURCE, 0, 1, rate)
         assert not set(':*?"<>|') & set(named.name)
+
+
+# ---------------------------------------------------------------------------------------
+# The body copy's contract with the rest of the trim
+# ---------------------------------------------------------------------------------------
+
+def test_the_body_copy_is_handed_the_cancellation_token(monkeypatch, tmp_path):
+    """The copy is a packet read rather than a subprocess, so nothing else in the engine polls
+    the token for the length of it. The first version called a method the token does not have,
+    which surfaced as an `AttributeError` in the middle of a real trim on a 34-minute master
+    rather than as a failing test -- so the contract is asserted here directly."""
+    media_obj = media(frames=500)
+    plan = cutter.TrimPlan(media_obj, "headpatch", 100, 100, 300, tail_frames=100)
+    seen = []
+
+    def fake(source, destination, first, last, cancel=None):
+        seen.append(cancel)
+        Path(destination).write_bytes(b"")
+
+    monkeypatch.setattr(cutter, "_copy_packets", fake)
+    monkeypatch.setattr(cutter.ff, "inspect", lambda path: SimpleNamespace(frames=300))
+
+    token = cutter.CancelToken()
+    cutter._copy_body(media_obj, spec(0, 500), plan, tmp_path / "b.mp4",
+                      lambda *_: None, token)
+    assert seen == [token], "the token was not handed to the copy"
+
+
+def test_a_cancelled_job_does_not_start_its_body_copy(monkeypatch, tmp_path):
+    media_obj = media(frames=500)
+    plan = cutter.TrimPlan(media_obj, "headpatch", 100, 100, 300, tail_frames=100)
+    monkeypatch.setattr(cutter, "_copy_packets",
+                        lambda *a, **k: pytest.fail("the copy ran after cancellation"))
+
+    stopped = cutter.CancelToken()
+    stopped.cancel()
+    with pytest.raises(cutter.Cancelled):
+        cutter._copy_body(media_obj, spec(0, 500), plan, tmp_path / "b.mp4",
+                          lambda *_: None, stopped)
+
+
+def test_the_packet_reader_stops_when_the_job_is_cancelled():
+    """Checked inside the demux loop, not only before it: reading a long file's packets is the
+    longest single operation in a trim, and a token looked at once would leave Cancel appearing
+    to do nothing for the whole of it."""
+    import inspect as _inspect
+
+    source_text = _inspect.getsource(cutter._copy_packets)
+    assert "cancel.cancelled" in source_text, "the demux loop does not poll the token"
+    assert "raise Cancelled" in source_text

@@ -234,7 +234,7 @@ def copy_a_body(world: dict, frames: int, monkeypatch, tmp_path) -> None:
 
     # The copy reads the source's packets, and there is no source here, so the reader is
     # replaced by one that records the range it was asked for and writes a stub file.
-    def fake(source, destination, first, last):
+    def fake(source, destination, first, last, cancel=None):
         world["copied"].append((first, last))
         Path(destination).write_bytes(b"")
 
@@ -455,7 +455,7 @@ def no_copy_pass_counts_frames(world: dict, monkeypatch, tmp_path) -> None:
     plan = world["plan"]
     calls = []
 
-    def fake(source, destination, first, last):
+    def fake(source, destination, first, last, cancel=None):
         calls.append((first, last))
         Path(destination).write_bytes(b"")
 
