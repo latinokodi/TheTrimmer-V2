@@ -151,6 +151,7 @@ def _run_watched(
     progress,
     heartbeat: float | None,
     expected_seconds: float | None,
+    timeout: float | None = None,
 ) -> str:
     """``run`` for a command that was asked to report its position.
 
@@ -158,6 +159,8 @@ def _run_watched(
     standard output, and ``communicate`` -- which is what makes the plain path's
     cancellation and timeout simple -- cannot be used once a reader thread holds the pipe.
     """
+    if timeout is None:
+        timeout = max(180.0, (expected_seconds or 0) * 10 + 60.0)
     if log:
         log("  $ " + " ".join(str(a) for a in args))
     started = time.monotonic()
@@ -208,6 +211,17 @@ def _run_watched(
                 except subprocess.TimeoutExpired:
                     process.kill()
                 raise Cancelled("cancelled") from None
+            if timeout is not None and time.monotonic() - started > timeout:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                raise FFmpegError(
+                    f"command timed out after {timeout:.0f}s",
+                    [str(a) for a in args],
+                    "".join(stderr_parts),
+                )
             time.sleep(POLL_SECONDS)
     finally:
         stop.set()
@@ -227,9 +241,12 @@ def _run_watched(
     return stderr
 
 
-def _run_quiet(args: list[str], **kwargs) -> subprocess.CompletedProcess:
-    """``subprocess.run`` with no console window for the child."""
-    return subprocess.run(args, creationflags=NO_WINDOW, **kwargs)
+def _run_quiet(args: list[str], timeout: float = 60.0, **kwargs) -> subprocess.CompletedProcess:
+    """``subprocess.run`` with no console window for the child and a default timeout."""
+    try:
+        return subprocess.run(args, creationflags=NO_WINDOW, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired as exc:
+        raise FFmpegError(f"command timed out after {timeout}s", [str(a) for a in args]) from exc
 
 
 class FFmpegError(RuntimeError):
@@ -292,6 +309,7 @@ def run(
     progress=None,
     expected_seconds: float | None = None,
     heartbeat: float | None = HEARTBEAT_SECONDS,
+    timeout: float | None = None,
 ) -> str:
     """Run a command, returning its stderr (where ffmpeg says everything useful).
 
@@ -308,6 +326,8 @@ def run(
     position into a fraction -- and it is passed in rather than guessed, because a bar
     with an invented denominator is worse than no bar.
     """
+    if timeout is None:
+        timeout = max(180.0, (expected_seconds or 0) * 10 + 60.0)
     if progress is not None:
         return _run_watched(
             list(args[:1]) + _progress_flags() + list(args[1:]),
@@ -316,6 +336,7 @@ def run(
             progress=progress,
             heartbeat=heartbeat,
             expected_seconds=expected_seconds,
+            timeout=timeout,
         )
     if log:
         log("  $ " + " ".join(str(a) for a in args))
@@ -348,6 +369,17 @@ def run(
                     except subprocess.TimeoutExpired:
                         process.kill()
                     raise Cancelled("cancelled") from None
+                if timeout is not None and time.monotonic() - started > timeout:
+                    process.terminate()
+                    try:
+                        process.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                    raise FFmpegError(
+                        f"command timed out after {timeout:.0f}s",
+                        [str(a) for a in args],
+                        "",
+                    )
     except Cancelled:
         raise
     finally:
@@ -835,6 +867,46 @@ class FrameTimes:
             exact = self.fallback(frame)
         self._known[frame] = exact
         return exact
+
+
+def frames_near(path: Path, at_seconds: float, count: int) -> list[tuple[float, str]]:
+    """Frames decoded from ``at_seconds`` onward: each one's time and its MD5.
+
+    The times are the container's **own**, not rebased to the seek. ``-copyts`` is what keeps
+    them: without it ffmpeg rewrites the first frame found to zero, which loses the very thing
+    the caller needs -- where in the file the frame actually is. Measured on the reference
+    master, a seek to 300 s gives pts 9000 with the flag and pts 0 without it, and 9000 ticks at
+    1/90000 is exactly the 300 s that was asked for.
+
+    The time travels with the hash so a caller can identify a frame by when the container says
+    it is shown rather than by counting positions in what came back. An earlier check addressed
+    the frames in a window by index, and a seek that lands a frame off slides every index in it:
+    on a 25 fps fixture whose cut was provably exact that reported four to six frames of drift,
+    and those phantom offsets were fed to the calibration loop, which "corrected" a correct cut
+    and made it genuinely wrong.
+    """
+    if count <= 0:
+        return []
+    result = _run_quiet(
+        [tool("ffmpeg"), "-hide_banner", "-v", "error", "-ss", f"{at_seconds:.6f}",
+         "-copyts", "-i", str(path), "-map", "0:v:0", "-an", "-frames:v", str(count),
+         "-f", "framemd5", "-"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise FFmpegError("could not read frames", ["ffmpeg", str(path)], result.stderr)
+    frames: list[tuple[float, str]] = []
+    for line in result.stdout.splitlines():
+        if line.startswith("#") or not line.strip():
+            continue
+        fields = [field.strip() for field in line.split(",")]
+        if len(fields) < 6:
+            continue
+        try:
+            frames.append((float(fields[2]), fields[5]))
+        except ValueError:
+            continue
+    return frames
 
 
 def frame_md5s(path: Path, start_seconds: float, count: int) -> list[str]:

@@ -136,28 +136,36 @@ def measure_offset(source: Path, output: Path, in_frame: int, rate, at_frame: in
     nowhere, and reads as a fault in a file that is exact.
     """
     rate_value = float(rate)
-    segment = _frames_by_index(output, at_frame, window, rate_value, output_start,
-                               output_time)
+    segment = _window_by_time(output, at_frame, window, rate_value, output_start,
+                              output_time)
     if len(segment) < window:
         return OffsetCheck(at_frame, None, rate_value)
-    source_frames = _frames_by_index(source, in_frame + at_frame - search,
-                                     window + 2 * search, rate_value, source_start,
-                                     source_time)
+    source_frames = _window_by_time(source, in_frame + at_frame - search,
+                                    window + 2 * search, rate_value, source_start,
+                                    source_time)
     if len(source_frames) < window:
         return OffsetCheck(at_frame, None, rate_value)
-    # Closest match first, and only then further out.
-    #
-    # A window of near-identical frames -- a locked-off shot, a title card, a still -- matches
-    # at several offsets at once, and this used to return the **earliest** hit. That biased
-    # every ambiguous measurement in one direction: on material that is exactly on the mark it
-    # reported one frame of drift, consistently negative, and the alignment check failed for a
-    # cut that was frame-exact. Scanning outward from the expected position reports the offset
-    # the content actually sits at, and only gives up when nothing within the search matches.
-    candidates = sorted(range(len(source_frames) - window + 1), key=lambda i: abs(i - search))
-    for index in candidates:
-        if source_frames[index:index + window] == segment:
-            return OffsetCheck(at_frame, index - search, rate_value)
-    return OffsetCheck(at_frame, None, rate_value)
+
+    # Where the output's pictures sit in the source is looked up by content. The output's window
+    # is a run of *pictures*, and the answer comes from the frame numbers the source's container
+    # states for the same pictures -- so nothing here depends on counting decoded frames.
+    wanted = [digest for _, digest in segment]
+    lookup: dict[str, int] = {}
+    for number, digest in source_frames:
+        lookup.setdefault(digest, number)
+    found = [lookup.get(digest) for digest in wanted]
+    if any(number is None for number in found):
+        # A picture the output shows is nowhere near that place in the source: either the
+        # segment is re-encoded there or the cut moved. The caller decides which.
+        return OffsetCheck(at_frame, None, rate_value)
+    # Every frame of a window is consecutive, so every one of them must give the same offset.
+    # Any disagreement means the lookup matched the wrong pictures -- a still, a title card, a
+    # shot where neighbouring frames are near-identical -- and a guess is worse than no answer.
+    offsets = {number - (in_frame + at_frame + index)
+               for index, number in enumerate(found)}
+    if len(offsets) != 1:
+        return OffsetCheck(at_frame, None, rate_value)
+    return OffsetCheck(at_frame, offsets.pop(), rate_value)
 
 
 def measure_offsets(source: Path, output: Path, spec: TrimSpec, plan, media: MediaInfo,
@@ -176,10 +184,12 @@ def measure_offsets(source: Path, output: Path, spec: TrimSpec, plan, media: Med
     frames = sample_frames(spec, plan, media, count)
     if not frames:
         return []
-    if source_start is None:
-        source_start = media.start_time
-    if output_start is None:
-        output_start = ff.stream_start_time(output)
+    # The origin of each file, used only to aim the seek. The frame *numbers* that come back are
+    # absolute -- `frames_near` keeps the container's own timestamps -- so both windows are
+    # addressed from zero and the two files' numbers mean the same thing.
+    source_seek_base = media.start_time if source_start is None else source_start
+    output_seek_base = (ff.stream_start_time(output) if output_start is None
+                        else output_start)
     # Both files are seeked to times they state themselves. `FrameTimes` reads them from the
     # container and falls back to the computed grid time, so this is the same behaviour as
     # before on a file that reports nothing. The rate is what lets it read *near* the frame
@@ -187,13 +197,15 @@ def measure_offsets(source: Path, output: Path, spec: TrimSpec, plan, media: Med
     # on a long master.
     rate_value = float(media.grid_rate)
     source_time = left_time if left_time is not None else ff.FrameTimes(
-        source, lambda frame: source_start + frame / rate_value, rate_value, source_start)
+        source, lambda frame: source_seek_base + frame / rate_value, rate_value,
+        source_seek_base)
     output_time = right_time if right_time is not None else ff.FrameTimes(
-        output, lambda frame: output_start + frame / rate_value, rate_value, output_start)
+        output, lambda frame: output_seek_base + frame / rate_value, rate_value,
+        output_seek_base)
 
     def one(frame: int) -> OffsetCheck:
         return measure_offset(source, output, spec.in_frame, media.grid_rate, frame,
-                              source_start=source_start, output_start=output_start,
+                              source_start=0.0, output_start=0.0,
                               source_time=source_time, output_time=output_time)
 
     if len(frames) == 1 or workers <= 1:
@@ -288,53 +300,39 @@ def tail_frame_offset(source: Path, output: Path, spec: TrimSpec, plan, media: M
         return best, scores[best]
 
 
-def _frames_by_index(path: Path, first: int, count: int, rate: float,
-                     start_time: float = 0.0, frame_time=None) -> list[str]:
-    """The MD5 of ``count`` decoded frames starting at frame ``first``, counted from the
-    start of the file.
+def _window_by_time(path: Path, at_frame: int, count: int, rate: float,
+                    start_time: float = 0.0, frame_time=None) -> list[tuple[int, str]]:
+    """Frames of ``path`` from just before ``at_frame`` on, as ``(frame number, MD5)`` pairs.
 
-    The stream is seeked to a couple of frames *before* the first one wanted and the exact
-    frames are then cut out of what was decoded by index with ``select``. This is the
-    difference between asking for "the frame at 9.2917 s" and getting the frame that is
-    actually there: a window that starts one frame out cannot match anywhere, so the check
-    reports a correct cut as sitting in a "re-encoded region".
+    The frame number comes from the time **the container states for that frame**, not from a
+    position in what was decoded, and that is the whole point of this function.
 
-    The seek target comes from ``frame_time`` when a caller can supply one -- the container's
-    own statement of when the frame is shown. Computing it as ``start + n / rate`` instead
-    drifts past the frame it names on a long file, for the same reason it does in the trim:
-    at 30 fps on a thirty-minute master the two are a fraction of a millisecond apart, which
-    is enough to land the seek inside the next frame.
+    Two earlier attempts addressed the window by position and both were wrong on real material.
+    Seeking to a time and hashing from there can land a frame off; cutting the window out of
+    what was decoded with ``select`` can come up one frame short, because the decoder and the
+    seek between them do not guarantee the first frame handed over is the first one asked for.
+    Either way every index in the window slides by one, so a cut that is exactly right is
+    reported as four to six frames out -- and those phantom offsets were fed to the calibration
+    loop, which "corrected" a correct cut and made it genuinely wrong, six frames short.
+
+    A frame addressed by its own stated time cannot slide. The times are absolute, because
+    ``ff.frames_near`` keeps the container's own timestamps rather than rebasing them to the
+    seek, which is what makes the numbers comparable between two files that begin at different
+    instants: the caller passes ``start_time=0`` and the number is the frame's own position.
     """
-    if count <= 0 or first < 0 or rate <= 0:
+    if count <= 0 or at_frame < 0 or rate <= 0:
         return []
-    back = 2
-    base = max(0, first - back)
-    offset = first - base
+    back = 3
+    first = max(0, at_frame - back)
     if frame_time is not None:
-        seek_time = frame_time(base)
+        seek = frame_time(first)
     else:
-        seek_time = start_time + base / rate
-    # `select` addresses frames from the beginning of the *decoded* stream, and the seek drops
-    # everything before it, so the wanted frames are at `offset .. offset + count - 1` of what
-    # remains. `-vsync 0` stops the encoder duplicating frames to fill a constant rate.
-    expression = (f"select='between(n\\,{offset}\\,{offset + count - 1})'")
-    result = ff._run_quiet(
-        [ff.tool("ffmpeg"), "-hide_banner", "-v", "error",
-         "-ss", f"{seek_time:.6f}", "-i", str(path),
-         "-map", "0:v:0", "-an", "-vf", expression, "-vsync", "0",
-         "-f", "framemd5", "-"],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        return []
-    hashes: list[str] = []
-    for line in result.stdout.splitlines():
-        if line.startswith("#") or not line.strip():
-            continue
-        parts = [token.strip() for token in line.split(",")]
-        if len(parts) >= 6:
-            hashes.append(parts[5])
-    return hashes
+        seek = start_time + first / rate
+    frames = ff.frames_near(path, seek, count + 2 * back)
+    out: list[tuple[int, str]] = []
+    for at, digest in frames:
+        out.append((round((at - start_time) * rate), digest))
+    return out
 
 
 def check_subtitles(source_srt: Path, output_srt: Path, start: float,

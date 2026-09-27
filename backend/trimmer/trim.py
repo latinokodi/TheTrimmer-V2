@@ -669,51 +669,7 @@ def _copy_packets(source: Path, body: Path, first: int, last: int, cancel=None) 
     """
     with av.open(str(source)) as src:
         stream = src.streams.video[0]
-        # Reading the container's packet index is a demux, not a decode: no frame is
-        # reconstructed, which is why this is fast even on a long master.
-        time_base = float(stream.time_base)
-        rate = float(stream.average_rate or stream.guessed_rate or 0)
-        if rate <= 0:
-            raise ValueError("the source reports no usable frame rate")
-        origin_ts: int | None = None
-        # Kept in **decode order**, which is the order the demuxer hands them over, with one
-        # packet per frame number.
-        #
-        # Two separate requirements, and getting either wrong breaks the muxer:
-        #   * One packet per frame. A master whose timestamps are locally irregular -- this one
-        #     averages 0.033 s a frame but not evenly -- can give two packets whose times round
-        #     to the same frame index. Appending both put an extra frame in the body: measured,
-        #     8539 packets selected for the 8538 frame numbers 48..8585, which was exactly the
-        #     extra frame in the delivered file.
-        #   * Decode order, not frame order. Sorting by frame number is presentation order, and
-        #     with B-frames that writes a frame before the frame it is coded against -- ffmpeg
-        #     rejects it with "Invalid argument ... returned 22". This was tried and failed.
-        collected: list = []
-        taken: set[int] = set()
-        for seen, packet in enumerate(src.demux(stream)):
-            if seen % 2000 == 0 and cancel is not None and cancel.cancelled:
-                raise Cancelled("cancelled")
-            if packet.pts is None or packet.dts is None:
-                continue
-            if origin_ts is None:
-                origin_ts = packet.pts
-            frame = round((packet.pts - origin_ts) * time_base * rate)
-            # No early exit: packets arrive in *decode* order, so the presentation times jump
-            # around by a whole GOP and stopping at the first frame past `last` would cut off
-            # wanted frames still in flight.
-            if first <= frame <= last and frame not in taken:
-                taken.add(frame)
-                collected.append(packet)
-        missing = [frame for frame in range(first, last + 1) if frame not in taken]
-        if missing:
-            # A frame with no packet of its own cannot be placed by this method: the copy can
-            # only pass through packets that exist. Said rather than silently delivered, and the
-            # tail's re-encode cannot absorb it because the tail starts at a fixed keyframe.
-            raise ValueError(
-                f"{len(missing)} frame(s) of {first}..{last} have no packet of their own "
-                f"(first is frame {missing[0]}); this source's timestamps do not map one "
-                f"packet to one frame over this range"
-            )
+        collected = _select_body_packets(stream, first, last, cancel)
         if not collected:
             raise ValueError(f"no packets found for frames {first}..{last}")
         # Rebased on the first *decode* timestamp, and written in the order they were read.
@@ -725,6 +681,63 @@ def _copy_packets(source: Path, body: Path, first: int, last: int, cancel=None) 
                 packet.dts -= origin
                 packet.stream = out_stream
                 dst.mux(packet)
+
+
+def _select_body_packets(stream, first: int, last: int, cancel=None) -> list:
+    """The packets that make up frames ``first..last``, in decode order.
+
+    Frame numbers are the packet's own position in decode order -- the one numbering that cannot
+    slide, because the container hands over exactly one video packet per frame. Deriving a number
+    by dividing a timestamp is what produced every frame-numbering fault in this engine: two
+    packets can share a presentation time, a file's frames need not sit evenly on its average
+    rate, and a computed time drifts past the frame it names.
+
+    The range runs from the keyframe at or before ``first``, so a decoder can start on it, and
+    stops before the keyframe that opens the re-encoded tail, so that keyframe cannot appear in
+    the segment twice.
+
+    Counting frames and keeping one packet each was tried and is wrong: the reference master
+    carries frames 86 and 87 at one presentation time, the second being the keyframe, and
+    collapsing them dropped a real picture -- a 500-frame cut arrived six frames short.
+    """
+    time_base = float(stream.time_base)
+    rate = float(stream.average_rate or stream.guessed_rate or 0)
+    if rate <= 0:
+        raise ValueError("the source reports no usable frame rate")
+
+    origin_ts: int | None = None
+    collected: list = []
+    found_opening = False
+    for seen, packet in enumerate(stream.container.demux(stream)):
+        if seen % 2000 == 0 and cancel is not None and cancel.cancelled:
+            raise Cancelled("cancelled")
+        if packet.pts is None or packet.dts is None:
+            continue
+        if origin_ts is None:
+            origin_ts = packet.pts
+        # +1: the container's first packet is frame 1, and that is the numbering the editor
+        # shows and the marks are given in.
+        frame = round((packet.pts - origin_ts) * time_base * rate) + 1
+
+        if not found_opening:
+            # Packets in the opening GOP before the in point carry the references the first
+            # wanted frames are coded against -- but they belong to the head's re-encode, so
+            # they are dropped. The keyframe marks where a copy may begin.
+            if packet.is_keyframe and frame >= first:
+                found_opening = True
+                collected.append(packet)
+            continue
+
+        if frame > last:
+            if packet.is_keyframe:
+                # This keyframe opens the tail's re-encode; copying it too would put the same
+                # picture into the segment twice. A packet past the last frame that is *not* a
+                # keyframe still has to be copied, because decode order means it may be handed
+                # over before its neighbours are.
+                break
+            continue
+        collected.append(packet)
+    return collected
 
 
 def _concat_list(pieces: list[Path], spans: list[Fraction]) -> str:

@@ -312,9 +312,105 @@ def test_the_packet_reader_stops_when_the_job_is_cancelled():
     to do nothing for the whole of it."""
     import inspect as _inspect
 
-    source_text = _inspect.getsource(cutter._copy_packets)
+    source_text = _inspect.getsource(cutter._select_body_packets)
     assert "cancel.cancelled" in source_text, "the demux loop does not poll the token"
     assert "raise Cancelled" in source_text
+
+
+# ---------------------------------------------------------------------------------------
+# Choosing the packets the body is made of
+# ---------------------------------------------------------------------------------------
+
+class _Stream:
+    """The parts of a PyAV stream the selector reads. No container, no file.
+
+    Time base 1/1000 with a rate of 40 puts one frame every 25 ticks, so a packet's frame number
+    is its timestamp over 25 -- which keeps the fixtures below readable.
+    """
+
+    def __init__(self, packets, time_base=Fraction(1, 1000), rate=40):
+        self.time_base = time_base
+        self.average_rate = rate
+        self.guessed_rate = rate
+        self.container = self
+        self._packets = packets
+
+    def demux(self, _stream):
+        return iter(self._packets)
+
+
+class _Packet:
+    """A video packet: presentation time, and whether it can be decoded on its own."""
+
+    def __init__(self, pts, key=False, dts=None):
+        self.pts = pts
+        self.dts = pts if dts is None else dts
+        self.is_keyframe = key
+
+
+def _frames(count: int, gop: int = 10) -> list:
+    """One packet per frame, with a keyframe every ``gop`` frames, at 25 ticks a frame."""
+    return [_Packet(index * 25, key=(index % gop == 0)) for index in range(count)]
+
+
+def _frame_of(packet) -> int:
+    """The frame number the selector gives a packet from these fixtures: the container's own,
+    which starts at one."""
+    return packet.pts // 25 + 1
+
+
+def test_a_body_copy_keeps_every_packet_of_the_range_asked_for():
+    """The frames wanted are 10..14, with a keyframe at 10 -- so 10, 11, 12, 13, 14 and nothing
+    else, whatever the internal indexing says."""
+    chosen = cutter._select_body_packets(_Stream(_frames(25)), first=10, last=14)
+    assert [_frame_of(p) for p in chosen] == [11, 12, 13, 14]
+
+
+def test_two_packets_at_the_same_presentation_time_are_both_kept():
+    """The fault behind a 500-frame cut arriving six frames short.
+
+    A master can carry two packets at one presentation time -- the reference one has frames 86
+    and 87 both at pts 259890, the second of them the keyframe with the SPS/PPS/IDR. Keeping one
+    packet per frame number dropped a real picture, and the delivered segment ran ahead of its
+    sound by that many frames. Nothing may be collapsed.
+    """
+    packets = _frames(25)
+    # The opening keyframe is frame 0. Frames 4 and 5 share a presentation time, in the middle
+    # of the body, which is where the reference master has its pair.
+    packets[5] = _Packet(4 * 25, key=False, dts=4 * 25)
+    packets[4] = _Packet(4 * 25, key=False, dts=4 * 25)
+
+    chosen = cutter._select_body_packets(_Stream(packets), first=1, last=10)
+    frames_wanted = list(range(0, 10))
+    assert len(chosen) == len(frames_wanted), (
+        f"expected {len(frames_wanted)} packets, got {len(chosen)}")
+    assert chosen[0].is_keyframe, "the copy must begin on a keyframe"
+    # Both of the packets that share a time survive, so the frame after them is still there.
+    assert [_frame_of(p) for p in chosen] == [1, 2, 3, 4, 5, 5, 7, 8, 9, 10]
+
+
+def test_the_copy_starts_at_the_keyframe_that_opens_the_body():
+    """Packets before it belong to the head's re-encode and cannot be copied: the first frame of
+    the body has to be one a decoder can start on."""
+    # The in point is inside the second GOP, so the opening keyframe is frame 10 and frames 5..9
+    # are the head's business.
+    chosen = cutter._select_body_packets(_Stream(_frames(25)), first=5, last=14)
+    assert [_frame_of(p) for p in chosen] == [11, 12, 13, 14]
+
+
+def test_the_copy_stops_before_the_keyframe_that_opens_the_tail():
+    """That keyframe is re-encoded as the tail's first frame, so copying it too would put the
+    same picture into the segment twice."""
+    chosen = cutter._select_body_packets(_Stream(_frames(40)), first=10, last=19)
+    assert max(_frame_of(p) for p in chosen) == 19
+    assert not any(p.is_keyframe and _frame_of(p) == 20 for p in chosen)
+
+
+def test_a_source_with_no_usable_rate_is_refused():
+    """Without a rate the frame numbers cannot be worked out at all, and guessing would place the
+    seam in the wrong place rather than fail."""
+    with pytest.raises(ValueError, match="no usable frame rate"):
+        cutter._select_body_packets(_Stream([], rate=0), first=0, last=10)
 
 
 def test_the_keyframe_reader_uses_the_fast_path(monkeypatch, tmp_path):
