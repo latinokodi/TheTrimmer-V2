@@ -133,3 +133,39 @@ def test_a_verdict_is_three_valued_never_two():
 
     empty = VerifyResult()
     assert empty.ok, "a run with no failures is still not a failure"
+
+
+# ---------------------------------------------------------------------------------------
+# A whole-segment re-encode must carry the sound
+# ---------------------------------------------------------------------------------------
+
+def test_a_whole_segment_re_encode_maps_the_audio():
+    """The fault this guards produced silent files, and nothing caught it.
+
+    When the video and audio maps were split into two helpers, this pass kept using only the
+    video one -- so it added -af and -c:a aac while mapping no audio stream at all, and
+    ffmpeg wrote a file with a picture and no sound. It was found by cutting a real master and
+    looking at the result: fprobe showed one stream where there should have been two.
+
+    No test could have caught it by accident: every check in the suite passed, because the frame
+    count, the duration and the picture were all correct.
+    """
+    from trimmer import trim as cutter
+
+    spec = cutter.TrimSpec(source=Path("C:/media/reel.mp4"), output=Path("C:/media/out.mp4"),
+                           in_frame=0, out_frame=100)
+    args = cutter._reencode_args(media(), spec, Path("C:/media/out.mp4"))
+    assert "0:a:0" in args, "the re-encode maps no audio stream, so the file comes out silent"
+    assert "-c:a" in args
+
+
+def test_a_source_with_no_audio_is_not_given_one():
+    """And the map is not invented for a source that has none."""
+    from trimmer import trim as cutter
+
+    silent = media()
+    silent.audio = None
+    spec = cutter.TrimSpec(source=Path("C:/media/reel.mp4"), output=Path("C:/media/out.mp4"),
+                           in_frame=0, out_frame=100)
+    args = cutter._reencode_args(silent, spec, Path("C:/media/out.mp4"))
+    assert "0:a:0" not in args

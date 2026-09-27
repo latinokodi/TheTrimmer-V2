@@ -971,14 +971,19 @@ def _mux(picture: Path, sound: Path, output: Path, log, cancel, progress=None,
     return args
 
 
-def _reencode(media: MediaInfo, spec: TrimSpec, output: Path, log, cancel,
-              progress=None, expected_seconds: float | None = None) -> list[str]:
+def _reencode_args(media: MediaInfo, spec: TrimSpec, output: Path) -> list[str]:
+    """Built apart from the run so the stream maps can be checked without media.
+
+    They are the part that is easy to get wrong and impossible to get wrong loudly: a pass that
+    maps no audio stream is a valid ffmpeg command that writes a silent file, and every other
+    check -- frame count, duration, picture -- still passes. It shipped once like that.
+    """
     encoder, extra = ENCODERS[media.codec.lower()]
     args = [
         ff.tool("ffmpeg"), *_common_input(),
         "-ss", f"{media.seconds_of(spec.in_frame):.6f}", "-i", str(media.path),
         "-t", f"{spec.frames / float(media.grid_rate):.6f}",
-        *_video_map(media),
+        *_video_map(media), *_audio_map(media),
         "-vf", "setpts=PTS-STARTPTS",
         "-c:v", encoder, "-preset", spec.preset, "-crf", str(spec.crf),
         "-pix_fmt", media.pix_fmt if media.pix_fmt in PASSTHROUGH_PIX_FMTS else "yuv420p",
@@ -989,6 +994,12 @@ def _reencode(media: MediaInfo, spec: TrimSpec, output: Path, log, cancel,
                  "-c:a", "aac", "-b:a", spec.audio_bitrate,
                  "-ar", str(media.audio.sample_rate), "-ac", str(media.audio.channels)]
     args += ["-movflags", "+faststart", str(output)]
+    return args
+
+
+def _reencode(media: MediaInfo, spec: TrimSpec, output: Path, log, cancel,
+              progress=None, expected_seconds: float | None = None) -> list[str]:
+    args = _reencode_args(media, spec, output)
     log("encode      no usable keyframe in the segment: re-encoding all of it")
     ff.run(args, cancel=cancel, log=log, progress=progress,
            expected_seconds=expected_seconds)
