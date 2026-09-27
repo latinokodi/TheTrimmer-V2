@@ -96,8 +96,20 @@ def sample_frames(spec: TrimSpec, plan, media: MediaInfo, count: int = 3) -> lis
     On a short segment those margins would swallow every sample, so they shrink with it.
     """
     rate = float(media.grid_rate)
-    margin = max(1, min(round(2.0 * rate), spec.frames // 8))
-    first = max(plan.head_frames + margin, margin)
+    # The margin keeps samples clear of the re-encoded head, and on a long segment two seconds
+    # is right. It must never be larger than the copied body itself, though: a 38-frame body
+    # with a 60-frame margin puts every sample in the tail, which is a fresh encode and matches
+    # nothing -- measured, all three samples reported "no matching frames" for a file whose body
+    # was frame-for-frame the source's own packets.
+    body_frames = max(0, spec.frames - plan.head_frames - plan.tail_frames)
+    margin = max(1, min(round(2.0 * rate), spec.frames // 8, max(1, body_frames // 4)))
+    # The re-encoded head occupies output frames 1..head_frames, so the first frame a hash
+    # comparison can speak about is the one after it. `plan.head_frames` is a count and the
+    # output's frames are counted from one, which is the off-by-one that put every sample inside
+    # the head on a six-frame cut -- measured, all three samples reported "no matching frames"
+    # for a file whose body was frame-exact.
+    body_start = plan.head_frames + 1
+    first = max(body_start + margin, margin)
     # The last sample's *window* has to finish inside the copied body: frames at or after the
     # tail's first frame are a fresh encode and can never match.
     body_end = spec.frames - plan.tail_frames
@@ -105,8 +117,8 @@ def sample_frames(spec: TrimSpec, plan, media: MediaInfo, count: int = 3) -> lis
     if last < first:
         if spec.frames <= 0:
             return []
-        middle = max(0, min(body_end - 1, max(plan.head_frames, body_end // 2)))
-        if middle < plan.head_frames or middle >= body_end:
+        middle = max(body_start, min(body_end - 1, max(body_start, body_end // 2)))
+        if middle < body_start or middle >= body_end:
             # Nothing of the copied body is wide enough to sample: the alignment check has
             # nothing it can honestly say, and the head and tail checks carry the report.
             return []
@@ -161,8 +173,11 @@ def measure_offset(source: Path, output: Path, in_frame: int, rate, at_frame: in
     # Every frame of a window is consecutive, so every one of them must give the same offset.
     # Any disagreement means the lookup matched the wrong pictures -- a still, a title card, a
     # shot where neighbouring frames are near-identical -- and a guess is worse than no answer.
-    offsets = {number - (in_frame + at_frame + index)
-               for index, number in enumerate(found)}
+    # Both sides are 1-based now, so the frame the output shows t_frame frames in -- its
+    # frame t_frame -- is the source's frame in_frame + at_frame - 1. The index within the
+    # window shifts that by one per frame.
+    base = in_frame + at_frame - 1
+    offsets = {number - (base + index) for index, number in enumerate(found)}
     if len(offsets) != 1:
         return OffsetCheck(at_frame, None, rate_value)
     return OffsetCheck(at_frame, offsets.pop(), rate_value)
@@ -331,7 +346,9 @@ def _window_by_time(path: Path, at_frame: int, count: int, rate: float,
     frames = ff.frames_near(path, seek, count + 2 * back)
     out: list[tuple[int, str]] = []
     for at, digest in frames:
-        out.append((round((at - start_time) * rate), digest))
+        # +1 because the container hands over its first packet as frame 1, which is the numbering
+        # the marks are typed in and the one the copy selects by.
+        out.append((round((at - start_time) * rate) + 1, digest))
     return out
 
 

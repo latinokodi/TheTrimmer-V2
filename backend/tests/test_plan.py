@@ -406,11 +406,12 @@ def test_the_copy_stops_before_the_keyframe_that_opens_the_tail():
     assert not any(p.is_keyframe and _frame_of(p) == 20 for p in chosen)
 
 
-def test_a_source_with_no_usable_rate_is_refused():
-    """Without a rate the frame numbers cannot be worked out at all, and guessing would place the
-    seam in the wrong place rather than fail."""
-    with pytest.raises(ValueError, match="no usable frame rate"):
-        cutter._select_body_packets(_Stream([], rate=0), first=0, last=10)
+def test_a_body_copy_needs_no_frame_rate_at_all():
+    """The copy numbers frames by the container's packet order, so a source that reports no
+    usable rate is no obstacle -- and a test that used to demand a refusal now asserts the
+    opposite, because the refusal is what the derived numbering needed and this does not."""
+    chosen = cutter._select_body_packets(_Stream(_frames(12), rate=0), first=1, last=5)
+    assert [_frame_of(p) for p in chosen] == [1, 2, 3, 4, 5]
 
 
 def test_the_keyframe_reader_uses_the_fast_path(monkeypatch, tmp_path):

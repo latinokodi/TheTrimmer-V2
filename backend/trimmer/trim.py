@@ -630,7 +630,12 @@ def _copy_body(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, body: Path,
     (:func:`_encode_sound`), so that failure cannot recur *and* the joins cannot clip.
     """
     want = plan.body_frames
-    first = plan.keyframe
+    # `plan.keyframe` is a zero-based frame number, while the marks the operator typed and the
+    # packets the container hands over are both counted from one. Converting once, here, is what
+    # keeps the two numberings from being confused: measured on the TY Gellasch master, mixing
+    # them copied 37 packets where 38 were wanted, missing the keyframe frame and including one
+    # the tail was about to re-encode.
+    first = plan.keyframe + 1
     last = first + want - 1
     log(f"body        copying frames {first}..{last} from the original packets")
     # The copy is a packet read rather than a subprocess, so nothing else checks the token for
@@ -700,42 +705,34 @@ def _select_body_packets(stream, first: int, last: int, cancel=None) -> list:
     carries frames 86 and 87 at one presentation time, the second being the keyframe, and
     collapsing them dropped a real picture -- a 500-frame cut arrived six frames short.
     """
-    time_base = float(stream.time_base)
-    rate = float(stream.average_rate or stream.guessed_rate or 0)
-    if rate <= 0:
-        raise ValueError("the source reports no usable frame rate")
-
-    origin_ts: int | None = None
+    # The frame number is the packet's **position in decode order**, counted from one. Not a
+    # time and not a rounding: the container hands over exactly one video packet per frame, so
+    # position is the only numbering that cannot drift. Deriving it as
+    # `round(pts * rate) + 1` was still wrong even after all the other fixes -- measured on the
+    # TY Gellasch master, a body of frames 48..85 came back with 37 packets, missing frame 49
+    # and including frame 86, because the derived numbers do not have to line up with the
+    # packets one for one.
     collected: list = []
     found_opening = False
+    position = 0
     for seen, packet in enumerate(stream.container.demux(stream)):
         if seen % 2000 == 0 and cancel is not None and cancel.cancelled:
             raise Cancelled("cancelled")
         if packet.pts is None or packet.dts is None:
+            # A flush packet carries the decoder's last frames out and holds no picture of its
+            # own, so it does not advance the frame count.
             continue
-        if origin_ts is None:
-            origin_ts = packet.pts
-        # +1: the container's first packet is frame 1, and that is the numbering the editor
-        # shows and the marks are given in.
-        frame = round((packet.pts - origin_ts) * time_base * rate) + 1
-
+        position += 1
         if not found_opening:
             # Packets in the opening GOP before the in point carry the references the first
             # wanted frames are coded against -- but they belong to the head's re-encode, so
             # they are dropped. The keyframe marks where a copy may begin.
-            if packet.is_keyframe and frame >= first:
+            if packet.is_keyframe and position >= first:
                 found_opening = True
                 collected.append(packet)
             continue
-
-        if frame > last:
-            if packet.is_keyframe:
-                # This keyframe opens the tail's re-encode; copying it too would put the same
-                # picture into the segment twice. A packet past the last frame that is *not* a
-                # keyframe still has to be copied, because decode order means it may be handed
-                # over before its neighbours are.
-                break
-            continue
+        if position > last:
+            break
         collected.append(packet)
     return collected
 
