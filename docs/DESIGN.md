@@ -292,3 +292,40 @@ past a value's left edge — and by nothing else.
 Every module in this tree carries a docstring explaining *why* it exists in the terms of the failures
 it prevents, and `docs/TRUTH.md` pairs each claim with its check. A claim nobody can test is removed
 rather than softened.
+
+## The two frame grids, and how to tell which one a number is on
+
+The container numbers frames by **packet order**: the Nth video packet is frame N. A mark is
+numbered on the rate the file claims. These are different grids and their offset is not constant
+-- measured, +1 on Joseph Chalom and +2 on TY Gellasch and Andy Ross -- so neither can be derived
+from the other by arithmetic.
+
+Everything that *reports* a span now reports it in rows, and says so, because the two grids in one
+log read as a fault that is not there:
+
+    head  re-encoding frames 7514..7741     <- frame numbers
+    body  copying frames 7743..9492         <- rows
+    tail  re-encoding frames 9493..9523
+
+Row 7742 is in neither, which reads as a missing picture. The same cut in rows joins end to end:
+
+    head  rows 7515..7742
+    body  rows 7743..9492
+    tail  rows 9493..9523
+
+`TrimPlan.rows` is the single source for those spans. When reading a log, check the units before
+believing a gap.
+
+## The sound is level with the picture, and how that was settled
+
+An earlier reading of the delivered files showed the sound 15.7 ms from the picture. That was a
+comparison of declared stream start times, which include AAC encoder priming samples, and it was
+recorded here as a defect on the strength of that number alone.
+
+Correlating the *content* settles it. Taking a window from the delivered file, finding it inside
+the source, and comparing where the sound landed against where the picture landed:
+
+    delivered 10 s -> +0.0 ms      delivered 30 s -> +0.0 ms      delivered 55 s -> +0.0 ms
+
+There is no offset to fix. A declared stream start time is not a synchronisation measurement; a
+seek, an encode, or a container's edit list each move it without moving a single sample of audio.
