@@ -1,32 +1,134 @@
-# Python: the engine's own environment and bytecode. The virtual environment is created by
-# start.bat and is never committed; requirements.txt is what describes it.
+# ---------------------------------------------------------------------------------------------
+#  What git is told to leave alone, and why.
+#
+#  Every entry is something this project actually produces. `start.bat` creates the Python
+#  environment, the window's dependencies and the interface bundle; `npm run pack` and
+#  `npm run dist` produce the packaged app. None of it is source, and all of it is reproduced by
+#  running one of those, so none of it belongs in a commit.
+#
+#  Nothing has to be committed for the application to run from a clone: `start.bat` does every
+#  step it finds missing, which is the point of it.
+# ---------------------------------------------------------------------------------------------
+
+# --- Python: the environment, and what the interpreter writes as it runs ------------------------
+#  `venv/` is created by `start.bat` and installed from `backend/requirements.txt`, which *is*
+#  tracked. Committing the environment would put another machine's binaries in the history and
+#  still not be the environment anyone else needs.
 venv/
+.venv/
+env/
+ENV/
+#  Bytecode and the interpreter's own output: regenerated on import, and they embed absolute paths.
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
+.Python
+
+# --- Python packaging, if the engine is ever built into one ------------------------------------
+build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+sdist/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+pip-wheel-metadata/
+MANIFEST
+
+# --- Tests and checkers: what running them leaves behind ---------------------------------------
+#  `backend/tests` and `specs/features` are source and are tracked; these are the caches.
 .pytest_cache/
 .mypy_cache/
+.dmypy.json
 .ruff_cache/
+.tox/
+.nox/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+nosetests.xml
+*.cover
+.python-version
 
-# Node: the window's dependencies, and the built interface. Both are produced by start.bat.
-# `frontend/dist` is what the engine serves to the window, and it is a build artefact, not source.
+# --- Node and the interface --------------------------------------------------------------------
+#  Both dependency trees are installed by `start.bat` from the two tracked lock files, which is
+#  what makes an install reproducible. The lock files stay; the trees do not.
 node_modules/
 frontend/node_modules/
+#  `frontend/dist` is the built interface, and the engine serves it to the window. `start.bat`
+#  rebuilds it by itself when a source file is newer than the bundle, so it is never stale in a
+#  clone for longer than one launch.
 frontend/dist/
 .vite/
+frontend/.vite/
+*.tsbuildinfo
+.eslintcache
 
-# Packaging output, from `npm run pack` / `npm run dist`.
+# --- Packaging output --------------------------------------------------------------------------
+#  `electron-builder` writes here -- `build.directories.output` in package.json -- for the `--dir`
+#  form and the installer alike: the unpacked app, the installer, its blockmap and the channel
+#  files generated beside them.
 /dist/
 /release/
+/out/
+*.blockmap
+builder-effective-config.yaml
+electron-builder.env
 
-# Local data: anything a person trimmed while trying the application, and its logs.
+# --- The application's own working files -------------------------------------------------------
+#  A project file is a person's list of marks and belongs to them rather than to the repository.
+#  The journal beside it is written while a project is open.
 *.trimmerproj
 *.trimmerproj-journal
 /scratch/
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
-# Editors
+#  What a cut writes beside its source: `default_output()` names it "<stem> HH.MM.SS.FF-HH.MM.SS.FF"
+#  with the source's own extension, so a master dropped into this folder and trimmed here would
+#  otherwise leave its segment sitting untracked, one `git add -A` away from the repository.
+* [0-9][0-9].[0-9][0-9].[0-9][0-9].[0-9][0-9]-[0-9][0-9].[0-9][0-9].[0-9][0-9].[0-9][0-9].*
+/media/
+
+#  Where the engine's temporary pieces go, and why they are not listed above: `trim()` writes the
+#  head, the body, the tail and the sound into a directory under the system temp folder
+#  (`tempfile.mkdtemp(prefix="thetrimmer-")`), joins them there and removes it. A cut leaves
+#  nothing behind in the working tree, so there is nothing here to ignore for it.
+
+# --- Editors -----------------------------------------------------------------------------------
 .vscode/*
 !.vscode/extensions.json
 .idea/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+.project
+.classpath
+.settings/
+
+# --- Operating system --------------------------------------------------------------------------
+#  `Thumbs.db` and `desktop.ini` are written into any folder Windows has been asked to draw,
+#  including this one, just by looking at it.
 .DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
 Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.stackdump
