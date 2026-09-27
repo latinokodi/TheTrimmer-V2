@@ -359,6 +359,58 @@ def _frame_of(packet) -> int:
     return packet.pts // 25 + 1
 
 
+def _index_with_keyframe_at(row: int, frames: int = 300, rate: int = 25):
+    """A stand-in for the container index whose first keyframe is at a chosen **row**.
+
+    The defect this pins down is that a keyframe's row and the frame number the planner gives it
+    are not the same thing. On the real Joseph Chalom master the planner said keyframe 2750
+    while the keyframe is container row 2751 -- and the head was sized from the frame number, so
+    it covered one row too few and the delivered file showed row 2750 in neither piece.
+    """
+
+    class _Index:
+        count = frames
+
+        def time_of(self, at: int) -> float:
+            return (at - 1) / rate
+
+        def keyframe_at_or_after(self, frame: int):
+            return row
+
+    return _Index()
+
+
+def _plan_for_rows(monkeypatch, keyframe_row: int, in_frame: int = 20, out_frame: int = 240):
+    from trimmer import container as packets
+
+    fake = _index_with_keyframe_at(keyframe_row)
+    monkeypatch.setattr(packets, "read", lambda path, cancel=None: fake)
+    monkeypatch.setattr(cutter.ff, "keyframes", lambda *a, **k: [2.0, 6.0, 10.0])
+    return cutter.plan_trim(spec(in_frame, out_frame), media())
+
+
+def test_the_head_is_long_enough_to_reach_the_body_row(monkeypatch):
+    """The head must span every row between the mark and the row the copy begins on.
+
+    The stutter, as a test. The copy begins on the keyframe's **row**; the head has to cover the
+    rows before it. Sizing the head from a frame number instead leaves a row in neither piece,
+    and one missing picture at the join is what is seen.
+    """
+    # The keyframe sits on row 51 while the planner will number that keyframe 50: the two grids
+    # are one apart, which is the case measured on the real master.
+    plan = _plan_for_rows(monkeypatch, keyframe_row=51)
+    body_opens_on_row = plan.keyframe + 1
+    assert body_opens_on_row == 51, f"the copy opens on row {body_opens_on_row}, not 51"
+    head_first_row = 21                     # the mark's own row
+    rows_the_head_must_cover = body_opens_on_row - head_first_row
+    assert plan.head_frames == rows_the_head_must_cover, (
+        f"head is {plan.head_frames} frames but must cover {rows_the_head_must_cover} rows")
+    assert plan.head_frames + plan.body_frames + plan.tail_frames == out_frame - in_frame
+
+
+out_frame, in_frame = 240, 20
+
+
 def test_a_body_copy_keeps_every_packet_of_the_range_asked_for():
     """The frames wanted are 10..14, with a keyframe at 10 -- so 10, 11, 12, 13, 14 and nothing
     else, whatever the internal indexing says."""
