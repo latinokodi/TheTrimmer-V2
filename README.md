@@ -43,15 +43,35 @@ seconds instead of an hour. When the in point already lands on a keyframe, the w
 copied and nothing is re-encoded at all. Only when there is no keyframe anywhere inside the range
 does it re-encode the segment — and it says so before it starts.
 
+## All-intra sources are copied in full
+
+An editing codec has no such problem to solve: every frame of ProRes or DNxHD stands on its own, so
+there is no keyframe to wait for and nothing to patch at either end. Those sources are copied from
+the first wanted packet to the last one and **nothing is re-encoded at all** — the segment is
+lossless in the strict sense, not "the original packets except at the ends", and their uncompressed
+sound stays uncompressed rather than picking up a generation of AAC on the way through.
+
+| Source | What a cut does |
+|---|---|
+| H.264, H.265/HEVC | re-encodes the run to the opening keyframe and the run from the last keyframe before the out point; copies everything between |
+| ProRes, DNxHD | copies the whole range; re-encodes nothing |
+| anything else | refused, with a sentence naming the codecs that are supported |
+
 ## Verification
 
 A finished cut is measured against its own source rather than assumed correct. Each run reports:
 
 * the frame count and duration against what was asked for, including any trailing hold;
 * the audio's length against the picture's;
-* whether the copied body is **byte-identical** to the source (frame MD5s) — or, when the segment had
-  to be re-encoded, that the picture is on the mark, with the SSIM of the frames compared;
-* a verdict for every check, shown in the interface beside the number that was measured.
+* whether the copied body is **byte-identical** to the source (frame MD5s) — every copied frame, not
+  a sample of them — or, when the segment had to be re-encoded, that the picture shows the frame the
+  mark names, with the SSIM of the two frames compared;
+* a verdict for every check, shown in the interface beside the number that was measured. A check
+  that could not be made says **not checked**, which is a different answer from passing and from
+  failing.
+
+Measuring is a setting, not a cost imposed on every cut: with `Verify` set to *Off* the cut is made
+and nothing is measured, and a 2009-frame range takes about seven seconds instead of twenty-six.
 
 `docs/TRUTH.md` is the record of how each claim is checked, and of what is deliberately not checked.
 

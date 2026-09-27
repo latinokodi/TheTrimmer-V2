@@ -158,7 +158,7 @@ def test_an_out_point_past_the_end_is_refused_and_says_where_the_end_is(keyframe
 
 def test_a_source_whose_codec_cannot_be_patched_is_refused_with_a_reason(keyframes):
     keyframes(4.0)
-    with pytest.raises(cutter.TrimError, match="only H.264 and HEVC"):
+    with pytest.raises(cutter.TrimError, match="long-GOP"):
         cutter.plan_trim(spec(100, 200), media(codec="vp9"))
 
 

@@ -52,6 +52,7 @@ from pathlib import Path
 
 import av
 
+from . import container
 from . import ffmpeg as ff
 from . import subtitles as subs
 from .ffmpeg import CancelToken, Cancelled, MediaInfo
@@ -59,16 +60,59 @@ from .subtitles import RetimeResult
 from .timecode import format_timecode
 
 #: Source codec -> the encoder that can join it, and anything the muxer needs.
+#:
+#: Only codecs whose cut has been verified on real material are listed. MPEG-2 and MPEG-4 were
+#: added and then taken out again: an MPEG program stream's tail scored -1 frame at ssim 0.806 on
+#: a cut whose frame count was exact, and whether that is a fault in the cut or an artefact of
+#: seeking a long-GOP program stream was not settled. Shipping a codec on an unsettled
+#: measurement is how "the body is the original packets" stops being true for some files.
 ENCODERS = {
     "h264": ("libx264", []),
     "hevc": ("libx265", ["-tag:v", "hvc1"]),
     "h265": ("libx265", ["-tag:v", "hvc1"]),
+    # Editing codecs. These are all-intra, so they need no encoder at all -- see ALL_INTRA --
+    # and the entry here is only for a source whose ends still need patching.
+    "prores": ("prores_ks", ["-profile:v", "3", "-vendor", "apl0"]),
+    "dnxhd": ("dnxhd", []),
 }
-#: Pixel formats libx264/libx265 will accept straight through. Anything else (a 12-bit
+
+#: Codecs whose every frame stands alone, so a stream copy may begin and end anywhere in them.
+#:
+#: This is what makes the product's promise exactly true rather than nearly true. For a long-GOP
+#: source (H.264, HEVC, MPEG-2) a copy has to begin on a keyframe, which is why those need a
+#: re-encoded head and tail; for an all-intra one there is no such frame, so the wanted range is
+#: copied packet for packet, byte for byte, and *nothing is re-encoded at all* -- frame-exact and
+#: lossless in the strict sense, and no head or tail to stitch.
+ALL_INTRA = {
+    "prores", "dnxhd", "dvvideo", "mjpeg", "ffv1", "huffyuv", "rawvideo", "v210",
+    "qtrle", "png", "cfhd", "hap",
+}
+
+#: Pixel formats the encoders above will accept straight through. Anything else (a 12-bit
 #: or exotic source) is converted to the 8-bit 4:2:0 its codec family expects.
 PASSTHROUGH_PIX_FMTS = {
     "yuv420p", "yuv422p", "yuv444p", "yuv420p10le", "yuv422p10le", "yuv444p10le",
 }
+
+
+def _known_codecs() -> str:
+    """The source codecs the engine can cut, for a refusal that names them all.
+
+    Built from the two tables rather than written out, so adding a codec cannot leave the
+    sentence behind -- which is how a message that said "only H.264 and HEVC" came to be wrong
+    the moment anything else was added.
+    """
+    intra = sorted(ALL_INTRA & set(ENCODERS))
+    gop = sorted(set(ENCODERS) - ALL_INTRA)
+    return f"{_and_list(gop)} (long-GOP) and {_and_list(intra)} (all-intra)"
+
+
+def _and_list(names: list[str]) -> str:
+    if not names:
+        return "nothing"
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + " and " + names[-1]
 
 
 class TrimError(RuntimeError):
@@ -207,6 +251,34 @@ class TrimReport:
                 f"{format_timecode(self.spec.out_frame, rate)}")
 
 
+def _row_of(media: MediaInfo, frame: int, frame_time=None) -> int:
+    """Which row of the container's packet order a mark sits on.
+
+    Rows and frame numbers are two different grids, and their offset is not constant: measured on
+    three masters it is +1 on Joseph Chalom and +2 on TY Gellasch and Andy Ross. So the row is
+    found by asking the container, never by computing it from the frame number.
+
+    Falls back to the mark's own number when the container cannot be read, which is what every
+    build before this used and what a synthetic source in a test still gets.
+    """
+    try:
+        index = container.read(media.path)
+    except (OSError, ValueError):
+        return frame + 1
+    want = frame_time(frame) if frame_time is not None else media.seconds_of(frame)
+    # Start from the mark's own row and look outward: the answer is within a few rows, and reading
+    # the whole packet list to find it would be a second walk of the container.
+    best, best_distance = frame + 1, float("inf")
+    for delta in range(-8, 9):
+        row = frame + 1 + delta
+        if not 1 <= row <= index.count:
+            continue
+        distance = abs(index.time_of(row) - want)
+        if distance < best_distance:
+            best, best_distance = row, distance
+    return best
+
+
 @lru_cache(maxsize=4)
 def _keyframes_of(path: str, size: int, modified_ns: int) -> tuple:
     """Every keyframe in a file, remembered per source.
@@ -254,12 +326,28 @@ def plan_trim(spec: TrimSpec, media: MediaInfo, frame_time=None) -> TrimPlan:
         )
     if media.codec.lower() not in ENCODERS:
         raise TrimError(
-            f"the source is {media.codec}; the head-patch method needs the head to be the "
-            "same codec as the body, and only H.264 and HEVC sources are supported. "
-            "Re-encode the source first, or trim it with a plain ffmpeg re-encode."
+            f"the source is {media.codec}; the method needs the head to be the same codec as "
+            f"the body, and {_known_codecs()} are supported. Re-encode the source first, or "
+            "trim it with a plain ffmpeg re-encode."
         )
 
     notes: list[str] = []
+
+    # An all-intra source needs no patching at all: every frame stands alone, so the wanted range
+    # is copied packet for packet and nothing is re-encoded. This is the one case where the
+    # segment is lossless in the strict sense -- not "the original packets except at the ends".
+    if media.codec.lower() in ALL_INTRA:
+        in_row = _row_of(media, spec.in_frame, frame_time)
+        notes.append(
+            f"the source is all-intra ({media.codec}), so every frame stands alone: the whole "
+            "segment is copied from the original packets and nothing is re-encoded"
+        )
+        # `keyframe` is the row the copy opens on, less one, because the copy adds one. Every
+        # frame is a keyframe here, so the copy may open on the in point itself.
+        return TrimPlan(media, "copy", in_row - 1, 0, spec.frames, notes,
+                        in_seconds=frame_time(spec.in_frame),
+                        out_seconds=frame_time(spec.out_frame))
+
     if media.variable:
         # Say what was measured, not just that something is off: "one frame" is a number the
         # operator can weigh, and it is the number that decides whether a failed alignment
@@ -419,10 +507,15 @@ def trim(
     #: The three picture pieces and the one sound piece. The ends are re-encoded and the
     #: middle is copied; the sound is a single continuous track for the whole segment, so
     #: there is no audio seam at either patch to clip or gap.
-    head = work / "head.mp4"
-    body = work / "body.mp4"
-    tail = work / "tail.mp4"
-    sound = work / "sound.m4a"
+    # The pieces carry the output's own container, not a hard-coded one: a ProRes source comes
+    # in a .mov and its pieces have to be able to hold ProRes.
+    suffix = spec.output.suffix or ".mp4"
+    head = work / ("head" + suffix)
+    body = work / ("body" + suffix)
+    tail = work / ("tail" + suffix)
+    # The sound piece takes the output's container as well: an .m4a is the MP4 muxer, and an MP4
+    # cannot hold the uncompressed PCM that an all-intra source's sound is kept as.
+    sound = work / ("sound" + suffix)
     joined = work / "joined.mp4"
     try:
         log(f"source      {media.summary()}")
@@ -438,10 +531,10 @@ def trim(
             # value can round to different milliseconds, which is enough for the demuxer to
             # place the next piece a frame out. See `_concat_list`.
             spans: list[Fraction] = []
-            if plan.mode != "copy":
+            if plan.head_frames > 0:
                 # A copy cannot begin mid-GOP, so the run up to the opening keyframe is
-                # re-encoded. When the in point already is a keyframe this piece is empty and
-                # is not built at all -- a zero-frame file has no packets to concatenate.
+                # re-encoded. An all-intra source needs none of this, and a zero-frame piece is
+                # not built at all -- a file with no packets cannot be concatenated.
                 pieces.append(head)
                 spans.append(Fraction(plan.head_frames, 1) / rate)
                 commands.append(_encode_head(media, spec, plan, head, log, cancel, progress))
@@ -453,17 +546,26 @@ def trim(
             # stated duration to place the next piece, and a copy that came back a frame or two
             # off would otherwise shift the tail and the sound against the picture.
             spans.append(Fraction(body_frames, 1) / rate)
-            # A copy cannot stop on a chosen frame either, so the run from the last keyframe
-            # to the out point is re-encoded. This is what makes the segment frame-exact.
-            commands.append(_encode_tail(media, spec, plan, tail, log, cancel, progress))
-            pieces.append(tail)
-            spans.append(Fraction(plan.tail_frames, 1) / rate)
+            if plan.tail_frames > 0:
+                # A copy cannot stop on a chosen frame either, so the run from the last keyframe
+                # to the out point is re-encoded. This is what makes the segment frame-exact.
+                commands.append(_encode_tail(media, spec, plan, tail, log, cancel, progress))
+                pieces.append(tail)
+                spans.append(Fraction(plan.tail_frames, 1) / rate)
 
-            listing = work / "concat.txt"
-            listing.write_text(_concat_list(pieces, spans), encoding="utf-8")
-            commands.append(_join(listing, joined, log, cancel, progress, whole))
+            picture = body
+            if len(pieces) > 1:
+                listing = work / "concat.txt"
+                listing.write_text(_concat_list(pieces, spans), encoding="utf-8")
+                commands.append(_join(listing, joined, log, cancel, progress, whole))
+                picture = joined
+            else:
+                # One piece: an all-intra source's range, copied whole. Joining a list of one is
+                # a second copy of the same bytes for nothing.
+                log("join        nothing to concatenate: the segment is a single copy")
+
             commands.append(_encode_sound(media, spec, sound, log, cancel, progress))
-            commands.append(_mux(joined, sound, spec.output, log, cancel, progress, whole))
+            commands.append(_mux(picture, sound, spec.output, log, cancel, progress, whole))
     finally:
         if keep_temp is None:
             shutil.rmtree(work, ignore_errors=True)
@@ -628,20 +730,42 @@ def _encode_sound(media: MediaInfo, spec: TrimSpec, sound: Path,
     whole = spec.frames / float(media.grid_rate)
     if media.audio is None:
         return []
+    encoder, why = _sound_encoder(media, spec)
+    log(f"sound       writing {whole:.3f}s of audio in one piece as {why}, so the joins at the "
+        f"head and tail patches are not cut through")
     args = [
         ff.tool("ffmpeg"), *_common_input(),
         "-i", str(media.path),
         "-ss", f"{media.seconds_of(spec.in_frame):.6f}", "-t", f"{whole:.6f}",
         *_audio_map(media),
         "-af", "asetpts=PTS-STARTPTS",
-        "-c:a", "aac", "-b:a", spec.audio_bitrate,
+        *encoder,
         "-ar", str(media.audio.sample_rate), "-ac", str(media.audio.channels),
         str(sound),
     ]
-    log(f"sound       encoding {whole:.3f}s of audio in one piece, so the joins at the "
-        f"head and tail patches are not cut through")
     ff.run(args, cancel=cancel, log=log, progress=progress, expected_seconds=whole)
     return args
+
+
+def _sound_encoder(media: MediaInfo, spec: TrimSpec) -> tuple[list[str], str]:
+    """The audio codec to write, and a phrase saying why.
+
+    Chosen for the **container** first, because the container has the final say: an MPEG program
+    stream refuses anything but mp1/mp2/mp3/PCM/AC-3/DTS, and an MP4 cannot hold PCM at all. Both
+    of those were found by trying it -- "Unsupported audio codec" and "Could not find tag for
+    codec pcm_s16le" -- rather than by reading the muxer's rules first.
+
+    Then for the source: uncompressed sound stays uncompressed. A master whose audio is already
+    lossless should not collect a generation of AAC because the picture happened to need cutting.
+    """
+    suffix = (spec.output.suffix or ".mp4").lower()
+    source_audio = (media.audio.codec or "").lower() if media.audio is not None else ""
+    if suffix in {".mpg", ".mpeg", ".vob", ".ts", ".m2ts"}:
+        return ["-c:a", "mp2", "-b:a", "384k"], "mp2, the only kind of sound that container holds"
+    if source_audio.startswith("pcm"):
+        return ["-c:a", "pcm_s16le"], "uncompressed PCM, as its source is"
+    return (["-c:a", "aac", "-b:a", spec.audio_bitrate],
+            f"aac at {spec.audio_bitrate}")
 
 
 def _copy_body(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, body: Path,
@@ -725,7 +849,10 @@ def _copy_packets(source: Path, body: Path, first: int, last: int, cancel=None) 
             raise ValueError(f"no packets found for frames {first}..{last}")
         # Rebased on the first *decode* timestamp, and written in the order they were read.
         origin = min(packet.dts for packet in collected)
-        with av.open(str(body), "w", format="mp4") as dst:
+        # No format pinned: PyAV takes it from the extension, which is the output's own. An MP4
+        # cannot hold ProRes, and pinning it is how a perfectly legal all-intra source failed
+        # with "'mp4' format does not support 'prores' codec".
+        with av.open(str(body), "w") as dst:
             out_stream = dst.add_stream_from_template(stream)
             for packet in collected:
                 packet.pts -= origin

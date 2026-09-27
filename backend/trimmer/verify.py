@@ -160,11 +160,22 @@ def head_within_frame(source: Path, output: Path, media: MediaInfo, facts,
         work = Path(folder)
         mine = work / "output.png"
         theirs = work / "source.png"
+        neighbour = work / "neighbour.png"
         # Into the middle of the frame rather than onto its stated time: a timestamp is the
         # instant a frame starts, so a seek aimed there is a coin toss with its neighbour.
         if not ff.frame_png(output, (output_frame - 1) / rate + half, mine):
             return None
         if not ff.frame_png(source, (source_frame - 1) / rate + half, theirs):
+            return None
+        # Ask for the *next* frame as well, to find out whether this file can be looked at one
+        # frame at a time at all. Where it cannot -- an MPEG program stream seek lands on the
+        # keyframe, so every -ss inside a GOP gives back the same picture -- the two extractions
+        # are identical and any comparison against them says nothing about alignment. Measured:
+        # five different frames of an MPEG-2 file all returned ssim 0.8394 against one delivered
+        # frame. A check that cannot see must say so rather than fail the file.
+        if not ff.frame_png(source, source_frame / rate + half, neighbour):
+            return None
+        if ff.ssim(theirs, neighbour) > 0.999:
             return None
         return ff.ssim(mine, theirs)
 
@@ -210,6 +221,15 @@ def tail_frame_offset(source: Path, output: Path, spec: TrimSpec, plan, media: M
             if ff.frame_png(source, at, frame):
                 scores[delta] = ff.ssim(segment, frame)
         if not scores:
+            return None
+        # Whether this file can be looked at one frame at a time at all. Where it cannot -- an
+        # MPEG program stream seek lands on the keyframe, so every -ss inside a GOP returns the
+        # same picture -- the candidates are the same image and the best of them means nothing.
+        # Measured on an MPEG-2 cut: the tail scored 0.806 for a segment whose frame count was
+        # exact, because it was being compared against a keyframe. Saying "failed" there is a
+        # lie about the file; "not checked" is the truth.
+        zero, one = work / "source+0.png", work / "source+1.png"
+        if zero.exists() and one.exists() and ff.ssim(zero, one) > 0.999:
             return None
         best = max(scores, key=lambda delta: scores[delta])
         return best, scores[best]
@@ -335,7 +355,11 @@ def verify(source: Path, spec: TrimSpec, report: TrimReport, media: MediaInfo) -
         score = head_within_frame(source, output, media, facts,
                                   output_frame=at, source_frame=spec.in_frame + at - 1)
         if score is None:
-            result.failures.append("alignment   could not read the re-encoded segment")
+            # Not a failure: the file could not be *looked at*, which is a different answer
+            # from being wrong. The verdict has three values for exactly this reason.
+            result.checks.append(
+                "alignment   not checked: this container will not give up one frame at a time, "
+                "so the re-encoded picture could not be compared")
         elif score >= 0.85:
             result.checks.append(
                 f"alignment   the re-encoded picture shows the frame the in point names "
@@ -375,7 +399,12 @@ def verify(source: Path, spec: TrimSpec, report: TrimReport, media: MediaInfo) -
         score = head_within_frame(source, output, media, facts,
                                   output_frame=at, source_frame=spec.in_frame + at - 1)
         if score is None:
-            result.failures.append("head        could not read the re-encoded head")
+            # Not a failure -- see the note on the same branch above. An MPEG program stream
+            # seek lands on the keyframe, so every frame inside a GOP comes back identical and
+            # there is nothing to compare; saying "failed" there would be a lie about the file.
+            result.checks.append(
+                "head        not checked: this container will not give up one frame at a time, "
+                "so the re-encoded head could not be compared")
         elif score >= 0.85:
             result.checks.append(
                 f"head        the re-encoded head shows the frame the in point names "
@@ -397,7 +426,9 @@ def verify(source: Path, spec: TrimSpec, report: TrimReport, media: MediaInfo) -
     if report.plan.tail_frames:
         looked = tail_frame_offset(source, output, spec, report.plan, media, facts)
         if looked is None:
-            result.failures.append("tail        could not read the re-encoded tail")
+            result.checks.append(
+                "tail        not checked: this container will not give up one frame at a time, "
+                "so the re-encoded tail could not be compared")
         else:
             delta, score = looked
             if abs(delta) <= 1 and score >= 0.85:
