@@ -34,3 +34,7 @@ Feature: The engine's interface
   Scenario: a file outside the interface is not served
     When I ask for a page that does not exist
     Then the interface's own document is served
+
+  Scenario: the window is told not to keep a copy of the interface
+    When I ask for a page that does not exist
+    Then the answer says the interface may not be stored

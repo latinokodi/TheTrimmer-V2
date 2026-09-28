@@ -803,6 +803,17 @@ def interface_served(world: dict) -> None:
     assert world["answer"]["content_type"].startswith("text/html")
 
 
+@then("the answer says the interface may not be stored")
+def interface_is_not_stored(world: dict) -> None:
+    """The bundle's files keep their names across builds, so a cached copy is indistinguishable
+    from a current one and the window can show an interface that no longer exists.
+
+    It is not a theoretical hazard: it looks exactly like a change that never took effect, which
+    is the hardest kind of report to act on.
+    """
+    assert "no-store" in world["answer"]["cache_control"], world["answer"]["cache_control"]
+
+
 # ---------------------------------------------------------------------------------------
 # Talking to the engine without cutting anything
 # ---------------------------------------------------------------------------------------
@@ -823,6 +834,7 @@ def call(method: str, path: str, **kwargs) -> dict:
         except Exception:  # noqa: BLE001 - a document is not JSON, and that is the point
             body = None
         return {"status": response.status, "body": body, "text": text,
-                "content_type": response.headers.get("Content-Type", "")}
+                "content_type": response.headers.get("Content-Type", ""),
+                "cache_control": response.headers.get("Cache-Control", "")}
 
     return asyncio.run(with_client(interaction))

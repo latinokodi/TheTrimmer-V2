@@ -353,40 +353,41 @@
 }
 
 /*
- * The name field, which is the one settings row whose note belongs *under* its control.
+ * The name row: an input, a checkbox, and the path the segment will be written to — all on one
+ * line, because a line is what the form column has budgeted (`--frame-min-height` is derived from
+ * the option rows it holds, and a second row here was enough to push the whole zone below the fold).
  *
- * The note there is the path the segment will be written to, and a path is long. Keeping it on the
- * same line as the input would narrow the input to nothing on a deep folder — the label column and
- * the path would leave about four characters for the name. So this row stacks: the input takes the
- * full width, and the path sits beneath it, ellipsised from the left by `direction: rtl` so the
- * part that identifies the file stays visible instead of the part that identifies the drive.
+ * The note takes whatever is left after the input and the checkbox, and ellipsises from the *left*:
+ * a path's last segment is the file, and that is the part worth reading. `unicode-bidi: plaintext`
+ * keeps the path itself rendering left-to-right while the overflow goes at the front.
  */
-.field-row__value--stack {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--space-2);
-  min-width: 0;
+.field-row__value--name > input[type="text"] {
+  flex: 0 1 22ch;
+  min-width: 10ch;
 }
 
-.field-row__value--stack .field-row__note {
+.field-row__value--name .field-row__note {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
   direction: rtl;
-  text-align: left;
+  unicode-bidi: plaintext;
 }
 
 /*
- * A checkbox with its own sentence, for the two settings that are a decision rather than a value.
- * The box keeps its native size and the words take the rest, because the sentence is the thing
- * being read and the box is the thing being clicked.
+ * A checkbox with its own word, for a setting that is a decision rather than a value. The box keeps
+ * its native size and the word takes the rest, because the word is the thing being read and the box
+ * is the thing being clicked.
  */
 .field-row__toggle {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  flex: none;
   min-width: 0;
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   color: var(--phosphor-dim);
   cursor: pointer;
 }

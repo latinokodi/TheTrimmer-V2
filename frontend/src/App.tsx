@@ -572,11 +572,19 @@ export function App(): JSX.Element {
               <h2 className="zone__title">Options</h2>
             </header>
             <div className="zone__body zone__body--tight">
+              {/*
+                One row, not two. `--frame-min-height` is derived from the option rows the form
+                column holds, and an option row costs `--field-height` plus the body gap — 36 px.
+                The first version of this put the name and the folder on separate rows and stacked
+                the path under the input, ~96 px against the ~80 px of slack a maximised 1080p
+                window has: the column overflowed into its scroll valve and pushed these controls
+                below the fold, where they looked like they had not been built at all.
+              */}
               <div className="field-row">
                 <label className="field-row__label" htmlFor="trim-name">
                   Name
                 </label>
-                <div className="field-row__value field-row__value--stack">
+                <div className="field-row__value field-row__value--name">
                   <input
                     id="trim-name"
                     type="text"
@@ -584,26 +592,17 @@ export function App(): JSX.Element {
                     placeholder="named for its range"
                     spellCheck={false}
                     autoComplete="off"
+                    title={
+                      segmentName.trim() === ""
+                        ? "Leave empty to name the segment for its range, as before."
+                        : plannedOutput
+                    }
                     onChange={(event) => setSegmentName(event.target.value)}
                   />
-                  {/* The path is read back from the engine rather than rebuilt here, so what is
-                      shown is what will be written -- including a name the engine refuses, which
-                      is why this line disappears rather than lying when the plan fails. */}
-                  <span className="field-row__note" title={plannedOutput || undefined}>
-                    {segmentName.trim() === ""
-                      ? "leave empty to name it for its range, as before"
-                      : plannedOutput === ""
-                        ? "that name cannot be used — see the reason below"
-                        : plannedOutput}
-                  </span>
-                </div>
-              </div>
-              <div className="field-row">
-                <label className="field-row__label" htmlFor="trim-folder">
-                  Folder
-                </label>
-                <div className="field-row__value">
-                  <label className="field-row__toggle">
+                  <label
+                    className="field-row__toggle"
+                    title="Put the segment and its transcript in a folder of this name"
+                  >
                     <input
                       id="trim-folder"
                       type="checkbox"
@@ -611,12 +610,19 @@ export function App(): JSX.Element {
                       disabled={segmentName.trim() === ""}
                       onChange={(event) => setInFolder(event.target.checked)}
                     />
-                    <span>
-                      {segmentName.trim() === ""
-                        ? "give the segment a name to put it in a folder"
-                        : `put it in a folder named “${segmentName.trim()}”`}
-                    </span>
+                    <span>folder</span>
                   </label>
+                  {/* The path is read back from the engine rather than rebuilt here, so what is
+                      shown is what will be written -- including a name the engine refuses, which
+                      is why this line says so rather than lying when the plan fails. It ellipsises
+                      from the left, because the file's own name is the part worth reading. */}
+                  <span className="field-row__note" title={plannedOutput || undefined}>
+                    {segmentName.trim() === ""
+                      ? "leave empty for the range name"
+                      : plannedOutput === ""
+                        ? "that name cannot be used — see the reason below"
+                        : plannedOutput}
+                  </span>
                 </div>
               </div>
               <div className="field-row">

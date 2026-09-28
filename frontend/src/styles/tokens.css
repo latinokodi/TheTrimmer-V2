@@ -125,12 +125,22 @@
    * The floor: the frame's minimum, and the heights every strip and control is built from.
    *
    * `--frame-min-height` is derived, not chosen. The form column needs, at these sizes: 26 px of zone
-   * header and 16 px of body padding for each of four zones, three 30 px option rows, two 40 px
+   * header and 16 px of body padding for each of four zones, **four** 30 px option rows, two 40 px
    * timecode fields with their plan line, one 30 px path row per source field, and a 48 px action bar.
    * That is 518 px, and with the title bar, the two bands at their own minimums and the footer it comes
    * to 960. Declaring 900 while the content wanted 572 is what let the zones be crushed at the very
    * size the window promised to support — silently, because a squeezed flex item overflows visibly and
    * nothing in a browser calls that an error.
+   *
+   * The fourth option row is the Name field, added after that derivation was written, and it is why
+   * this is 1000 rather than 960. A row costs `--field-height` plus the tight body's `--space-3` gap,
+   * so 36 px: 518 + 36 = 554, and 960 + 36 = 996, declared as 1000. It is the name-and-folder control
+   * on ONE row for exactly this reason — the first version spent two rows and ~96 px, which is more
+   * than the ~80 px of slack a maximised 1080p window has, and the column took its scroll valve and
+   * pushed the new controls below the fold.
+   *
+   * `electron/main.cjs` sets `minHeight` to this number, and the two must be changed together: a
+   * window that opens shorter than the frame's floor is a window whose own layout promise is broken.
    */
   --strip-height: 26px;
   --row-height: 28px;
@@ -183,7 +193,7 @@
    * A grading suite is not a 1366x768 laptop, and a scrollbar is worse than a larger minimum.
    */
   --frame-min-width: 1440px;
-  --frame-min-height: 960px;
+  --frame-min-height: 1000px;
   --form-panel-width: 47%;
 }
 

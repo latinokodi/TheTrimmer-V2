@@ -551,7 +551,17 @@ async def interface(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": f"the interface has not been built yet ({INTERFACE})"}, status=503
         )
-    return web.FileResponse(target)
+    response = web.FileResponse(target)
+    # The bundle's files keep their names across builds -- `app.js` is `app.js` -- so a copy held in
+    # the window's cache is indistinguishable from the one that was just built, and Chromium will
+    # reuse it on the strength of a `Last-Modified` alone. That is a window showing an interface
+    # that no longer exists, which is indistinguishable from a change that never took effect.
+    #
+    # Nothing is lost by refusing to cache: this is a file on the same disk as the window that reads
+    # it, read once at startup. `no-store` rather than `no-cache`, because there is no version worth
+    # revalidating -- the point is that the next launch reads what is there.
+    response.headers["Cache-Control"] = "no-store, must-revalidate"
+    return response
 
 
 def build_app() -> web.Application:

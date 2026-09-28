@@ -134,7 +134,11 @@ function createWindow(engineUp) {
     width: 1600,
     height: 1000,
     minWidth: 1440,
-    minHeight: 960,
+    // The frame's own floor, kept equal to `--frame-min-height` in `frontend/src/styles/tokens.css`.
+    // The two are derived together: below the frame's minimum the form column takes a scrollbar,
+    // and a window that can be dragged shorter than that is a window whose layout promise is broken
+    // by the person using it rather than by the code.
+    minHeight: 1000,
     // Maximized, not fullscreen: the operating system's titlebar is what makes the window
     // restorable, minimizable and closable, and none of that can be given up.
     show: false,
