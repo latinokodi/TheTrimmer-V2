@@ -99,7 +99,7 @@ A cut nobody measured is a cut nobody can vouch for.
 | **R6.4** | A second run downloads nothing it already has. | `scripts/check-bootstrap.ps1`: the locators find what the installers unpacked |
 | **R6.5** | The engine finds a portable build beside the application, not only one on `PATH`. | `test_plan.py::test_a_portable_ffmpeg_beside_the_application_is_found` |
 | **R6.6** | An override that is set and points at nothing is an error, not a silent fallback to another build. | `test_plan.py::test_an_override_pointing_at_nothing_is_an_error_not_a_fallback` |
-| **R6.7** | A source's keyframes are read when it is loaded, not when the first mark is typed, so the wait is never mistaken for a cut that has started. | `test_server.py::test_loading_a_source_starts_its_keyframe_read` |
+| **R6.7** | A source's keyframes are read when it is loaded, not when the first mark is typed, so the wait is never mistaken for a cut that has started — and under the key a plan will look them up by. | `engine_api.feature:loading a source starts reading its keyframes`, `test_server.py::test_loading_a_source_starts_its_keyframe_read` |
 
 ---
 

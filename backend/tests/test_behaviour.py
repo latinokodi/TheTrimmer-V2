@@ -345,6 +345,64 @@ def the_refusal_is_tagged(world: dict) -> None:
     assert ":" in world["answer"]["body"]["error"]
 
 
+# ------------------------------------------------------------------------------------------------
+#  Reading a source's keyframes before the first mark
+# ------------------------------------------------------------------------------------------------
+
+@given("a source whose keyframes take a while to list")
+def a_source_with_slow_keyframes(world: dict, tmp_path, monkeypatch) -> None:
+    """A real file on disk, so the stat that keys the cache is real, and a recorded read.
+
+    Stood in for rather than actually listed: what is being checked is *when* the engine asks, not
+    how long ffprobe takes. The file exists so `probe` accepts it and so the size and modification
+    time in the recorded call are the ones a plan would compute.
+    """
+    reel = tmp_path / "reel.mp4"
+    reel.write_bytes(b"\x00" * 64)
+    world["reel"] = reel
+    monkeypatch.setattr(server.ff, "probe", lambda path: master(100, Fraction(25)))
+    world["keyframe_reads"] = []
+    monkeypatch.setattr(cutter, "_keyframes_of",
+                        lambda *args: world["keyframe_reads"].append(args) or ())
+
+
+@when("the window loads it")
+def load_the_source(world: dict) -> None:
+    async def interaction(client: TestClient):
+        response = await client.get("/api/probe", params={"path": str(world["reel"])})
+        # The read is scheduled and not awaited, so the answer is not delayed by it. Let the loop
+        # run the task before `asyncio.run` closes the loop and cancels it.
+        for _ in range(50):
+            if world["keyframe_reads"]:
+                break
+            await asyncio.sleep(0.01)
+        return {"status": response.status}
+
+    world["answer"] = asyncio.run(with_client(interaction))
+
+
+@then("the engine starts reading them before the first mark is typed")
+def keyframes_are_read_on_load(world: dict) -> None:
+    """Measured: the first plan of a source costs 3.5 s and every plan after it 0.12 s.
+
+    Left until the first mark, that 3.5 s sits between typing a mark and being allowed to press
+    Trim, which reads as a cut already under way.
+    """
+    assert world["answer"]["status"] == 200
+    assert world["keyframe_reads"], "loading a source did not start reading its keyframes"
+
+
+@then("it reads them under the key the plan will look them up by")
+def keyframes_are_read_under_the_right_key(world: dict) -> None:
+    """The three arguments *are* the cache key: a warm-up reading under a different one would do
+    the whole scan and then not be found, which is worse than not warming at all."""
+    stat = world["reel"].stat()
+    called_path, size, modified_ns = world["keyframe_reads"][0]
+    assert called_path == str(world["reel"])
+    assert size == stat.st_size
+    assert modified_ns == stat.st_mtime_ns
+
+
 @when("I convert its last frame to a time")
 def convert_last_frame(world: dict) -> None:
     media = world["media"]

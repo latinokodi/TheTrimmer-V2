@@ -9,6 +9,12 @@ Feature: The engine's interface
     And the answer says whether H.264 encoding is available
     And the answer does not carry the whole encoder list
 
+  Scenario: loading a source starts reading its keyframes
+    Given a source whose keyframes take a while to list
+    When the window loads it
+    Then the engine starts reading them before the first mark is typed
+    And it reads them under the key the plan will look them up by
+
   Scenario: a refusal names what is wrong
     When I ask about a file that is not there
     Then the answer is a refusal
