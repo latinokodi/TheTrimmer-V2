@@ -138,7 +138,7 @@ function createWindow(engineUp) {
     // The two are derived together: below the frame's minimum the form column takes a scrollbar,
     // and a window that can be dragged shorter than that is a window whose layout promise is broken
     // by the person using it rather than by the code.
-    minHeight: 1000,
+    minHeight: 960,
     // Maximized, not fullscreen: the operating system's titlebar is what makes the window
     // restorable, minimizable and closable, and none of that can be given up.
     show: false,

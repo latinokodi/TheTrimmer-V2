@@ -127,20 +127,25 @@
    * `--frame-min-height` is derived, not chosen. The form column needs, at these sizes: 26 px of zone
    * header and 16 px of body padding for each of four zones, **four** 30 px option rows, two 40 px
    * timecode fields with their plan line, one 30 px path row per source field, and a 48 px action bar.
-   * That is 518 px, and with the title bar, the two bands at their own minimums and the footer it comes
-   * to 960. Declaring 900 while the content wanted 572 is what let the zones be crushed at the very
-   * size the window promised to support — silently, because a squeezed flex item overflows visibly and
-   * nothing in a browser calls that an error.
+   * Declaring 900 while the content wanted more is what let the zones be crushed at the very size the
+   * window promised to support — silently, because a squeezed flex item overflows visibly and nothing
+   * in a browser calls that an error.
    *
-   * The fourth option row is the Name field, added after that derivation was written, and it is why
-   * this is 1000 rather than 960. A row costs `--field-height` plus the tight body's `--space-3` gap,
-   * so 36 px: 518 + 36 = 554, and 960 + 36 = 996, declared as 1000. It is the name-and-folder control
-   * on ONE row for exactly this reason — the first version spent two rows and ~96 px, which is more
-   * than the ~80 px of slack a maximised 1080p window has, and the column took its scroll valve and
-   * pushed the new controls below the fold.
+   * The fourth option row is the Name field, added after that derivation was written. A row costs
+   * `--field-height` plus the tight body's `--space-3` gap, so 36 px, and it is on ONE row with the
+   * folder checkbox for that reason.
    *
-   * `electron/main.cjs` sets `minHeight` to this number, and the two must be changed together: a
-   * window that opens shorter than the frame's floor is a window whose own layout promise is broken.
+   * **Measured, rather than reasoned about** — because reasoning about it is what produced a wrong
+   * answer once already. Shrinking a real window and asking the layout engine where the column takes
+   * its scroll valve gives a content floor of 558 px (554 wanted, which is the arithmetic above), and
+   * a scroll valve that first opens at a 830 px frame. Both controls stay inside the viewport all the
+   * way down to 600 px, because the valve clips the bottom of the column and they sit above it.
+   *
+   * So the declared minimum has room to spare over the measured floor, and the fourth row did not
+   * need it raised. It stays at 960.
+   *
+   * `electron/main.cjs` sets `minHeight` to this number, and the two move together: a window that can
+   * be dragged shorter than the frame's floor breaks the layout promise from the outside.
    */
   --strip-height: 26px;
   --row-height: 28px;
@@ -193,7 +198,7 @@
    * A grading suite is not a 1366x768 laptop, and a scrollbar is worse than a larger minimum.
    */
   --frame-min-width: 1440px;
-  --frame-min-height: 1000px;
+  --frame-min-height: 960px;
   --form-panel-width: 47%;
 }
 
