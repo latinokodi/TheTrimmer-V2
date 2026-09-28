@@ -1,13 +1,21 @@
 # ---------------------------------------------------------------------------------------------
 #  What git is told to leave alone, and why.
 #
-#  Every entry is something this project actually produces. `start.bat` creates the Python
-#  environment, the window's dependencies and the interface bundle; `npm run pack` and
-#  `npm run dist` produce the packaged app. None of it is source, and all of it is reproduced by
-#  running one of those, so none of it belongs in a commit.
+#  Every entry is something this project actually produces, or something this project must never
+#  contain. `start.bat` creates the Python environment, the window's dependencies and the interface
+#  bundle; `npm run pack` and `npm run dist` produce the packaged app. None of it is source, and all
+#  of it is reproduced by running one of those, so none of it belongs in a commit.
 #
-#  Nothing has to be committed for the application to run from a clone: `start.bat` does every
-#  step it finds missing, which is the point of it.
+#  Nothing has to be committed for the application to run from a clone: `start.bat` does every step
+#  it finds missing, which is the point of it.
+#
+#  To find out which rule caught a path, and from which line of this file:
+#
+#      git check-ignore -v <path>
+#
+#  To commit something one of these rules is holding back, name it with `!` below rather than
+#  reaching for `git add --force`: an exception that is written down is one the next person can
+#  find.
 # ---------------------------------------------------------------------------------------------
 
 # --- Python: the environment, and what the interpreter writes as it runs ------------------------
@@ -19,6 +27,7 @@ venv/
 env/
 ENV/
 #  Bytecode and the interpreter's own output: regenerated on import, and they embed absolute paths.
+#  `[cod]` covers `.pyd` as well, the Windows extension modules.
 __pycache__/
 *.py[cod]
 *$py.class
@@ -26,36 +35,36 @@ __pycache__/
 .Python
 
 # --- Python packaging, if the engine is ever built into one ------------------------------------
-build/
-develop-eggs/
-downloads/
-eggs/
-.eggs/
-sdist/
-wheels/
-share/python-wheels/
+#  This project has no `setup.py` and no `pyproject.toml` -- `start.bat` runs the engine from source
+#  -- so the setuptools era's output is deliberately *not* listed here: `develop-eggs/`, `eggs/`,
+#  `.eggs/`, `sdist/`, `wheels/`, `share/python-wheels/`, `*.egg`, `MANIFEST` and the rest of the
+#  block every Python template carries. None of it can appear, and a list of things that cannot
+#  happen is how a file like this stops being read. What is left is what could:
+#
+#  `/build/` is where `python -m build` writes, anchored at the root so that a *source* folder
+#  called `build` anywhere else is not swallowed by it. `*.egg-info/` is what `pip install -e .`
+#  leaves. `pip-log.txt` is written by pip when it is told to log.
+/build/
 *.egg-info/
-.installed.cfg
-*.egg
-pip-wheel-metadata/
-MANIFEST
+pip-log.txt
 
 # --- Tests and checkers: what running them leaves behind ---------------------------------------
-#  `backend/tests` and `specs/features` are source and are tracked; these are the caches.
+#  `backend/tests` and `specs/features` are source and are tracked; these are the caches and the
+#  reports. Reports are ignored rather than committed because they describe one machine's run.
+#
+#  The engine is checked with pytest and pyflakes -- `start.bat` runs the first of those on every
+#  launch -- so the entry here is pytest's. The other frameworks' caches are deliberately *not*
+#  listed: `.mypy_cache/`, `.ruff_cache/`, `.tox/`, `.nox/`, `.hypothesis/`, `nosetests.xml`,
+#  `.dmypy.json` and `.python-version` are in every Python template and none of them can appear in
+#  a project that does not run those tools. If one is added later, its line goes here, which is
+#  written down so that nobody has to wonder whether it was an oversight.
 .pytest_cache/
-.mypy_cache/
-.dmypy.json
-.ruff_cache/
-.tox/
-.nox/
-.hypothesis/
+#  Coverage output is kept although nothing produces it today: it is an artefact by nature, it is
+#  large, and the cost of the four lines is nothing next to committing a `coverage.xml` by accident.
 .coverage
 .coverage.*
 htmlcov/
 coverage.xml
-nosetests.xml
-*.cover
-.python-version
 
 # --- Node and the interface --------------------------------------------------------------------
 #  Both dependency trees are installed by `start.bat` from the two tracked lock files, which is
@@ -78,6 +87,71 @@ frontend/.vite/
 #  reproduces all of it, which is the whole point of that file.
 .tools/
 
+# --- Media, and the one accident this repository is most exposed to -----------------------------
+#
+#  The repository holds no footage and no transcripts, on purpose: not one check in it cuts a
+#  media file, so there is nothing here that needs one and nothing that would go stale if one
+#  changed. Verified, not assumed -- every tracked file is source:
+#
+#      .py .ts .tsx .css .html .json .ini .md .feature .ps1 .cjs .bat .woff2 .txt
+#
+#  Which makes any media file in this folder an accident, and the accident is large. The engine
+#  writes a segment, and its transcript, *beside the source*: point it at a master that happens to
+#  live inside this checkout and a 7 GB take plus its captions land in the working tree, one
+#  `git add -A` from a history nobody can shrink. So the extensions are refused up front.
+#
+#  If a fixture is ever genuinely wanted, this is where to write the `!` exception, and the point of
+#  naming it here is that it becomes a decision somebody made rather than an accident.
+*.mp4
+*.mov
+*.mkv
+*.m4v
+*.avi
+*.webm
+*.wmv
+*.mpg
+*.mpeg
+*.vob
+*.m2ts
+*.3gp
+#  `.ts` and `.mts` are both MPEG transport streams and both TypeScript source extensions, and this
+#  project writes TypeScript. Neither is listed: a rule for either would ignore the interface's own
+#  source, silently, from the first commit after it was added -- and a `.mts` file added later by
+#  somebody who had not read this far would be ignored for reasons nothing on screen explains.
+#  `.m2ts` above is the unambiguous form, and a bare transport stream is not a name this product
+#  writes.
+#
+#  Captions travel with a segment, so they are refused with it: the whole point of naming a segment
+#  is that `clip.mp4` and `clip.srt` arrive as a pair.
+*.srt
+*.vtt
+*.ass
+*.ssa
+*.sub
+#  Sound, for the same reason: an audio master or a delivered stem dropped here is the same
+#  accident in a smaller box.
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.flac
+*.ogg
+#  A folder to put any of it in deliberately, so the rules above are for the accidental case.
+/media/
+/footage/
+
+#  What a cut writes beside its source when it is *not* named: `default_output()` calls it
+#  `<stem> HH.MM.SS.FF-HH.MM.SS.FF` with the source's own extension. Kept as well as the rules
+#  above, because it says which files those are without consulting the extension list -- and a named
+#  segment can be called anything, which no pattern can describe, so the extensions are what
+#  actually do the work.
+* [0-9][0-9].[0-9][0-9].[0-9][0-9].[0-9][0-9]-[0-9][0-9].[0-9][0-9].[0-9][0-9].[0-9][0-9].*
+
+#  Where the engine's temporary pieces go, and why they are not listed above: `trim()` writes the
+#  head, the body, the tail and the sound into a directory under the system temp folder
+#  (`tempfile.mkdtemp(prefix="thetrimmer-")`), joins them there and removes it. A cut leaves
+#  nothing behind in the working tree, so there is nothing here to ignore for it.
+
 # --- Packaging output --------------------------------------------------------------------------
 #  `electron-builder` writes here -- `build.directories.output` in package.json -- for the `--dir`
 #  form and the installer alike: the unpacked app, the installer, its blockmap and the channel
@@ -88,6 +162,21 @@ frontend/.vite/
 *.blockmap
 builder-effective-config.yaml
 electron-builder.env
+
+# --- Anything that could carry a secret --------------------------------------------------------
+#  Nothing in this project needs a file like these today. That is the reason to refuse them now
+#  rather than after somebody adds a proxy password or a signing key to make one machine work: the
+#  repository is public, and a secret committed once is public for good, because removing it in a
+#  later commit does not remove it from the history.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+*.keystore
+secrets.json
 
 # --- The application's own working files -------------------------------------------------------
 #  A project file is a person's list of marks and belongs to them rather than to the repository.
@@ -101,16 +190,16 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-#  What a cut writes beside its source: `default_output()` names it "<stem> HH.MM.SS.FF-HH.MM.SS.FF"
-#  with the source's own extension, so a master dropped into this folder and trimmed here would
-#  otherwise leave its segment sitting untracked, one `git add -A` away from the repository.
-* [0-9][0-9].[0-9][0-9].[0-9][0-9].[0-9][0-9]-[0-9][0-9].[0-9][0-9].[0-9][0-9].[0-9][0-9].*
-/media/
-
-#  Where the engine's temporary pieces go, and why they are not listed above: `trim()` writes the
-#  head, the body, the tail and the sound into a directory under the system temp folder
-#  (`tempfile.mkdtemp(prefix="thetrimmer-")`), joins them there and removes it. A cut leaves
-#  nothing behind in the working tree, so there is nothing here to ignore for it.
+# --- Leftovers ---------------------------------------------------------------------------------
+#  A patch that did not apply, a merge that was abandoned, an editor's backup, a temporary file.
+#  `nul` is the Windows one worth naming: `> nul` where `>nul` was meant creates a file called
+#  `nul`, which no Windows program can then open or delete by name.
+*.orig
+*.rej
+*.bak
+*.tmp
+*.temp
+nul
 
 # --- Editors -----------------------------------------------------------------------------------
 .vscode/*
