@@ -372,6 +372,27 @@ def test_a_refusal_names_the_character_it_objected_to():
     assert "CON" in str(refused.value)
 
 
+def test_a_refusal_says_the_thing_that_is_most_usefully_wrong():
+    """Two rules can both be true of one name, and only one of them is worth saying.
+
+    `..` ends with a dot and is also a folder reference. Reporting the dot is true and useless: the
+    person who typed `..` did not mistype a dot, they typed a folder reference. So the more
+    specific rule is checked first, and the order of the checks is part of the behaviour.
+    """
+    with pytest.raises(cutter.NameRefused) as refused:
+        cutter.clean_segment_name("..")
+    assert "folder reference" in str(refused.value)
+
+    with pytest.raises(cutter.NameRefused) as refused:
+        cutter.clean_segment_name(".")
+    assert "folder reference" in str(refused.value)
+
+    # And a name that is only a trailing dot still gets the dot explained.
+    with pytest.raises(cutter.NameRefused) as refused:
+        cutter.clean_segment_name("Take 1.")
+    assert "dot or a space" in str(refused.value)
+
+
 def test_a_name_that_is_merely_unusual_is_accepted():
     """Refusing what the filesystem accepts would be its own bug: punctuation, accents, spaces,
     dots inside the name and a non-Latin script all have to work."""

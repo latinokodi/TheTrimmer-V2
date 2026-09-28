@@ -301,6 +301,50 @@ def the_reason_names_the_character(world: dict) -> None:
     assert ":" in world["refusal"], world["refusal"]
 
 
+# ------------------------------------------------------------------------------------------------
+#  A name, resolved on its own — which is what makes the field work while somebody is typing
+# ------------------------------------------------------------------------------------------------
+
+@given("no range is marked")
+def no_range_marked(world: dict) -> None:
+    # Nothing to set up: the point of the scenario is that no marks are needed. It is stated as a
+    # Given so the scenario reads as the situation it describes rather than as a missing step.
+    world["marks"] = None
+
+
+@when(parsers.parse('I ask where the segment named "{name}" will be written'))
+def ask_where_the_segment_goes(world: dict, name: str) -> None:
+    world["answer"] = call("post", "/api/name",
+                           json={"source": str(SOURCE), "name": name, "inFolder": False})
+
+
+@then(parsers.parse('the answer is a path called "{filename}"'))
+def the_answer_is_a_path(world: dict, filename: str) -> None:
+    assert world["answer"]["status"] == 200, world["answer"]["text"]
+    got = world["answer"]["body"]["output"]
+    assert got is not None, "no path came back for a name that is fine"
+    assert got.replace("\\", "/").endswith(filename), got
+
+
+@then("the source was not read")
+def the_source_was_not_read(world: dict) -> None:
+    """`SOURCE` does not exist, which is the proof: a path resolved from a name reads nothing.
+
+    If this endpoint probed the file it would fail here, and the field would stop working on a
+    machine whose master happens to be on a disconnected drive.
+    """
+    assert not SOURCE.exists(), "the fixture path exists, so this proves nothing"
+    assert world["answer"]["status"] == 200
+
+
+@then("the refusal is tagged as being about the name")
+def the_refusal_is_tagged(world: dict) -> None:
+    """The tag is what lets the window show it beside the field rather than in the run's errors."""
+    assert world["answer"]["status"] == 400, world["answer"]["text"]
+    assert world["answer"]["body"]["reason"] == "name"
+    assert ":" in world["answer"]["body"]["error"]
+
+
 @when("I convert its last frame to a time")
 def convert_last_frame(world: dict) -> None:
     media = world["media"]

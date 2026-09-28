@@ -377,6 +377,17 @@
 }
 
 /*
+ * A refused name, in the slot the path would have occupied.
+ *
+ * It stays in the row rather than moving to the run's error area: the row is where somebody looks
+ * immediately after typing into it, and a refusal shown anywhere else is one they have to hunt for.
+ * Every other `.danger` in this stylesheet is scoped to its own container, so this one is too.
+ */
+.field-row__note.danger {
+  color: var(--hazard);
+}
+
+/*
  * A checkbox with its own word, for a setting that is a decision rather than a value. The box keeps
  * its native size and the word takes the rest, because the word is the thing being read and the box
  * is the thing being clicked.

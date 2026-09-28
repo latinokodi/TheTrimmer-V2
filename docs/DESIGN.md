@@ -382,6 +382,28 @@ deliberate and is the only subtle thing in the feature.
 The refusal happens in `_spec_from`, before the source is probed: a person who mistyped a colon
 should not wait for an 11 GB master to be read to be told about the colon.
 
+### A state nobody named is a state nobody handled
+
+The first version of the row derived the path from the **plan**. The plan does not run until both
+marks are set. So typing a name with no range yet left the path empty, and the row read an empty
+path as *"the engine refused this name"* — reporting every name as unusable, next to a message that
+said "see the reason below" and a reason that was printed nowhere.
+
+Two faults, and only one of them was the false refusal. The other was that the window was deciding,
+on the engine's behalf, that something had been refused. It is not entitled to: it knows what it
+asked and what came back, and "no answer yet" is a third thing.
+
+**Decision.** Three states, in `frontend/src/state/nameRow.ts` rather than in the markup, with tests
+of its own: nothing typed, answered, or refused. Only a refusal the engine *tagged* — `reason:
+"name"`, from a `NameRefused` — is drawn as a problem, so the window cannot blame a name for an
+engine that is simply down. And the path is resolved by its own endpoint, `POST /api/name`, which
+reads nothing: a named segment's path is the source's folder and the name, so it needs neither the
+marks nor a probe. That is what makes the field answer while somebody is typing, and on a master
+sitting on a disconnected drive.
+
+`NameRefused` is a subclass of `TrimError`, so every caller that catches the general refusal keeps
+working; the tag exists only so the window can put this one in the right place.
+
 ## Provisioning is a script, and `start.bat` is a launcher
 
 The first version of `start.bat` did the work itself, and it did the one thing that makes a start

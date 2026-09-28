@@ -96,3 +96,13 @@ Feature: Cutting a marked range out of a master
   Scenario: a name the filesystem accepts is not refused for being unusual
     When I name the segment "Émilie — finale 2.1"
     Then the segment is called "Émilie — finale 2.1.mp4"
+
+  Scenario: a name is resolved before a range has been marked
+    Given no range is marked
+    When I ask where the segment named "Interview wide" will be written
+    Then the answer is a path called "Interview wide.mp4"
+    And the source was not read
+
+  Scenario: a refusal says which field it is about
+    When I ask where the segment named "Take 1:2" will be written
+    Then the refusal is tagged as being about the name

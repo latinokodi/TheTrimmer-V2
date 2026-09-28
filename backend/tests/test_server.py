@@ -14,6 +14,7 @@ Nothing here launches ffmpeg except `/api/health`, which asks it its version.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from aiohttp.test_utils import TestClient, TestServer
 import pytest
@@ -156,6 +157,81 @@ def test_the_plan_answers_with_the_path_the_name_produces():
     spec = server._spec_from(_body(name="Interview wide", inFolder=True))
     assert str(spec.output).endswith("Interview wide\\Interview wide.mp4") or \
         str(spec.output).endswith("Interview wide/Interview wide.mp4")
+
+
+# ------------------------------------------------------------------------------------------------
+#  Resolving a name on its own, before there is a range
+# ------------------------------------------------------------------------------------------------
+
+def test_a_name_is_resolved_without_touching_the_source(tmp_path):
+    """The endpoint that makes the field work while somebody is typing.
+
+    It is deliberately not the plan. A plan needs both marks and reads the source; a named
+    segment's path needs neither, and requiring them is what made the window show a refusal for
+    every name typed before a range was marked.
+    """
+    async def check(client: TestClient):
+        answer = await client.post("/api/name", json={
+            "source": "C:/media/reel.mp4", "name": "Interview wide", "inFolder": False})
+        assert answer.status == 200
+        body = await answer.json()
+        assert body["output"].endswith("Interview wide.mp4")
+        # The endpoint does not read the source, and the source here does not exist: the path is
+        # resolved from the name alone, which is what lets it answer while somebody types.
+        assert not Path("C:/media/reel.mp4").exists()
+
+    call(with_client(check))
+
+
+def test_a_name_can_be_resolved_before_any_marks_exist(tmp_path):
+    """No in or out frame at all, and the path still comes back."""
+    async def check(client: TestClient):
+        answer = await client.post("/api/name", json={
+            "source": "C:/media/reel.mp4", "name": "Interview wide", "inFolder": True})
+        assert answer.status == 200
+        body = await answer.json()
+        assert body["output"].replace("\\", "/").endswith(
+            "Interview wide/Interview wide.mp4")
+
+    call(with_client(check))
+
+
+def test_an_empty_name_is_not_a_refusal(tmp_path):
+    """Clearing the box is how somebody gets back to the range name, not a mistake."""
+    async def check(client: TestClient):
+        for blank in ("", "   "):
+            answer = await client.post("/api/name", json={
+                "source": "C:/media/reel.mp4", "name": blank, "inFolder": False})
+            assert answer.status == 200, await answer.text()
+            assert (await answer.json())["output"] is None
+
+    call(with_client(check))
+
+
+def test_a_refused_name_is_tagged_so_the_window_can_place_it(tmp_path):
+    """The tag is what lets the row show the refusal beside the field.
+
+    Matching on the sentence instead would break the first time the sentence was improved, and the
+    sentence is meant to be improvable.
+    """
+    async def check(client: TestClient):
+        answer = await client.post("/api/name", json={
+            "source": "C:/media/reel.mp4", "name": "Take 1:2", "inFolder": False})
+        assert answer.status == 400
+        body = await answer.json()
+        assert body["reason"] == "name"
+        assert ":" in body["error"]
+
+    call(with_client(check))
+
+
+def test_the_engine_tells_a_refused_name_apart_from_its_other_refusals():
+    """`NameRefused` is a `TrimError`, so nothing that catches the general one changes."""
+    assert issubclass(cutter.NameRefused, cutter.TrimError)
+    with pytest.raises(cutter.NameRefused):
+        cutter.clean_segment_name("Take 1:2")
+    # And a refusal that is *not* about the name is not tagged as one.
+    assert not isinstance(cutter.TrimError("a backwards range"), cutter.NameRefused)
 
 
 def test_a_range_against_a_file_that_is_not_there_is_a_400_not_a_traceback():

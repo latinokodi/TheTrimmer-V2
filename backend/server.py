@@ -414,6 +414,50 @@ def _spec_from(body: dict[str, Any]) -> cutter.TrimSpec:
     )
 
 
+def _refusal(failure: Exception, status: int = 400) -> web.Response:
+    """A refusal, with a tag when it is about the segment's name.
+
+    The window shows a refused name beside the field it was typed into, and it cannot tell which
+    refusals those are from the sentence alone. A stable tag can be relied on; matching on prose
+    cannot, because the prose is meant to be rewritten whenever it can be said better.
+    """
+    payload: dict[str, Any] = {"error": str(failure)}
+    if isinstance(failure, cutter.NameRefused):
+        payload["reason"] = "name"
+    return web.json_response(payload, status=status)
+
+
+async def name_output(request: web.Request) -> web.Response:
+    """Where a named segment will be written, without reading the source.
+
+    The output path of a named segment does not depend on the marks -- it is the source's folder
+    and the name -- so this answers before a range exists and without a probe, which is what makes
+    it usable while somebody is typing. That matters more than it looks: the first version of the
+    window worked this out from the *plan*, and the plan does not run until both marks are set, so
+    typing a name before marking a range appeared to refuse every name.
+
+    The rule still lives in one place, `cutter.output_for`; this only reaches it earlier.
+    """
+    body = await request.json()
+    name = body.get("name")
+    if name is None or not str(name).strip():
+        # No name is not a refusal, and there is nothing to preview: the range name needs the marks.
+        return web.json_response({"output": None})
+    source = Path(body["source"])
+    try:
+        output = cutter.output_for(
+            source,
+            int(body.get("inFrame") or 0),
+            int(body.get("endFrame") or 1) - 1,
+            float(body.get("rate") or 25),
+            name=str(name),
+            in_folder=bool(body.get("inFolder")),
+        )
+    except Exception as failure:  # noqa: BLE001
+        return _refusal(failure)
+    return web.json_response({"output": str(output)})
+
+
 async def plan(request: web.Request) -> web.Response:
     """What a range will do, without writing anything. Called as the marks are typed."""
     body = await request.json()
@@ -422,7 +466,7 @@ async def plan(request: web.Request) -> web.Response:
         media = await asyncio.to_thread(ff.probe, spec.source)
         worked = await asyncio.to_thread(cutter.plan_trim, spec, media)
     except Exception as failure:  # noqa: BLE001
-        return web.json_response({"error": str(failure)}, status=400)
+        return _refusal(failure)
     return web.json_response({
         "plan": _plan_json(spec, worked, media),
         "output": str(spec.output),
@@ -437,7 +481,7 @@ async def cut(request: web.Request) -> web.Response:
     try:
         spec = _spec_from(body)
     except Exception as failure:  # noqa: BLE001
-        return web.json_response({"error": str(failure)}, status=400)
+        return _refusal(failure)
 
     with CURRENT_LOCK:
         if CURRENT is not None:
@@ -572,6 +616,7 @@ def build_app() -> web.Application:
         web.get("/api/probe", probe),
         web.post("/api/parse", parse),
         web.post("/api/plan", plan),
+        web.post("/api/name", name_output),
         web.post("/api/cut", cut),
         web.post("/api/cancel", cancel),
         web.get("/api/events", events),

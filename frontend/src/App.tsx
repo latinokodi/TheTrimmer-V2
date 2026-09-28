@@ -55,8 +55,8 @@ import {
   type OutcomeView,
   type PlanView,
 } from "./api";
+import { nameRow } from "./state/nameRow";
 import { useRunLog } from "./state/useRunLog";
-
 /** CRF and preset are the encoder's, so they are named after it rather than invented. */
 const QUALITY = [
   { crf: 18, label: "18 — visually lossless (default)" },
@@ -89,6 +89,17 @@ export function App(): JSX.Element {
   // Where the plan says the segment will go. Shown rather than described, because the name and
   // the folder decide it and the only way to be sure of a path is to read it back.
   const [plannedOutput, setPlannedOutput] = useState("");
+  // The engine's own sentence when it refused the typed name, and null when it did not. Only ever
+  // set from a refusal the engine labelled as being about the name.
+  const [nameProblem, setNameProblem] = useState<string | null>(null);
+  // What the name row says, decided by a function with tests of its own rather than by nested
+  // conditionals in the markup — which is where the "cannot be used" fault came from.
+  const nameNote = nameRow({
+    typed: segmentName,
+    output: plannedOutput,
+    refused: nameProblem,
+    hasSource: media !== null,
+  });
   const [plan, setPlan] = useState<PlanView | null>(null);
   const [plannedFor, setPlannedFor] = useState<string>("");
   const [outcome, setOutcome] = useState<OutcomeView | null>(null);
@@ -301,22 +312,65 @@ export function App(): JSX.Element {
           // is worse than no plan, because it looks current.
           if (planRef.current === ticket) {
             setPlan(answer.plan);
-            setPlannedOutput(answer.output);
             setPlannedFor(`${inFrame}-${endFrame}-${crf}-${preset}-${segmentName.trim()}-${inFolder}`);
           }
         })
         .catch(() => {
           if (planRef.current === ticket) {
+            // The plan's own failure is reported by the plan line, not here: this row is about the
+            // name, and a range the engine refused is not something the name field should claim.
             setPlan(null);
-            // A name the filesystem would refuse is refused by the engine, and the sentence it
-            // sends back belongs next to the field that was typed into. The path is cleared so
-            // nothing stale is shown as though it were the destination.
-            setPlannedOutput("");
           }
         });
     }, 250);
     return () => window.clearTimeout(timer);
   }, [crf, endFrame, inFrame, inFolder, media, preset, rate, ready, segmentName]);
+
+  // ---- the name, resolved as it is typed ----------------------------------------------------
+  //
+  // Asked of the engine, not worked out here, so the rule for where a segment goes keeps living in
+  // one place. Separate from the plan because a plan needs both marks and this does not: a named
+  // segment's path is the source's folder and the name, so it can be answered while somebody is
+  // still typing and before a range exists.
+  //
+  // The version before this read the path out of the *plan*, which does not run until both marks
+  // are set — so typing a name with no range yet left the path empty, and the row took an empty
+  // path to mean "refused" and said so about every name.
+  const nameRef = useRef(0);
+  useEffect(() => {
+    if (media === null || segmentName.trim() === "") {
+      setNameProblem(null);
+      setPlannedOutput("");
+      return;
+    }
+    const ticket = nameRef.current + 1;
+    nameRef.current = ticket;
+    // Cleared at once rather than when the answer arrives: a refusal that stays on screen for a
+    // quarter of a second after the character causing it was deleted reads as a refusal of the
+    // name that is there now.
+    setNameProblem(null);
+    const timer = window.setTimeout(() => {
+      void api
+        .name({ source: media.path, name: segmentName.trim(), inFolder, rate })
+        .then((answer) => {
+          if (nameRef.current === ticket) {
+            setPlannedOutput(answer.output ?? "");
+          }
+        })
+        .catch((caught: unknown) => {
+          if (nameRef.current === ticket) {
+            setPlannedOutput("");
+            // Only a refusal the engine tagged as being about the name is shown as one. Anything
+            // else — the engine being down, a malformed answer — is left to the run's own error
+            // reporting rather than blamed on what somebody typed.
+            setNameProblem(
+              caught instanceof ApiFailure && caught.reason === "name" ? caught.message : null,
+            );
+          }
+        });
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [inFolder, media, rate, segmentName]);
 
   // ---- the cut ------------------------------------------------------------------------------
   const trim = useCallback(async () => {
@@ -592,10 +646,13 @@ export function App(): JSX.Element {
                     placeholder="named for its range"
                     spellCheck={false}
                     autoComplete="off"
+                    aria-invalid={nameProblem !== null}
+                    aria-describedby="trim-name-note"
                     title={
-                      segmentName.trim() === ""
+                      nameProblem ??
+                      (segmentName.trim() === ""
                         ? "Leave empty to name the segment for its range, as before."
-                        : plannedOutput
+                        : plannedOutput)
                     }
                     onChange={(event) => setSegmentName(event.target.value)}
                   />
@@ -612,16 +669,18 @@ export function App(): JSX.Element {
                     />
                     <span>folder</span>
                   </label>
-                  {/* The path is read back from the engine rather than rebuilt here, so what is
-                      shown is what will be written -- including a name the engine refuses, which
-                      is why this line says so rather than lying when the plan fails. It ellipsises
-                      from the left, because the file's own name is the part worth reading. */}
-                  <span className="field-row__note" title={plannedOutput || undefined}>
-                    {segmentName.trim() === ""
-                      ? "leave empty for the range name"
-                      : plannedOutput === ""
-                        ? "that name cannot be used — see the reason below"
-                        : plannedOutput}
+                  {/*
+                    Three states, and only one of them is a refusal. The rule is in `nameRow`
+                    rather than here, because the version that lived here read an empty path as a
+                    refusal and told everybody their name was unusable until a range was marked —
+                    next to a message pointing at a reason printed nowhere.
+                  */}
+                  <span
+                    id="trim-name-note"
+                    className={nameNote.problem ? "field-row__note danger" : "field-row__note"}
+                    title={nameNote.problem ? nameNote.text : plannedOutput || undefined}
+                  >
+                    {nameNote.text}
                   </span>
                 </div>
               </div>

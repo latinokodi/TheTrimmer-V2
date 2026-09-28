@@ -111,6 +111,10 @@ A cut nobody measured is a cut nobody can vouch for.
 | **R7.5** | A name the filesystem would refuse is refused before the source is read, and the reason names what was wrong. | `test_server.py:test_a_name_windows_refuses_is_refused_before_anything_is_read` |
 | **R7.6** | A name that is merely unusual — punctuation, accents, dots inside it, a non-Latin script — is accepted. | `test_plan.py::test_a_name_that_is_merely_unusual_is_accepted` |
 | **R7.7** | Nothing is created for a name that was refused. | `test_naming.py:test_captions_are_not_written_for_a_name_that_was_refused` |
+| **R7.8** | A name is resolved to its path without reading the source, so the field works before a range is marked and on a source that is not reachable. | `cutting.feature:a name is resolved before a range has been marked` |
+| **R7.9** | A refused name is tagged as being about the name, so the window shows it beside the field rather than among the run's errors. | `cutting.feature:a refusal says which field it is about` |
+| **R7.10** | An empty name is not a refusal: it means the range name, which is what clearing the box asks for. | `test_server.py:test_an_empty_name_is_not_a_refusal` |
+| **R7.11** | The row says nothing about a name the engine has not answered about. It never reports a name as unusable on its own account. | `nameRow.test.ts`, `cutting.feature` |
 
 ---
 

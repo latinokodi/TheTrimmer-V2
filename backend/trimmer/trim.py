@@ -119,6 +119,16 @@ class TrimError(RuntimeError):
     """The requested trim cannot be made from this source."""
 
 
+class NameRefused(TrimError):
+    """A segment name the filesystem would not accept.
+
+    Its own class because it is refused in a different place, for a different reason, and about a
+    field the operator is looking at: before the source is read, and next to the box they typed
+    into. The window shows it there, which it cannot do if a bad name arrives as one of the
+    engine's other sentences. Everything that catches ``TrimError`` still catches this.
+    """
+
+
 @dataclass
 class TrimSpec:
     """One trim request: the source, the frame range, and the knobs that matter."""
@@ -1061,13 +1071,13 @@ def clean_segment_name(name: str) -> str:
     filesystem would reject anyway, one step earlier and with a sentence attached.
     """
     if name is None:
-        raise TrimError("no name was given")
+        raise NameRefused("no name was given")
     cleaned = name.strip()
     if not cleaned:
-        raise TrimError("the segment name is empty")
+        raise NameRefused("the segment name is empty")
 
     if len(cleaned) > NAME_LIMIT:
-        raise TrimError(
+        raise NameRefused(
             f"the segment name is {len(cleaned)} characters; the limit is {NAME_LIMIT}, so the "
             "file can be written inside Windows' path limit"
         )
@@ -1075,26 +1085,27 @@ def clean_segment_name(name: str) -> str:
     refused = sorted({character for character in cleaned if character in _REFUSED_IN_NAME})
     if refused:
         listed = " ".join(refused)
-        raise TrimError(
+        raise NameRefused(
             f"the segment name contains {listed}, which Windows does not allow in a file name"
         )
 
     control = [character for character in cleaned if ord(character) < 32]
     if control:
-        raise TrimError("the segment name contains a control character")
+        raise NameRefused("the segment name contains a control character")
+
+    # `.` and `..` mean the folder itself and its parent, and would put the segment somewhere other
+    # than beside its source. Checked *before* the trailing-dot rule, which would otherwise catch
+    # `..` first and answer "ends with a dot" — true, and not the thing that is wrong with it.
+    if cleaned in (".", ".."):
+        raise NameRefused("the segment name cannot be a folder reference")
 
     # Windows silently strips a trailing dot or space, so `Take 1.` becomes `Take 1` and the file
     # is not where the name says it is.
     if cleaned[-1] in ". ":
-        raise TrimError("the segment name ends with a dot or a space, which Windows removes")
-
-    # `.` and `..` mean the folder itself and its parent, and would put the segment somewhere
-    # other than beside its source.
-    if cleaned in (".", ".."):
-        raise TrimError("the segment name cannot be a folder reference")
+        raise NameRefused("the segment name ends with a dot or a space, which Windows removes")
 
     if cleaned.split(".")[0].upper() in _RESERVED_NAMES:
-        raise TrimError(
+        raise NameRefused(
             f"Windows reserves the name {cleaned.split('.')[0].upper()} and will not create it"
         )
 

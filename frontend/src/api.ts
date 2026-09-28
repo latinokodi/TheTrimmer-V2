@@ -140,8 +140,23 @@ export type EngineEvent =
   | { readonly type: "failed"; readonly message: string }
   | { readonly type: "cancelled" };
 
-/** Raised with the backend's own sentence, so the window never invents a reason. */
-export class ApiFailure extends Error {}
+/**
+ * Raised with the backend's own sentence, so the window never invents a reason.
+ *
+ * `reason` is the engine's tag for *which* refusal this is. It exists for the one case the window
+ * has to place differently: a refused segment name belongs beside the field it was typed into, and
+ * telling that apart from the engine's other refusals by matching on prose would break the moment
+ * the prose was improved.
+ */
+export class ApiFailure extends Error {
+  readonly reason: string | null;
+
+  constructor(message: string, reason: string | null = null) {
+    super(message);
+    this.name = "ApiFailure";
+    this.reason = reason;
+  }
+}
 
 async function send<T>(path: string, body?: unknown, method = "POST"): Promise<T> {
   const response = await fetch(`${await base()}${path}`, {
@@ -150,11 +165,10 @@ async function send<T>(path: string, body?: unknown, method = "POST"): Promise<T
   });
   const payload: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const message =
-      typeof payload === "object" && payload !== null && "error" in payload
-        ? String((payload as { error: unknown }).error)
-        : `${path} failed (${response.status})`;
-    throw new ApiFailure(message);
+    const shaped = typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : {};
+    const message = "error" in shaped ? String(shaped["error"]) : `${path} failed (${response.status})`;
+    const reason = "reason" in shaped ? String(shaped["reason"]) : null;
+    throw new ApiFailure(message, reason);
   }
   return payload as T;
 }
@@ -194,6 +208,23 @@ export const api = {
     /** Put the segment and its transcript in a folder of that name. */
     readonly inFolder?: boolean;
   }) => send<{ plan: PlanView; output: string; transcript: string | null }>("/api/plan", input),
+
+  /**
+   * Where a named segment will be written — answered without reading the source.
+   *
+   * Separate from `plan` because a plan needs both marks and this does not: the output path of a
+   * named segment is the source's folder and the name, so it can be resolved while somebody is
+   * still typing, and a refused name can be reported before there is a range to plan.
+   * `output` is null when no name was given, which is not an error.
+   */
+  name: (input: {
+    readonly source: string;
+    readonly name: string;
+    readonly inFolder: boolean;
+    readonly inFrame?: number;
+    readonly endFrame?: number;
+    readonly rate?: number;
+  }) => send<{ output: string | null }>("/api/name", input),
 
   cut: (input: {
     readonly source: string;
