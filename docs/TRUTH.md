@@ -38,6 +38,14 @@ npm --prefix frontend run build                        # types, then the bundle
 | Switching verification off is visible | The `Verify: Off` option leaves `verified: null`, which the panel shows as *not measured* | A run that measured nothing being presented as a verified one |
 | A variable-rate source is planned anyway and warned about | `test_plan.py::test_a_variable_rate_file_is_planned_anyway_and_says_so` | No check can make a mark exact against a frame grid that does not exist, so the honest answer is a warning beside a plan that still works |
 
+## The claims about what the window is saying
+
+| Claim | Checked by | What the check would catch |
+|---|---|---|
+| The plan line is a forecast, not a report | `planSentence.ts` with `planSentence.test.ts`, and `window.feature:the plan line is a forecast` | The line appears the moment a range is marked, because the engine plans while the marks are typed — so a past-tense sentence about a re-encode reads as a cut already under way. It was asked about as "why does the head re-encode occur before I can click Trim?" |
+| Lines left in the Progress panel say they are a record | `progressLabel`, and `window.feature:lines that are a record say they are a record` | The previous run's "head re-encoding rows 0..24" staying on screen while the next range is marked, which is the same misreading from the other direction |
+| Loading a source starts reading its keyframes | `test_server.py::test_loading_a_source_starts_its_keyframe_read` | Measured on the reference master: the first plan of a source costs 3.5 s and every plan after it 0.12 s, because the keyframe list is remembered per file. Left where it was, that 3.5 s sat between typing a mark and being allowed to press Trim. The check asserts the three arguments that *are* the cache key — a warm-up reading under a different key would do the work and then not be found |
+
 ## The naming claims
 
 | Claim | Checked by | What the check would catch |

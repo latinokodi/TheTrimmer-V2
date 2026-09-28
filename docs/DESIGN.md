@@ -404,6 +404,38 @@ sitting on a disconnected drive.
 `NameRefused` is a subclass of `TrimError`, so every caller that catches the general refusal keeps
 working; the tag exists only so the window can put this one in the right place.
 
+## A forecast and a record are not the same sentence
+
+Asked, in good faith: *"why does the head re-encode occur before I can click on TRIM?"* Nothing was
+being re-encoded. Two things were on screen, and both said the wrong thing about time.
+
+The plan line read **"head patch — 25 frame(s) re-encoded, 500 copied"**. It is produced the moment
+a range is marked, because the engine plans while the marks are being typed — that is what decides
+whether Trim is enabled. So a sentence about the future was written in the past tense, and it was
+read as an account of a cut already running. It now says *"will re-encode 37, copy 835"*.
+
+And the Progress panel keeps the previous run's lines after it ends, which is wanted: they are the
+record of it. But nothing said so, so the last cut's genuine *"head re-encoding rows 0..24"* was
+still there while the next range was being marked. It now says **"from the last run"**.
+
+**Decision.** Both sentences come from `frontend/src/state/planSentence.ts` rather than from template
+strings in the component, and the tests are mostly about tense — which is unusual, and is the point,
+because the fault was a sentence in the wrong one. `never states a re-encode as a thing that has
+occurred` is phrased as "if it mentions a re-encode, it contains *will*" rather than by forbidding a
+word: `"will be re-encoded"` ends a sentence perfectly well, and a rule written the other way round
+fails on correct prose.
+
+**And the wait itself was moved.** The first plan of a source costs 3.5 s against 0.12 s for every
+plan after it, because the keyframe list is remembered per file — measured, not guessed. That 3.5 s
+landed between typing a mark and being allowed to press Trim, which is the *other* reason the line
+looked like activity. It now starts when the source is loaded, while the operator is looking at it,
+as a task on the same thread pool a plan uses. The test asserts the three arguments that are the
+cache key, because a warm-up reading under a different key would do the whole scan and then not be
+found by the plan — worse than not warming at all.
+
+That is one report, and it was three faults: a tense, an unlabelled record, and a stall in the wrong
+place. None of them was a bug in the cutting.
+
 ## Provisioning is a script, and `start.bat` is a launcher
 
 The first version of `start.bat` did the work itself, and it did the one thing that makes a start

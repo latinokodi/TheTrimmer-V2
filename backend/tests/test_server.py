@@ -14,12 +14,14 @@ Nothing here launches ffmpeg except `/api/health`, which asks it its version.
 from __future__ import annotations
 
 import asyncio
+from fractions import Fraction
 from pathlib import Path
 
 from aiohttp.test_utils import TestClient, TestServer
 import pytest
 
 import server
+from trimmer import ffmpeg as ff
 from trimmer import trim as cutter
 
 
@@ -321,3 +323,49 @@ def test_one_run_at_a_time_is_enforced_with_a_409():
         call(with_client(check))
     finally:
         assert server.CURRENT is None
+
+
+# ------------------------------------------------------------------------------------------------
+#  Reading a source's keyframes before the first mark
+# ------------------------------------------------------------------------------------------------
+
+def test_loading_a_source_starts_its_keyframe_read(tmp_path, monkeypatch):
+    """The wait for the first plan is moved to when the file is loaded, not the first mark.
+
+    Measured on the reference master: the first plan of a source costs 3.5 s and every plan after
+    it 0.12 s, because the keyframe list is remembered per file. That 3.5 s sat between typing a
+    mark and being allowed to press Trim — which reads as the cut having already started, and was
+    asked about as "why does the head re-encode occur before I can click Trim?".
+    """
+    reel = tmp_path / "reel.mp4"
+    reel.write_bytes(b"\x00" * 32)
+    media = ff.MediaInfo(
+        path=reel, codec="h264", width=1920, height=1080, pix_fmt="yuv420p",
+        rate=Fraction(25), average_rate=Fraction(25), timebase=Fraction(1, 12800),
+        frames=100, duration=4.0, audio=None, size_bytes=32, start_time=0.0,
+    )
+    monkeypatch.setattr(server.ff, "probe", lambda path: media)
+
+    seen: list[tuple] = []
+    monkeypatch.setattr(server.cutter, "_keyframes_of", lambda *args: seen.append(args) or ())
+
+    async def check(client: TestClient):
+        answer = await client.get("/api/probe", params={"path": str(reel)})
+        assert answer.status == 200
+        # The read is scheduled rather than awaited, so the answer is not delayed by it. Let the
+        # loop run the task before the interaction ends.
+        for _ in range(50):
+            if seen:
+                break
+            await asyncio.sleep(0.01)
+
+    call(with_client(check))
+
+    assert seen, "loading a source did not start reading its keyframes"
+    called_path, size, modified_ns = seen[0]
+    stat = reel.stat()
+    # These three *are* the cache key. A warm-up that read with a different key would do the whole
+    # scan and then not be found by the plan, which is worse than not warming at all.
+    assert called_path == str(reel)
+    assert size == stat.st_size
+    assert modified_ns == stat.st_mtime_ns

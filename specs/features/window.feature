@@ -38,3 +38,36 @@ Feature: The run's progress in the window
     When the log is drawn
     Then the first line is "body"
     And the last line is "source"
+
+  Scenario: the plan line is a forecast, because nothing has been cut yet
+    Given a range that will re-encode 37 frames and copy 835
+    When the plan line is drawn
+    Then it says "head patch — will re-encode 37, copy 835"
+    And it does not claim anything has already happened
+
+  Scenario: a range that can be copied whole says so as a forecast too
+    Given a range of 900 frames that will be copied untouched
+    When the plan line is drawn
+    Then it says "lossless copy — will copy all 900 frames untouched"
+    And it does not claim anything has already happened
+
+  Scenario: a range with no keyframe says the whole of it is coming
+    Given a range of 900 frames that will be re-encoded whole
+    When the plan line is drawn
+    Then it says "full re-encode — no keyframe in this range, so all 900 will be re-encoded"
+    And it does not claim anything has already happened
+
+  Scenario: lines that are a record say they are a record
+    Given a run that has ended holding 12 line(s)
+    When the progress panel is drawn
+    Then its note reads "from the last run"
+
+  Scenario: lines being written now are not labelled as a record
+    Given a run that is still going holding 12 line(s)
+    When the progress panel is drawn
+    Then it has no note
+
+  Scenario: an empty panel has nothing to label
+    Given a run that has ended holding 0 line(s)
+    When the progress panel is drawn
+    Then it has no note

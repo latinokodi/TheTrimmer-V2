@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { type PlanSentence, type Planned, planSentence, progressLabel } from "./planSentence";
 import { type LogLine, type RunProgress, newestFirst, remainingSeconds, stepFraction } from "./useRunLog";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -43,6 +44,12 @@ interface World {
   estimate: number | null;
   lines: readonly LogLine[];
   ordered: readonly LogLine[];
+  /** The plan a scenario is asking about, and what the plan line says about it. */
+  plan: Planned | null;
+  said: PlanSentence | null;
+  /** Whether a run is going, and what the panel says about the lines it holds. */
+  running: boolean;
+  note: string | null;
 }
 
 function blank(): World {
@@ -59,6 +66,10 @@ function blank(): World {
     estimate: null,
     lines: [],
     ordered: [],
+    plan: null,
+    said: null,
+    running: false,
+    note: null,
   };
 }
 
@@ -177,6 +188,87 @@ const STEPS: readonly (readonly [RegExp, StepFunction])[] = [
     /^the last line is "(.+)"$/,
     (world, wanted) => { expect(world.ordered[world.ordered.length - 1]?.text).toBe(wanted); },
   ],
+  [
+    /^a range that will re-encode (\d+) frames and copy (\d+)$/,
+    (world, head, body) => {
+      world.plan = {
+        mode: "headpatch",
+        frames: Number(head) + Number(body),
+        headFrames: Number(head),
+        bodyFrames: Number(body),
+      };
+    },
+  ],
+  [
+    /^a range of (\d+) frames that will be copied untouched$/,
+    (world, frames) => {
+      world.plan = { mode: "copy", frames: Number(frames), headFrames: 0, bodyFrames: Number(frames) };
+    },
+  ],
+  [
+    /^a range of (\d+) frames that will be re-encoded whole$/,
+    (world, frames) => {
+      world.plan = {
+        mode: "reencode",
+        frames: Number(frames),
+        headFrames: Number(frames),
+        bodyFrames: 0,
+      };
+    },
+  ],
+  [/^the plan line is drawn$/, (world) => { world.said = planSentence(world.plan!); }],
+  [
+    /^it says "(.+)"$/,
+    (world, wanted) => { expect(world.said?.text).toBe(wanted); },
+  ],
+  [
+    // The fault this exists for: the line appeared the moment a range was marked, and read as an
+    // account of a cut already under way.
+    /^it does not claim anything has already happened$/,
+    (world) => {
+      const text = world.said?.text ?? "";
+      expect(text).not.toMatch(/\bhas been\b/);
+      expect(text).not.toMatch(/\bis being\b/);
+      // Anything said about a re-encode is said in the future tense. Stated this way round rather
+      // than by forbidding the word, because "will be re-encoded" ends a sentence perfectly well.
+      if (text.includes("re-encoded") || text.includes("re-encode")) {
+        expect(text).toContain("will");
+      }
+    },
+  ],
+  [
+    /^a run that has ended holding (\d+) line\(s\)$/,
+    (world, count) => {
+      world.running = false;
+      world.lines = Array.from({ length: Number(count) }, (_, index) => ({
+        at: index + 1,
+        offset: index,
+        text: `line ${index}`,
+        tone: "stage" as const,
+      }));
+    },
+  ],
+  [
+    /^a run that is still going holding (\d+) line\(s\)$/,
+    (world, count) => {
+      world.running = true;
+      world.lines = Array.from({ length: Number(count) }, (_, index) => ({
+        at: index + 1,
+        offset: index,
+        text: `line ${index}`,
+        tone: "stage" as const,
+      }));
+    },
+  ],
+  [
+    /^the progress panel is drawn$/,
+    (world) => { world.note = progressLabel(world.running, world.lines.length); },
+  ],
+  [
+    /^its note reads "(.+)"$/,
+    (world, wanted) => { expect(world.note).toBe(wanted); },
+  ],
+  [/^it has no note$/, (world) => { expect(world.note).toBeNull(); }],
 ];
 
 function run(step: Step, world: World): void {

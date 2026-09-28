@@ -355,6 +355,7 @@ async def probe(request: web.Request) -> web.Response:
         return web.json_response({"error": str(failure)}, status=400)
 
     transcript = subs.find_for(path)
+    _warm_keyframes(path)
     return web.json_response({
         "media": _describe(media),
         "transcript": None if transcript is None else str(transcript),
@@ -362,6 +363,35 @@ async def probe(request: web.Request) -> web.Response:
         "startTimecode": format_timecode(0, media.rate),
         "endTimecode": format_timecode(max(0, media.frames - 1), media.rate),
     })
+
+
+def _warm_keyframes(path: Path) -> None:
+    """Start reading a source's keyframes now, rather than when the first mark is typed.
+
+    Planning needs the whole keyframe list, and on the reference master that read is the one slow
+    part: measured at 3.5 s for the first plan of a source and 0.12 s for every plan after it,
+    because the list is remembered per file. So the wait lands between typing a mark and being
+    allowed to press Trim — which looks exactly like the cut having started, and was asked about
+    as "why does the head re-encode occur before I can click Trim?".
+
+    Moved here, the same read happens while the operator is looking at the file they just loaded.
+    It is a fire-and-forget task on the same thread pool the plans use, so a plan arriving first
+    simply waits for it rather than repeating it. Failure is swallowed on purpose: this is work
+    brought forward, and a source whose keyframes cannot be listed has to fail in `plan_trim`,
+    where the operator is told why, not here where nothing was asked for.
+
+    The arguments are the ones `plan_trim` will use, taken the same way, because the cache key *is*
+    the file's identity, its size and its modification time: warming it with a different key would
+    do the whole read and then not be found.
+    """
+    async def read() -> None:
+        try:
+            stat = path.stat()
+            await asyncio.to_thread(cutter._keyframes_of, str(path), stat.st_size, stat.st_mtime_ns)
+        except Exception:  # noqa: BLE001
+            pass
+
+    _ = asyncio.get_running_loop().create_task(read())
 
 
 async def parse(request: web.Request) -> web.Response:

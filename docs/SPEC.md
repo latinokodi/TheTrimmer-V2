@@ -84,6 +84,8 @@ A cut nobody measured is a cut nobody can vouch for.
 | **R5.8** | The window is restorable, minimizable and closable, and opens maximized rather than fullscreen. | `docs/TRUTH.md §The interface claims` |
 | **R5.9** | The Name field takes a name for the segment, and the path the segment will be written to is shown beneath it. | `docs/TRUTH.md §The naming claims` |
 | **R5.10** | The Folder toggle puts the segment and its transcript inside a folder named after the segment. | `cutting.feature:a named segment can arrive in a folder of its own` |
+| **R5.11** | The plan line is written as a forecast: it appears before anything is cut, so it never states a re-encode as something that has happened. | `window.feature:the plan line is a forecast, because nothing has been cut yet`, `planSentence.test.ts` |
+| **R5.12** | Lines left in the Progress panel are labelled as a record, so output from a finished run is never read as output of one happening now. | `window.feature:lines that are a record say they are a record` |
 
 ---
 
@@ -97,6 +99,7 @@ A cut nobody measured is a cut nobody can vouch for.
 | **R6.4** | A second run downloads nothing it already has. | `scripts/check-bootstrap.ps1`: the locators find what the installers unpacked |
 | **R6.5** | The engine finds a portable build beside the application, not only one on `PATH`. | `test_plan.py::test_a_portable_ffmpeg_beside_the_application_is_found` |
 | **R6.6** | An override that is set and points at nothing is an error, not a silent fallback to another build. | `test_plan.py::test_an_override_pointing_at_nothing_is_an_error_not_a_fallback` |
+| **R6.7** | A source's keyframes are read when it is loaded, not when the first mark is typed, so the wait is never mistaken for a cut that has started. | `test_server.py::test_loading_a_source_starts_its_keyframe_read` |
 
 ---
 
@@ -126,7 +129,7 @@ A cut nobody measured is a cut nobody can vouch for.
 | Rates | §2 | `rates.feature` | `backend/tests/test_behaviour.py` | `trimmer/ffmpeg.py`, `trimmer/timecode.py` |
 | Verification | §3 | `verification.feature` | `backend/tests/test_behaviour.py` | `trimmer/verify.py` |
 | Engine API | §4 | `engine_api.feature` | `backend/tests/test_behaviour.py` | `server.py` |
-| Window | §5 | `window.feature` | `frontend/src/state/window_steps.test.ts` | `frontend/src/state/useRunLog.ts`, `frontend/src/components/ProgressLog.tsx` |
+| Window | §5 | `window.feature` | `frontend/src/state/window_steps.test.ts` | `frontend/src/state/useRunLog.ts`, `frontend/src/state/planSentence.ts`, `frontend/src/components/ProgressLog.tsx` |
 | Starting | §6 | — | `scripts/check-bootstrap.ps1` | `start.bat`, `scripts/bootstrap.ps1` |
 | Naming a segment | §7 | `cutting.feature` | `backend/tests/test_naming.py`, `backend/tests/test_server.py` | `trimmer/trim.py`, `server.py`, `frontend/src/App.tsx` |
 

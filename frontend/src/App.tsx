@@ -56,6 +56,7 @@ import {
   type PlanView,
 } from "./api";
 import { nameRow } from "./state/nameRow";
+import { planSentence, progressLabel } from "./state/planSentence";
 import { useRunLog } from "./state/useRunLog";
 /** CRF and preset are the encoder's, so they are named after it rather than invented. */
 const QUALITY = [
@@ -438,17 +439,14 @@ export function App(): JSX.Element {
     if (!ready || !planned || plan === null) {
       return null;
     }
-    if (plan.mode === "copy") {
-      return { tone: "ok", text: "lossless copy — every frame is the original" };
-    }
-    if (plan.mode === "headpatch") {
-      return {
-        tone: "warn",
-        text: `head patch — ${plan.headFrames} frame(s) re-encoded, ${plan.bodyFrames} copied`,
-      };
-    }
-    return { tone: "danger", text: "full re-encode — no keyframe inside this range" };
+    // The wording is a function with tests of its own, because the fault behind it was a matter of
+    // tense: this line is a forecast shown before anything is cut, and it used to read as an
+    // account of something already happening. See `state/planSentence.ts`.
+    return planSentence(plan);
   }, [plan, planned, ready]);
+
+  // Whether the Progress panel's lines are live output or the record of the run that just ended.
+  const progressNote = progressLabel(running, log.lines.length);
 
   const inNumber = inFrame === null ? "" : inFrame.toLocaleString();
   const outNumber = endFrame === null ? "" : (endFrame - 1).toLocaleString();
@@ -825,6 +823,13 @@ export function App(): JSX.Element {
         <header className="zone__head">
           <h2 className="zone__title">Progress</h2>
           <span className="spacer" />
+          {/*
+            The lines stay after a run ends, which is wanted — they are the record of it. What was
+            missing is any sign that they are a record rather than live output: the previous cut's
+            "head re-encoding rows 0..24" sat there while the next range was being marked, and read
+            as something happening now. Whether to say so is `progressLabel`, which has tests.
+          */}
+          {progressNote !== null ? <span className="zone__note">{progressNote}</span> : null}
           {log.lines.length > 0 ? (
             <button type="button" className="btn btn--ghost btn--small" onClick={log.clear}>
               Clear
