@@ -189,6 +189,10 @@ export const api = {
     readonly rate: number;
     readonly crf: number;
     readonly preset: string;
+    /** The segment's own name. Empty leaves the output called after its range. */
+    readonly name?: string;
+    /** Put the segment and its transcript in a folder of that name. */
+    readonly inFolder?: boolean;
   }) => send<{ plan: PlanView; output: string; transcript: string | null }>("/api/plan", input),
 
   cut: (input: {
@@ -200,6 +204,8 @@ export const api = {
     readonly preset: string;
     readonly verify: string;
     readonly output?: string;
+    readonly name?: string;
+    readonly inFolder?: boolean;
   }) => send<{ started: boolean; output: string }>("/api/cut", input),
 
   cancel: () => send<{ cancelled: boolean }>("/api/cancel", {}),

@@ -82,6 +82,13 @@ export function App(): JSX.Element {
   const [crf, setCrf] = useState(18);
   const [preset, setPreset] = useState("veryfast");
   const [verify, setVerify] = useState("standard");
+  // The segment's own name, and whether it arrives in a folder of that name. Both are empty by
+  // default, which leaves the output called after its range exactly as it always was.
+  const [segmentName, setSegmentName] = useState("");
+  const [inFolder, setInFolder] = useState(false);
+  // Where the plan says the segment will go. Shown rather than described, because the name and
+  // the folder decide it and the only way to be sure of a path is to read it back.
+  const [plannedOutput, setPlannedOutput] = useState("");
   const [plan, setPlan] = useState<PlanView | null>(null);
   const [plannedFor, setPlannedFor] = useState<string>("");
   const [outcome, setOutcome] = useState<OutcomeView | null>(null);
@@ -262,7 +269,10 @@ export function App(): JSX.Element {
    * signature is what stops a stale plan being shown as though it described the range in the
    * fields — and what stops `Trim` being pressed against one.
    */
-  const marks = inFrame !== null && endFrame !== null ? `${inFrame}-${endFrame}-${crf}-${preset}` : "";
+  const marks =
+    inFrame !== null && endFrame !== null
+      ? `${inFrame}-${endFrame}-${crf}-${preset}-${segmentName.trim()}-${inFolder}`
+      : "";
   const planned = plan !== null && marks !== "" && plannedFor === marks;
 
   // ---- the plan, as the marks are typed ----------------------------------------------------
@@ -276,23 +286,37 @@ export function App(): JSX.Element {
     planRef.current = ticket;
     const timer = window.setTimeout(() => {
       void api
-        .plan({ source: media.path, inFrame, endFrame, rate, crf, preset })
+        .plan({
+          source: media.path,
+          inFrame,
+          endFrame,
+          rate,
+          crf,
+          preset,
+          name: segmentName.trim(),
+          inFolder,
+        })
         .then((answer) => {
           // Only the newest answer is kept: a stale plan describing marks that have moved on
           // is worse than no plan, because it looks current.
           if (planRef.current === ticket) {
             setPlan(answer.plan);
-            setPlannedFor(`${inFrame}-${endFrame}-${crf}-${preset}`);
+            setPlannedOutput(answer.output);
+            setPlannedFor(`${inFrame}-${endFrame}-${crf}-${preset}-${segmentName.trim()}-${inFolder}`);
           }
         })
         .catch(() => {
           if (planRef.current === ticket) {
             setPlan(null);
+            // A name the filesystem would refuse is refused by the engine, and the sentence it
+            // sends back belongs next to the field that was typed into. The path is cleared so
+            // nothing stale is shown as though it were the destination.
+            setPlannedOutput("");
           }
         });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [crf, endFrame, inFrame, media, preset, rate, ready]);
+  }, [crf, endFrame, inFrame, inFolder, media, preset, rate, ready, segmentName]);
 
   // ---- the cut ------------------------------------------------------------------------------
   const trim = useCallback(async () => {
@@ -302,13 +326,23 @@ export function App(): JSX.Element {
     setBusy("starting");
     setFailure(null);
     try {
-      await api.cut({ source: media.path, inFrame, endFrame, rate, crf, preset, verify });
+      await api.cut({
+        source: media.path,
+        inFrame,
+        endFrame,
+        rate,
+        crf,
+        preset,
+        verify,
+        name: segmentName.trim(),
+        inFolder,
+      });
     } catch (caught) {
       setFailure(caught instanceof ApiFailure ? caught.message : String(caught));
     } finally {
       setBusy(null);
     }
-  }, [crf, endFrame, inFrame, media, preset, rate, ready, verify]);
+  }, [crf, endFrame, inFrame, inFolder, media, preset, rate, ready, segmentName, verify]);
 
   const toggleFullscreen = useCallback(async () => {
     const value = await window.electronAPI?.toggleFullscreen?.();
@@ -538,6 +572,53 @@ export function App(): JSX.Element {
               <h2 className="zone__title">Options</h2>
             </header>
             <div className="zone__body zone__body--tight">
+              <div className="field-row">
+                <label className="field-row__label" htmlFor="trim-name">
+                  Name
+                </label>
+                <div className="field-row__value field-row__value--stack">
+                  <input
+                    id="trim-name"
+                    type="text"
+                    value={segmentName}
+                    placeholder="named for its range"
+                    spellCheck={false}
+                    autoComplete="off"
+                    onChange={(event) => setSegmentName(event.target.value)}
+                  />
+                  {/* The path is read back from the engine rather than rebuilt here, so what is
+                      shown is what will be written -- including a name the engine refuses, which
+                      is why this line disappears rather than lying when the plan fails. */}
+                  <span className="field-row__note" title={plannedOutput || undefined}>
+                    {segmentName.trim() === ""
+                      ? "leave empty to name it for its range, as before"
+                      : plannedOutput === ""
+                        ? "that name cannot be used — see the reason below"
+                        : plannedOutput}
+                  </span>
+                </div>
+              </div>
+              <div className="field-row">
+                <label className="field-row__label" htmlFor="trim-folder">
+                  Folder
+                </label>
+                <div className="field-row__value">
+                  <label className="field-row__toggle">
+                    <input
+                      id="trim-folder"
+                      type="checkbox"
+                      checked={inFolder}
+                      disabled={segmentName.trim() === ""}
+                      onChange={(event) => setInFolder(event.target.checked)}
+                    />
+                    <span>
+                      {segmentName.trim() === ""
+                        ? "give the segment a name to put it in a folder"
+                        : `put it in a folder named “${segmentName.trim()}”`}
+                    </span>
+                  </label>
+                </div>
+              </div>
               <div className="field-row">
                 <label className="field-row__label" htmlFor="trim-quality">
                   Quality

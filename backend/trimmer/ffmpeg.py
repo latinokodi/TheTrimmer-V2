@@ -263,18 +263,37 @@ class FFmpegError(RuntimeError):
 def tool(name: str) -> str:
     """Locate ``ffmpeg``/``ffprobe``, honouring an override for a bundled build.
 
-    ``THE_TRIMMER_FFMPEG`` and ``THE_TRIMMER_FFPROBE`` win if set, which is how a
-    portable copy of ffmpeg sitting next to the app gets picked up.
+    Three places, in order, and the order is the point:
+
+    1. ``THE_TRIMMER_FFMPEG`` / ``THE_TRIMMER_FFPROBE``, which is what ``start.bat`` sets to the
+       binaries it has just verified. This wins so that the application uses exactly the build
+       that was checked rather than whichever copy happens to come first in ``PATH``.
+    2. ``.tools/ffmpeg/bin`` beside the application, where ``start.bat`` unpacks a portable build
+       when the machine has none. This is the second rather than the first so that an override
+       still overrides it, and it is here at all so the engine works when it is started directly
+       -- from the packaged app, or from a developer's own command line -- and not only through
+       the script that provisioned it.
+    3. ``PATH``, which is every machine that already had ffmpeg.
     """
     override = os.environ.get(f"THE_TRIMMER_{name.upper()}")
     if override:
         if Path(override).exists():
             return override
         raise FFmpegError(f"THE_TRIMMER_{name.upper()} points at {override}, which is not there")
+
+    # `backend/trimmer/ffmpeg.py` -> the application's own folder. Both layouts matter: the
+    # project as it is checked out, and the packaged app, where the engine sits beside `resources`.
+    here = Path(__file__).resolve()
+    for root in (here.parents[2], here.parents[1]):
+        local = root / ".tools" / "ffmpeg" / "bin" / f"{name}.exe"
+        if local.exists():
+            return str(local)
+
     found = shutil.which(name)
     if not found:
         raise FFmpegError(
-            f"{name} was not found on PATH. Install it (winget install Gyan.FFmpeg) or set "
+            f"{name} was not found on PATH, and there is no portable copy beside the "
+            f"application. Run start.bat, which installs one, or set "
             f"THE_TRIMMER_{name.upper()} to its full path."
         )
     return found

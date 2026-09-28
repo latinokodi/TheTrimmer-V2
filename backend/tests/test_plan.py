@@ -268,6 +268,219 @@ def test_the_default_output_name_never_contains_a_character_windows_refuses():
 
 
 # ---------------------------------------------------------------------------------------
+# Naming a segment
+# ---------------------------------------------------------------------------------------
+
+def test_a_named_segment_is_called_after_its_name():
+    named = cutter.output_for(SOURCE, 100, 199, Fraction(25), name="Interview wide")
+    assert named.name == "Interview wide.mp4", "the name is used as typed"
+    assert named.parent == SOURCE.parent, "and it lands beside its source"
+
+
+def test_a_named_segment_keeps_the_sources_own_container():
+    # A ProRes source lives in a .mov, and a .mov is what the pieces are muxed into, so the
+    # extension follows the source rather than being forced to .mp4.
+    source = SOURCE.with_suffix(".mov")
+    named = cutter.output_for(source, 100, 199, Fraction(25), name="Interview wide")
+    assert named.name == "Interview wide.mov"
+
+
+def test_no_name_still_names_the_segment_for_its_range():
+    # The behaviour that existed before naming, unchanged for anyone who does not type a name.
+    plain = cutter.output_for(SOURCE, 100, 199, Fraction(25))
+    assert plain == cutter.default_output(SOURCE, 100, 199, Fraction(25))
+    for blank in ("", "   "):
+        assert cutter.output_for(SOURCE, 100, 199, Fraction(25), name=blank) == plain
+
+
+def test_a_named_segment_can_arrive_in_a_folder_of_its_own():
+    named = cutter.output_for(SOURCE, 100, 199, Fraction(25), name="Interview wide",
+                              in_folder=True)
+    assert named.name == "Interview wide.mp4"
+    assert named.parent.name == "Interview wide", "the folder is named after the segment"
+    assert named.parent.parent == SOURCE.parent, "and it sits beside the source"
+
+
+def test_the_transcript_is_named_after_the_segment_and_lands_with_it():
+    """The caption file has to follow the segment, name and folder alike.
+
+    It is written as ``spec.output.with_suffix(".srt")``, so this is the whole of that guarantee:
+    if the output is right, the transcript is right, in a plain folder and in a named one. Checked
+    here rather than only through a cut, because a transcript that lands somewhere else is only
+    noticed after the work is done.
+    """
+    for in_folder in (False, True):
+        named = cutter.output_for(SOURCE, 100, 199, Fraction(25), name="Interview wide",
+                                  in_folder=in_folder)
+        captions = named.with_suffix(".srt")
+        assert captions.stem == named.stem, "the transcript does not share the segment's name"
+        assert captions.parent == named.parent, "the transcript is not beside the segment"
+        assert captions.name == "Interview wide.srt"
+
+
+def test_a_name_that_windows_would_refuse_is_refused_here_with_the_reason():
+    """A name is not silently repaired. Trimming `Take 1/2` to `Take 12` writes a file that
+    exists under a name nobody chose and nobody will look for, which is worse than a refusal."""
+    for typed, because in (
+        ("", "empty"),
+        ("   ", "only spaces"),
+        ("Take 1/2", "a folder separator"),
+        ("Take 1\\2", "a Windows separator"),
+        ("Take: 1", "a colon"),
+        ("Take 1?", "a question mark"),
+        ("Take 1.", "a trailing dot"),
+        ("..", "a parent reference"),
+        (".", "the folder itself"),
+        ("CON", "a reserved device name"),
+        ("con.mp4", "a reserved name with an extension"),
+        ("x" * 101, "longer than the limit"),
+    ):
+        with pytest.raises(cutter.TrimError) as refused:
+            cutter.clean_segment_name(typed)
+        assert str(refused.value), f"{because} was refused without a reason"
+
+
+def test_a_blank_name_means_no_name_rather_than_a_refusal():
+    """The distinction the field relies on: empty is not an error, it is the default.
+
+    An empty box is what the window starts with and what a person gets back to by clearing it, so
+    it has to mean "name it for its range" rather than "you did something wrong".
+    """
+    plain = cutter.default_output(SOURCE, 100, 199, Fraction(25))
+    for blank in ("", "   ", None):
+        assert cutter.output_for(SOURCE, 100, 199, Fraction(25), name=blank) == plain
+
+
+def test_a_refused_name_is_refused_through_the_output_path_too(monkeypatch, tmp_path):
+    """And the refusal reaches the caller that builds the path, not only the validator."""
+    with pytest.raises(cutter.TrimError) as refused:
+        cutter.output_for(SOURCE, 100, 199, Fraction(25), name="Take 1/2", in_folder=True)
+    assert "/" in str(refused.value)
+    # Nothing may be created for a name that was refused: the folder is a consequence of a name
+    # that passed, never of one that did not.
+    assert not (SOURCE.parent / "Take 1").exists()
+
+
+def test_a_refusal_names_the_character_it_objected_to():
+    # "That name cannot be used" is not actionable. The character, or the rule, is.
+    with pytest.raises(cutter.TrimError) as refused:
+        cutter.clean_segment_name("Take 1/2")
+    assert "/" in str(refused.value)
+
+    with pytest.raises(cutter.TrimError) as refused:
+        cutter.clean_segment_name("CON")
+    assert "CON" in str(refused.value)
+
+
+def test_a_name_that_is_merely_unusual_is_accepted():
+    """Refusing what the filesystem accepts would be its own bug: punctuation, accents, spaces,
+    dots inside the name and a non-Latin script all have to work."""
+    for typed in ("Take 1.2", "Émilie — finale", "第 3 段", "a b  c", "mix_v2-final", "1" * 100):
+        assert cutter.clean_segment_name(typed) == typed
+
+
+def test_space_around_a_name_is_trimmed_rather_than_refused():
+    """A trailing space is a slip, not a mistake worth stopping for.
+
+    Windows drops it silently, so refusing it would be pedantry about something the filesystem
+    does not care about -- and `Take 1 ` becoming `Take 1` is what the person meant. A trailing
+    *dot* is refused instead, because Windows also drops that, so accepting it would write a file
+    whose name is not the one that was asked for.
+    """
+    assert cutter.clean_segment_name("Take 1 ") == "Take 1"
+    assert cutter.clean_segment_name("  Take 1  ") == "Take 1"
+    assert cutter.output_for(SOURCE, 100, 199, Fraction(25), name=" Take 1 ").name == "Take 1.mp4"
+
+
+# ---------------------------------------------------------------------------------------
+# Locating ffmpeg
+# ---------------------------------------------------------------------------------------
+
+def _portable(root: Path, names=("ffmpeg", "ffprobe")) -> Path:
+    """A fake application folder with a portable build beside it, as start.bat leaves one."""
+    module = root / "backend" / "trimmer" / "ffmpeg.py"
+    module.parent.mkdir(parents=True, exist_ok=True)
+    module.write_text("", encoding="utf-8")
+    binaries = root / ".tools" / "ffmpeg" / "bin"
+    binaries.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        (binaries / f"{name}.exe").write_bytes(b"")
+    return binaries
+
+
+def test_a_portable_ffmpeg_beside_the_application_is_found(monkeypatch, tmp_path):
+    """The engine has to work when it is started directly, not only through start.bat.
+
+    start.bat puts a portable build in `.tools` on a machine that had no ffmpeg, and points the
+    environment at it. The packaged application has no start.bat, so the engine looks there
+    itself; without this, an app that installed everything correctly would report that ffmpeg was
+    not found the moment it was launched any other way.
+    """
+    from trimmer import ffmpeg
+
+    root = tmp_path / "app"
+    binaries = _portable(root)
+    monkeypatch.setattr(ffmpeg, "__file__", str(root / "backend" / "trimmer" / "ffmpeg.py"))
+    # Both names, not just the one being asked about. start.bat exports both before it runs these
+    # tests, so a test that clears only `THE_TRIMMER_FFMPEG` passes in a developer's shell and
+    # fails under the launcher it is supposed to be checking.
+    monkeypatch.delenv("THE_TRIMMER_FFMPEG", raising=False)
+    monkeypatch.delenv("THE_TRIMMER_FFPROBE", raising=False)
+
+    assert ffmpeg.tool("ffmpeg") == str(binaries / "ffmpeg.exe")
+    assert ffmpeg.tool("ffprobe") == str(binaries / "ffprobe.exe")
+
+
+def test_the_environment_override_still_wins_over_the_portable_copy(monkeypatch, tmp_path):
+    """So that what start.bat verified is what gets used, even with a copy lying beside it."""
+    from trimmer import ffmpeg
+
+    root = tmp_path / "app"
+    _portable(root)
+    chosen = tmp_path / "elsewhere" / "ffmpeg.exe"
+    chosen.parent.mkdir(parents=True, exist_ok=True)
+    chosen.write_bytes(b"")
+
+    monkeypatch.setattr(ffmpeg, "__file__", str(root / "backend" / "trimmer" / "ffmpeg.py"))
+    monkeypatch.setenv("THE_TRIMMER_FFMPEG", str(chosen))
+    assert ffmpeg.tool("ffmpeg") == str(chosen)
+
+
+def test_an_override_pointing_at_nothing_is_an_error_not_a_fallback(monkeypatch, tmp_path):
+    """A path that was set and is gone must be said out loud.
+
+    Falling back to whatever is on PATH would run a different build than the one somebody chose,
+    which is how a cut comes out wrong for a reason nothing in the log explains.
+    """
+    from trimmer import ffmpeg
+
+    root = tmp_path / "app"
+    _portable(root)
+    monkeypatch.setattr(ffmpeg, "__file__", str(root / "backend" / "trimmer" / "ffmpeg.py"))
+    monkeypatch.setenv("THE_TRIMMER_FFMPEG", str(tmp_path / "gone" / "ffmpeg.exe"))
+
+    with pytest.raises(ffmpeg.FFmpegError) as refused:
+        ffmpeg.tool("ffmpeg")
+    assert "gone" in str(refused.value)
+
+
+def test_nothing_anywhere_says_so_and_says_what_to_do(monkeypatch, tmp_path):
+    """The last resort: the message names start.bat, because that is the thing that fixes it."""
+    from trimmer import ffmpeg
+
+    root = tmp_path / "app"
+    (root / "backend" / "trimmer").mkdir(parents=True, exist_ok=True)
+    (root / "backend" / "trimmer" / "ffmpeg.py").write_text("", encoding="utf-8")
+    monkeypatch.setattr(ffmpeg, "__file__", str(root / "backend" / "trimmer" / "ffmpeg.py"))
+    monkeypatch.delenv("THE_TRIMMER_FFMPEG", raising=False)
+    monkeypatch.setattr(ffmpeg.shutil, "which", lambda name: None)
+
+    with pytest.raises(ffmpeg.FFmpegError) as refused:
+        ffmpeg.tool("ffmpeg")
+    assert "start.bat" in str(refused.value)
+
+
+# ---------------------------------------------------------------------------------------
 # The body copy's contract with the rest of the trim
 # ---------------------------------------------------------------------------------------
 

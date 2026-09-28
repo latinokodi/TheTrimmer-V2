@@ -507,6 +507,13 @@ def trim(
     if spec.output.exists() and not spec.overwrite:
         raise TrimError(f"{spec.output.name} already exists (overwrite is off)")
 
+    # A segment asked for in a folder of its own needs that folder to exist before anything is
+    # written, and this is the only place that creates a directory: the path comes from
+    # `output_for`, which only ever builds it out of the source's own folder and a name already
+    # checked for separators, so it cannot be pointed somewhere else.
+    if not spec.output.parent.exists():
+        spec.output.parent.mkdir(parents=True, exist_ok=True)
+
     commands: list[list[str]] = []
     work = Path(keep_temp) if keep_temp else Path(tempfile.mkdtemp(prefix="thetrimmer-"))
     work.mkdir(parents=True, exist_ok=True)
@@ -608,6 +615,13 @@ def cut_subtitles(spec: TrimSpec, media: MediaInfo, *, log=print) -> RetimeResul
     """
     assert spec.subtitles is not None
     output_srt = spec.output.with_suffix(".srt")
+    # The captions land in the same folder as the segment, and when a folder was asked for that
+    # folder is this call's to make. `trim` creates it too, but this function decides where the
+    # file goes and so it is the one that has to be able to write there -- a named segment in a
+    # folder of its own would otherwise lose its transcript to a missing directory, after the
+    # picture had already been cut.
+    if not output_srt.parent.exists():
+        output_srt.parent.mkdir(parents=True, exist_ok=True)
     result, written = subs.retime_file(
         spec.subtitles,
         output_srt,
@@ -1018,3 +1032,93 @@ def default_output(source: Path, in_frame: int, out_frame: int, rate) -> Path:
     start = format_timecode(in_frame, rate).replace(":", ".").replace(";", ".")
     end = format_timecode(out_frame, rate).replace(":", ".").replace(";", ".")
     return source.with_name(f"{source.stem} {start}-{end}{source.suffix}")
+
+
+#: Characters Windows will not accept in a file name, and the separators that would let a typed
+#: name escape the folder it is supposed to land in.
+_REFUSED_IN_NAME = '<>:"/\\|?*'
+
+#: Names Windows refuses outright, whatever the extension. A segment called `CON` is not a file
+#: that can be created on the machine this product runs on, and the failure would come from deep
+#: inside ffmpeg rather than from the field that was typed into.
+_RESERVED_NAMES = frozenset(
+    ["CON", "PRN", "AUX", "NUL"]
+    + [f"COM{number}" for number in "123456789"]
+    + [f"LPT{number}" for number in "123456789"]
+)
+
+#: Long enough for any real name, short enough to leave room for the source's own folder and the
+#: extension inside Windows' 260-character path limit.
+NAME_LIMIT = 100
+
+
+def clean_segment_name(name: str) -> str:
+    """The typed name, or a refusal saying exactly what is wrong with it.
+
+    A name the person typed is not silently repaired. Trimming ``Take 1/2`` down to ``Take 12``
+    produces a file that exists, under a name nobody chose and nobody will look for -- so the
+    character is named and the request refused instead. What is rejected here is only what the
+    filesystem would reject anyway, one step earlier and with a sentence attached.
+    """
+    if name is None:
+        raise TrimError("no name was given")
+    cleaned = name.strip()
+    if not cleaned:
+        raise TrimError("the segment name is empty")
+
+    if len(cleaned) > NAME_LIMIT:
+        raise TrimError(
+            f"the segment name is {len(cleaned)} characters; the limit is {NAME_LIMIT}, so the "
+            "file can be written inside Windows' path limit"
+        )
+
+    refused = sorted({character for character in cleaned if character in _REFUSED_IN_NAME})
+    if refused:
+        listed = " ".join(refused)
+        raise TrimError(
+            f"the segment name contains {listed}, which Windows does not allow in a file name"
+        )
+
+    control = [character for character in cleaned if ord(character) < 32]
+    if control:
+        raise TrimError("the segment name contains a control character")
+
+    # Windows silently strips a trailing dot or space, so `Take 1.` becomes `Take 1` and the file
+    # is not where the name says it is.
+    if cleaned[-1] in ". ":
+        raise TrimError("the segment name ends with a dot or a space, which Windows removes")
+
+    # `.` and `..` mean the folder itself and its parent, and would put the segment somewhere
+    # other than beside its source.
+    if cleaned in (".", ".."):
+        raise TrimError("the segment name cannot be a folder reference")
+
+    if cleaned.split(".")[0].upper() in _RESERVED_NAMES:
+        raise TrimError(
+            f"Windows reserves the name {cleaned.split('.')[0].upper()} and will not create it"
+        )
+
+    return cleaned
+
+
+def output_for(source: Path, in_frame: int, out_frame: int, rate, name: str | None = None,
+               in_folder: bool = False) -> Path:
+    """Where a segment goes: the range name, or the name that was typed for it.
+
+    With no name this is exactly :func:`default_output` and nothing about the behaviour changes.
+    With a name the segment is called after it, in the source's own folder beside the source --
+    or, when a folder was asked for, inside a folder of that name, so that the segment and its
+    transcript arrive as one thing rather than as two files loose among the footage.
+
+    ``out_frame`` is the last frame kept, matching :func:`default_output`.
+
+    The transcript needs no handling here: it is written as ``spec.output.with_suffix(".srt")``,
+    so naming the segment names the captions with it, in the same folder.
+    """
+    if name is None or not name.strip():
+        return default_output(source, in_frame, out_frame, rate)
+
+    cleaned = clean_segment_name(name)
+    if in_folder:
+        return source.with_name(cleaned) / f"{cleaned}{source.suffix}"
+    return source.with_name(f"{cleaned}{source.suffix}")

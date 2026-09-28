@@ -82,6 +82,35 @@ A cut nobody measured is a cut nobody can vouch for.
 | **R5.6** | No label is ever drawn over the value beside it, and a file path is not truncated to nothing. | Measured in the running window: the label's right edge against the value's left edge, for the real markup with a path as long as the panel shows. See `docs/TRUTH.md §The interface claims` |
 | **R5.7** | Every control is on screen without scrolling, and the frame never scrolls. | `docs/TRUTH.md §The interface claims` |
 | **R5.8** | The window is restorable, minimizable and closable, and opens maximized rather than fullscreen. | `docs/TRUTH.md §The interface claims` |
+| **R5.9** | The Name field takes a name for the segment, and the path the segment will be written to is shown beneath it. | `docs/TRUTH.md §The naming claims` |
+| **R5.10** | The Folder toggle puts the segment and its transcript inside a folder named after the segment. | `cutting.feature:a named segment can arrive in a folder of its own` |
+
+---
+
+## 6. Starting, and the dependencies
+
+| Id | Requirement | Verified by |
+|---|---|---|
+| **R6.1** | Double-clicking `start.bat` on a Windows PC with nothing installed results in the window, with no administrator and no step left to the person. | `scripts/check-bootstrap.ps1` installers: a Node and an ffmpeg are downloaded, unpacked, run, and found again on a second run |
+| **R6.2** | A dependency is used when the machine has a usable one; installed only when it does not. | `scripts/check-bootstrap.ps1` locators: a Python below 3.10, a Python without `venv`, the Microsoft Store stub, a Node below 18 and an ffmpeg without `ffprobe` are each refused |
+| **R6.3** | Nothing is installed outside the project's own folder and `%LOCALAPPDATA%`. | No administrator is requested: the Python installer runs with `InstallAllUsers=0`, and Node and ffmpeg are archives unpacked into `.tools` |
+| **R6.4** | A second run downloads nothing it already has. | `scripts/check-bootstrap.ps1`: the locators find what the installers unpacked |
+| **R6.5** | The engine finds a portable build beside the application, not only one on `PATH`. | `test_plan.py::test_a_portable_ffmpeg_beside_the_application_is_found` |
+| **R6.6** | An override that is set and points at nothing is an error, not a silent fallback to another build. | `test_plan.py::test_an_override_pointing_at_nothing_is_an_error_not_a_fallback` |
+
+---
+
+## 7. Naming a segment
+
+| Id | Requirement | Verified by |
+|---|---|---|
+| **R7.1** | With no name given, the segment is named for the range it holds, exactly as before. | `test_plan.py::test_no_name_still_names_the_segment_for_its_range` |
+| **R7.2** | A name that is given becomes the segment's file name, in the source's own folder and container. | `cutting.feature:a segment is named after what the operator calls it` |
+| **R7.3** | The transcript carries the segment's name and sits in the segment's folder. | `test_naming.py:test_the_transcript_is_named_after_the_segment_and_lands_with_it` |
+| **R7.4** | The folder toggle puts both in a folder named after the segment, and the folder is created. | `test_naming.py:test_a_named_segment_in_a_folder_gets_its_captions_there` |
+| **R7.5** | A name the filesystem would refuse is refused before the source is read, and the reason names what was wrong. | `test_server.py:test_a_name_windows_refuses_is_refused_before_anything_is_read` |
+| **R7.6** | A name that is merely unusual — punctuation, accents, dots inside it, a non-Latin script — is accepted. | `test_plan.py::test_a_name_that_is_merely_unusual_is_accepted` |
+| **R7.7** | Nothing is created for a name that was refused. | `test_naming.py:test_captions_are_not_written_for_a_name_that_was_refused` |
 
 ---
 
@@ -94,6 +123,8 @@ A cut nobody measured is a cut nobody can vouch for.
 | Verification | §3 | `verification.feature` | `backend/tests/test_behaviour.py` | `trimmer/verify.py` |
 | Engine API | §4 | `engine_api.feature` | `backend/tests/test_behaviour.py` | `server.py` |
 | Window | §5 | `window.feature` | `frontend/src/state/window_steps.test.ts` | `frontend/src/state/useRunLog.ts`, `frontend/src/components/ProgressLog.tsx` |
+| Starting | §6 | — | `scripts/check-bootstrap.ps1` | `start.bat`, `scripts/bootstrap.ps1` |
+| Naming a segment | §7 | `cutting.feature` | `backend/tests/test_naming.py`, `backend/tests/test_server.py` | `trimmer/trim.py`, `server.py`, `frontend/src/App.tsx` |
 
 Requirements with no scenario are verified by the audit in `docs/TRUTH.md`, which pairs every
 claim the product makes about itself with the mechanism that decides it. Where a requirement

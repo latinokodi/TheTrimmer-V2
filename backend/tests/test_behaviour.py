@@ -219,6 +219,88 @@ def name_the_output(world: dict, first: int, last: int, rate: int) -> None:
     world["name"] = cutter.default_output(SOURCE, first, last, Fraction(rate))
 
 
+# ------------------------------------------------------------------------------------------------
+#  Naming a segment
+# ------------------------------------------------------------------------------------------------
+
+#  Frames 100 to 299 at 25 fps, so the marks are 4.0s to 12.0s and the range name is a known
+#  string. Only the paths are built here; nothing is written, which is why a scenario about naming
+#  needs no media.
+SEGMENT_IN, SEGMENT_OUT, SEGMENT_RATE = 100, 299, Fraction(25)
+
+
+@when(parsers.parse('I name the segment "{name}"'))
+def name_the_segment(world: dict, name: str) -> None:
+    """Records either the path or the refusal, so a scenario can be about either.
+
+    A step that raised would end the scenario at the `When`, and the assertion that belongs in a
+    `Then` would never be read. So a refusal is caught and kept, and the `Then` says which of the
+    two it expected.
+    """
+    try:
+        world["segment"] = cutter.output_for(SOURCE, SEGMENT_IN, SEGMENT_OUT, SEGMENT_RATE, name=name)
+        world["refusal"] = None
+    except cutter.TrimError as refused:
+        world["segment"] = None
+        world["refusal"] = str(refused)
+
+
+@when(parsers.parse('I name the segment "{name}" and ask for a folder'))
+def name_the_segment_in_a_folder(world: dict, name: str) -> None:
+    world["segment"] = cutter.output_for(SOURCE, SEGMENT_IN, SEGMENT_OUT, SEGMENT_RATE,
+                                         name=name, in_folder=True)
+    world["refusal"] = None
+
+
+@then(parsers.parse('the segment is called "{name}"'))
+def segment_is_called(world: dict, name: str) -> None:
+    assert world["segment"] is not None, "the name was refused and should not have been"
+    assert world["segment"].name == name
+
+
+@then("the segment sits beside its source")
+def segment_is_beside_its_source(world: dict) -> None:
+    assert world["segment"].parent == SOURCE.parent
+
+
+@then(parsers.parse('the transcript is called "{name}"'))
+def transcript_is_called(world: dict, name: str) -> None:
+    # The transcript is written as `output.with_suffix(".srt")`, so this is the relationship and
+    # not a second naming rule that could drift away from the first.
+    assert world["segment"].with_suffix(".srt").name == name
+
+
+@then("the transcript sits beside the segment")
+def transcript_is_beside_the_segment(world: dict) -> None:
+    assert world["segment"].with_suffix(".srt").parent == world["segment"].parent
+
+
+@then(parsers.parse('the segment and its transcript are inside a folder named "{name}"'))
+def both_are_in_a_folder(world: dict, name: str) -> None:
+    segment = world["segment"]
+    transcript = segment.with_suffix(".srt")
+    assert segment.parent.name == name, f"the segment is in {segment.parent.name}"
+    assert transcript.parent == segment.parent, "the transcript is not in the folder"
+    assert transcript.name == f"{name}.srt"
+
+
+@then("that folder sits beside the source")
+def the_folder_is_beside_the_source(world: dict) -> None:
+    assert world["segment"].parent.parent == SOURCE.parent
+
+
+@then("the name is refused")
+def the_name_is_refused(world: dict) -> None:
+    assert world["refusal"] is not None, "the name was accepted and should not have been"
+    assert world["segment"] is None
+
+
+@then("the reason names the character that was objected to")
+def the_reason_names_the_character(world: dict) -> None:
+    # A refusal that does not say which character is a refusal the operator cannot act on.
+    assert ":" in world["refusal"], world["refusal"]
+
+
 @when("I convert its last frame to a time")
 def convert_last_frame(world: dict) -> None:
     media = world["media"]

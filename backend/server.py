@@ -389,9 +389,17 @@ def _spec_from(body: dict[str, Any]) -> cutter.TrimSpec:
     source = Path(body["source"])
     in_frame = int(body["inFrame"])
     end_frame = int(body["endFrame"])
-    output = Path(body["output"]) if body.get("output") else cutter.default_output(
-        source, in_frame, end_frame - 1, float(body.get("rate", 25))
-    )
+    rate = float(body.get("rate", 25))
+    # An explicit path wins, because that is what the API has always accepted and what the tests
+    # pass. Otherwise the name decides: the typed one when there is one, and the range name when
+    # there is not -- which is what the output has been called since the beginning.
+    if body.get("output"):
+        output = Path(body["output"])
+    else:
+        output = cutter.output_for(
+            source, in_frame, end_frame - 1, rate,
+            name=body.get("name"), in_folder=bool(body.get("inFolder")),
+        )
     transcript = subs.find_for(source)
     return cutter.TrimSpec(
         source=source,

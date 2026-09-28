@@ -350,3 +350,68 @@ the source, and comparing where the sound landed against where the picture lande
 
 There is no offset to fix. A declared stream start time is not a synchronisation measurement; a
 seek, an encode, or a container's edit list each move it without moving a single sample of audio.
+
+## A segment's name is not a second naming rule
+
+A name that is typed has to reach three things: the segment, the caption file, and the folder they
+may be asked to arrive in. The temptation is to give each one its own rule — replace the stem for
+the video, replace the suffix for the captions, make a folder and join the paths — and that is
+three chances for the three to disagree. It is also exactly how a caption file comes out called
+after the source: the video path is rebuilt correctly, and the `.srt` is written by a different pass
+from the source's own name because nobody told it otherwise.
+
+**Decision.** There is one function, `output_for`, and one rule: the transcript is
+`output.with_suffix(".srt")`. Naming the segment names the captions because the captions have never
+had a name of their own. The folder toggle changes the output's parent, and that single change moves
+both files, because both are derived from the same path.
+
+The rule is checked as a relationship rather than as two expectations. `test_naming.py` writes real
+subtitle files and reads them back, and asserts that the caption `stem` equals the segment `stem` and
+the caption `parent` equals the segment `parent` — in a plain folder and in a named one. A test that
+asserted two literal paths would pass while the relationship was broken in the third case nobody
+thought of.
+
+**A name Windows would refuse is refused, not repaired.** Trimming `Take 1/2` to `Take 12` produces
+a file that exists, under a name nobody chose and nobody will look for — and the person is not
+looking for it, because they typed something else. So the character is named and the request
+refused. A trailing *space* is trimmed instead, because Windows drops it anyway and `Take 1 ` is a
+slip rather than a different name; a trailing *dot* is refused, because Windows also drops that, and
+accepting it would write a file whose name is not the one that was asked for. That asymmetry is
+deliberate and is the only subtle thing in the feature.
+
+The refusal happens in `_spec_from`, before the source is probed: a person who mistyped a colon
+should not wait for an 11 GB master to be read to be told about the colon.
+
+## Provisioning is a script, and `start.bat` is a launcher
+
+The first version of `start.bat` did the work itself, and it did the one thing that makes a start
+script useless on a machine nobody has seen: it checked for Python and Node, and when they were
+missing it printed a link and exited. It also never checked for ffmpeg at all, which the engine
+shells out to for every probe and every encode.
+
+**Decision.** The work moves to `scripts/bootstrap.ps1`, and `start.bat` becomes a launcher that
+starts PowerShell with `-ExecutionPolicy Bypass`. Batch cannot download over TLS, cannot unpack an
+archive, and cannot compare version numbers — three things this job is made of. PowerShell 5.1 is
+part of every supported Windows, so requiring it costs nothing; requiring PowerShell 7 would have
+repeated the original mistake in a new costume.
+
+Four things are looked for and installed only when absent: Python 3.10+ (winget, else the official
+installer per-user), Node 18+ (winget, else the official archive unpacked into `.tools\node`),
+ffmpeg and ffprobe (a portable build unpacked into `.tools\ffmpeg\bin`), and then the project's own
+packages. Nothing needs an administrator and nothing is written outside this folder and
+`%LOCALAPPDATA%`.
+
+Two details are worth more than they look. A running process never observes a `PATH` change made
+while it runs, so everything installed here is located *by path* afterwards rather than by name —
+which is also why the engine reads `THE_TRIMMER_FFMPEG` before it reads `PATH`. And the installers
+report the binary they unpacked rather than asking the locator about it: the locator is also the
+function a caller turns to when it has found *nothing*, so an installer reporting through it can
+answer "nothing" about a job it completed perfectly. That is not hypothetical — it made the script
+fetch a second 190 MB ffmpeg archive for a tool it had already installed.
+
+The script is dot-sourceable and `scripts/check-bootstrap.ps1` uses that: it replaces the locators
+with stubs that report nothing found — the state a clean PC is in — and calls the installers for
+real, then puts the locators back and requires them to find what was installed. It checks that the
+unpacked ffmpeg has every encoder this engine asks for, because a build missing `libx264` or the
+concat demuxer fails on a real cut rather than at startup, and it carries the licences with the
+binaries. Every one of those checks has already caught a real defect in this file.

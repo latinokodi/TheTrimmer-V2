@@ -71,6 +71,13 @@ frontend/.vite/
 *.tsbuildinfo
 .eslintcache
 
+# --- The tools start.bat installs when a machine has none --------------------------------------
+#  A portable Node and ffmpeg, and the archives they came from: about a quarter of a gigabyte, put
+#  there by `scripts/bootstrap.ps1` for a machine that had neither. Committing it would put
+#  somebody else's platform-specific binaries in the history for no gain; running start.bat again
+#  reproduces all of it, which is the whole point of that file.
+.tools/
+
 # --- Packaging output --------------------------------------------------------------------------
 #  `electron-builder` writes here -- `build.directories.output` in package.json -- for the `--dir`
 #  form and the installer alike: the unpacked app, the installer, its blockmap and the channel

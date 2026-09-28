@@ -9,19 +9,67 @@ Windows desktop, offline, no account.
 
 ## Quick start
 
-Double-click **`start.bat`**. It creates the Python environment, installs both sets of Node
-dependencies, downloads the Electron runtime, builds the interface, runs the engine's tests, and
-opens the window. Every step is skipped when it is already done, so the second launch takes a couple
-of seconds.
+Double-click **`start.bat`**. That is the whole of it.
 
-Requirements: **Python 3.10+** and **Node.js 18+** on the `PATH`, and `ffmpeg`/`ffprobe` with
-`libx264`. Nothing needs a compiler.
+It works that way on a Windows PC with **nothing installed on it**. `start.bat` finds or installs
+everything the application needs, and then opens the window:
+
+| It needs | What happens |
+|---|---|
+| **Python 3.10+** | used if the machine has a suitable one, otherwise winget installs it, otherwise the official installer runs quietly for the current user |
+| **Node.js 18+** | used if present, otherwise winget, otherwise the official archive is unpacked into `.tools\node` |
+| **ffmpeg and ffprobe** | used from `PATH` if present, otherwise a portable build is unpacked into `.tools\ffmpeg\bin` |
+| **aiohttp and PyAV** | installed into the project's `venv` from `backend/requirements.txt` |
+| **npm's trees, and Electron** | installed into `node_modules` and `frontend/node_modules` |
+| **the interface** | built, whenever a source file is newer than the bundle |
+
+No administrator is needed at any point, and nothing is written outside this folder and
+`%LOCALAPPDATA%`. The first run downloads about 250 MB and takes a few minutes; every run after
+that skips what is already done and takes a couple of seconds. The downloads are cached under
+`.tools\downloads`, so even a re-provision does not fetch them again.
+
+It needs an internet connection the first time. After that it does not.
+
+To check the provisioning itself — including the download, unpack and locate paths, which cannot be
+reached on a machine that already has everything:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-bootstrap.ps1
+```
 
 To work on the interface with hot reload:
 
 ```powershell
 npm run dev          # Vite on 5173, plus Electron pointed at it
 ```
+
+---
+
+## Naming a segment
+
+The output is named for the range it holds — `reel 00.00.10.00-00.01.00.00.mp4` — unless you name
+it. The **Name** field in Options takes any name the filesystem accepts, and the path it will be
+written to is shown underneath it, read back from the engine rather than guessed.
+
+The transcript follows the segment: name a segment `Interview wide` and its captions are written as
+`Interview wide.srt`, beside it, because a caption file is only a sidecar if it shares the
+segment's name and folder.
+
+The **Folder** toggle puts both inside a folder named after the segment, so a cut arrives as one
+thing rather than as two files loose among the footage:
+
+```
+footage/
+├── master.mp4
+├── master.srt
+└── Interview wide/
+    ├── Interview wide.mp4
+    └── Interview wide.srt
+```
+
+A name Windows would refuse — a colon, a slash, a trailing dot, `CON` — is **refused, not
+repaired**. Trimming `Take 1/2` to `Take 12` would write a file that exists under a name nobody
+chose and nobody will look for; the reason says which character was the problem instead.
 
 ---
 
@@ -107,15 +155,23 @@ has a minimum size.
 ## Tests
 
 ```powershell
-venv\Scripts\python.exe -m pytest backend\tests -q      # 69 tests: units + every scenario, ~1s
-npm --prefix frontend test                              # 19 tests: units + the interface's scenarios
+venv\Scripts\python.exe -m pytest backend\tests -q      # 131 tests: units + every scenario, ~2s
+npm --prefix frontend test                              # 20 tests: units + the interface's scenarios
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-bootstrap.ps1
+                                                        # 10 checks: installs Node and ffmpeg for real
 ```
 
 The engine's scenarios are Gherkin in `specs/features/` and run under `pytest-bdd`; the
 interface's are the same, under a small vitest runner. Each covers a place where being wrong is
 silent and expensive — drop-frame timecode at every rate, which of the three cutting methods a
 range gets and why, counting frames on the grid a file is *actually* on, the verdict rules the
-proof panel draws, and the HTTP contract's refusals.
+proof panel draws, the HTTP contract's refusals, and that a named segment's captions carry its
+name.
+
+`scripts/check-bootstrap.ps1` is the exception to the rule below, and has to be: it downloads a real
+Node and a real ffmpeg, unpacks them, and runs them. The provisioning path is the one thing in this
+project that a test *must* exercise for real, because it is the only thing that runs on a machine
+nobody has seen.
 
 **No test runs a cut.** The engine's behaviour on real footage is verified by using the
 application, which is what the proof panel is for.

@@ -75,3 +75,24 @@ Feature: Cutting a marked range out of a master
     When I name the output for frames 100 to 199 at 25 fps
     Then the name is "reel 00.00.04.00-00.00.07.24.mp4"
     And the name holds no character Windows refuses
+
+  Scenario: a segment is named after what the operator calls it
+    When I name the segment "Interview wide"
+    Then the segment is called "Interview wide.mp4"
+    And the segment sits beside its source
+    And the transcript is called "Interview wide.srt"
+    And the transcript sits beside the segment
+
+  Scenario: a named segment can arrive in a folder of its own
+    When I name the segment "Interview wide" and ask for a folder
+    Then the segment and its transcript are inside a folder named "Interview wide"
+    And that folder sits beside the source
+
+  Scenario: a name Windows would refuse is refused, and the reason says which
+    When I name the segment "Take 1:2"
+    Then the name is refused
+    And the reason names the character that was objected to
+
+  Scenario: a name the filesystem accepts is not refused for being unusual
+    When I name the segment "Émilie — finale 2.1"
+    Then the segment is called "Émilie — finale 2.1.mp4"

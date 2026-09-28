@@ -38,6 +38,25 @@ npm --prefix frontend run build                        # types, then the bundle
 | Switching verification off is visible | The `Verify: Off` option leaves `verified: null`, which the panel shows as *not measured* | A run that measured nothing being presented as a verified one |
 | A variable-rate source is planned anyway and warned about | `test_plan.py::test_a_variable_rate_file_is_planned_anyway_and_says_so` | No check can make a mark exact against a frame grid that does not exist, so the honest answer is a warning beside a plan that still works |
 
+## The naming claims
+
+| Claim | Checked by | What the check would catch |
+|---|---|---|
+| A named segment's transcript carries the segment's name, in the segment's folder | `test_naming.py` writes real subtitle files and reads them back, asserting `stem == stem` and `parent == parent` — in a plain folder and in a named one | The failure this guards is the easy one to ship: the picture named correctly and the captions still called after the source, which looks like success until somebody opens the folder |
+| A name the filesystem would refuse is refused, before the source is read | `test_server.py::test_a_name_windows_refuses_is_refused_before_anything_is_read`, and one case per refused character in `test_plan.py` | A name silently repaired writes a file under a name nobody chose — and reads as though it worked. Probing first would make the person wait for an 11 GB master to hear about a colon |
+| Nothing is created for a name that was refused | `test_naming.py::test_captions_are_not_written_for_a_name_that_was_refused` | An empty folder left beside the footage every time somebody mistypes |
+| An explicit output path is not overruled by a name | `test_server.py::test_an_explicit_output_path_still_wins_over_a_name` | A caller that has decided the whole path being silently redirected |
+
+## The provisioning claims
+
+| Claim | Checked by | What the check would catch |
+|---|---|---|
+| A machine with nothing installed ends up with everything, with no administrator | `scripts/check-bootstrap.ps1` replaces the locators with stubs and calls the installers for real, then requires the locators to find what they left | A start script that works on the machine it was written on. The installers cannot otherwise be reached on a machine that already has everything |
+| The unpacked ffmpeg can do what this engine asks of it | The same check asserts `libx264`, `libx265`, `aac`, `prores_ks`, `dnxhd`, the concat demuxer and the mp4 muxer are all present, and that the licences came with the binaries | A build that passes every startup check and fails on the first real cut |
+| A dependency that is present but unusable is not used | `test_plan.py` and the check's locators: a Python below 3.10, a Python without `venv`, the Microsoft Store stub, a Node below 18, an ffmpeg without `ffprobe` | The Store stub in particular: testing it opens a shop window at somebody who double-clicked an application |
+| The engine finds a portable build beside the application | `test_plan.py::test_a_portable_ffmpeg_beside_the_application_is_found` | The packaged application has no `start.bat`, so an app that provisioned perfectly would report ffmpeg missing the moment it was launched another way |
+| An override set to a missing path is an error, not a fallback | `test_plan.py::test_an_override_pointing_at_nothing_is_an_error_not_a_fallback` | Running a different build than the one somebody chose, which is how a cut comes out wrong for a reason nothing in the log explains |
+
 ## The timecode claims
 
 | Claim | Checked by | What the check would catch |

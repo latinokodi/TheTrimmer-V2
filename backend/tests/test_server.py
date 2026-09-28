@@ -16,8 +16,10 @@ from __future__ import annotations
 import asyncio
 
 from aiohttp.test_utils import TestClient, TestServer
+import pytest
 
 import server
+from trimmer import trim as cutter
 
 
 def call(coroutine):
@@ -93,6 +95,67 @@ def test_planning_needs_a_source_it_can_read():
         assert "error" in await response.json()
 
     call(with_client(check))
+
+
+# ------------------------------------------------------------------------------------------------
+#  Naming a segment, as it reaches the engine
+# ------------------------------------------------------------------------------------------------
+
+def _body(**extra) -> dict:
+    return {"source": "C:/media/reel.mp4", "inFrame": 0, "endFrame": 250, "rate": 25, **extra}
+
+
+def test_a_request_with_no_name_is_resolved_the_way_it_always_was():
+    """The field the window always had, and the default it has to keep."""
+    spec = server._spec_from(_body())
+    assert spec.output.name == "reel 00.00.00.00-00.00.09.24.mp4"
+
+
+def test_a_name_in_the_request_becomes_the_segment_and_its_transcript():
+    """The two sentences of the feature, checked where the window's request becomes the engine's.
+
+    The transcript is not sent and not named here: it is `output.with_suffix(".srt")`, which is the
+    whole of the guarantee that the caption file carries the segment's name. Checking it on the
+    spec is checking the relationship the writer uses.
+    """
+    spec = server._spec_from(_body(name="Interview wide"))
+    assert spec.output.name == "Interview wide.mp4"
+    assert spec.output.with_suffix(".srt").name == "Interview wide.srt"
+
+
+def test_a_request_can_ask_for_a_folder_of_that_name():
+    spec = server._spec_from(_body(name="Interview wide", inFolder=True))
+    assert spec.output.name == "Interview wide.mp4"
+    assert spec.output.parent.name == "Interview wide"
+    assert spec.output.with_suffix(".srt").parent == spec.output.parent
+
+
+def test_an_explicit_output_path_still_wins_over_a_name():
+    """`output` is what this API accepted before there was a name, and it keeps working.
+
+    A caller that has already decided the whole path is not overruled by a name field it may not
+    even know about.
+    """
+    spec = server._spec_from(_body(name="Interview wide", output="D:/elsewhere/mine.mp4"))
+    assert spec.output.name == "mine.mp4"
+
+
+def test_a_name_windows_refuses_is_refused_before_anything_is_read():
+    """The refusal has to arrive before the engine is asked for the media.
+
+    If the name were checked after probing the source, a person who mistyped a colon in the name
+    would wait for a probe of an 11 GB master to be told about the colon.
+    """
+    with pytest.raises(cutter.TrimError) as refused:
+        server._spec_from(_body(name="Take 1:2", inFolder=True))
+    assert ":" in str(refused.value)
+
+
+def test_the_plan_answers_with_the_path_the_name_produces():
+    """The window shows this path under the name field, so it has to be the real one."""
+    spec = server._spec_from(_body(name="Interview wide", inFolder=True))
+    assert str(spec.output).endswith("Interview wide\\Interview wide.mp4") or \
+        str(spec.output).endswith("Interview wide/Interview wide.mp4")
 
 
 def test_a_range_against_a_file_that_is_not_there_is_a_400_not_a_traceback():
