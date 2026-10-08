@@ -369,3 +369,106 @@ def test_loading_a_source_starts_its_keyframe_read(tmp_path, monkeypatch):
     assert called_path == str(reel)
     assert size == stat.st_size
     assert modified_ns == stat.st_mtime_ns
+
+
+# ------------------------------------------------------------------------------------------------
+#  Replacing a segment that is already there
+# ------------------------------------------------------------------------------------------------
+
+def test_a_cut_that_would_replace_a_file_is_refused_and_tagged(tmp_path):
+    """The permission gate at the contract level: no `overwrite`, no cut -- and a tag, so the
+    window can turn the refusal into a question instead of showing it as an error.
+
+    Refused before a worker exists, which is what makes the refusal cheap and, more importantly,
+    what stops a job being started against a file the operator has not agreed to replace. The
+    status is not the same 409 as one-run-at-a-time: the reason is what the window reads, and a
+    client that only knew about the other 409 would be right to be suspicious of an untagged one.
+    """
+    # A real file at the path the request names, so the check under test is the real one rather
+    # than a stubbed answer about it.
+    occupied = tmp_path / "Interview wide.mp4"
+    occupied.write_bytes(b"the previous cut")
+    request = _body(output=str(occupied))
+
+    async def check(client: TestClient):
+        answer = await client.post("/api/cut", json=request)
+        assert answer.status == 409, await answer.text()
+        body = await answer.json()
+        assert body["reason"] == "exists"
+        # The name is in the sentence because the operator's decision is about a file.
+        assert "Interview wide.mp4" in body["error"]
+        # And structured, so the window shows a filename without reading one back out of prose.
+        assert body["exists"] == ["Interview wide.mp4"]
+        assert server.CURRENT is None, "a refused cut was registered as a running job"
+        assert occupied.read_bytes() == b"the previous cut", "the file was touched"
+
+    call(with_client(check))
+
+
+def test_a_cut_that_would_replace_a_file_goes_ahead_when_permission_was_given(monkeypatch):
+    """The other half of the gate: `overwrite` has to open it.
+
+    The job is stubbed out rather than run -- a real cut needs a source and minutes -- so what is
+    being checked is the branch the handler takes, not what ffmpeg does with it. The refusal under
+    test is the replace one; a 409 for a run already in flight would be a different answer.
+    """
+    monkeypatch.setattr(server, "_run_job", lambda job: None)
+
+    async def check(client: TestClient):
+        answer = await client.post("/api/cut", json=_body(overwrite=True))
+        assert answer.status == 200, await answer.text()
+        assert (await answer.json())["started"] is True
+        with server.CURRENT_LOCK:
+            server.CURRENT = None
+
+    call(with_client(check))
+
+
+def test_permission_is_only_ever_what_the_request_actually_said():
+    """Anything that is not `true` gets no. Permission is the one default that must not be generous."""
+    assert server._spec_from(_body()).overwrite is False
+    assert server._spec_from(_body(overwrite=False)).overwrite is False
+    for vague in (None, "", 0, "true", "yes"):
+        assert server._spec_from(_body(overwrite=vague)).overwrite is False, vague
+    assert server._spec_from(_body(overwrite=True)).overwrite is True
+
+
+def test_the_plan_says_which_files_a_cut_would_be_replacing(monkeypatch, tmp_path):
+    """Asked while the marks are being typed, so the question can come *before* the button.
+
+    This is what lets the window ask instead of the cut failing: the plan already knows the output
+    path, so it can also say whether that path is occupied, and nothing has been written yet.
+    """
+    media = ff.MediaInfo(
+        path=Path("C:/media/reel.mp4"), codec="h264", width=1920, height=1080,
+        pix_fmt="yuv420p", rate=Fraction(25), average_rate=Fraction(25),
+        timebase=Fraction(1, 12800), frames=10000, duration=400.0, audio=None,
+        size_bytes=1, start_time=0.0,
+    )
+    monkeypatch.setattr(server.ff, "probe", lambda *a, **k: media)
+    monkeypatch.setattr(server.cutter, "plan_trim", lambda *a, **k: cutter.TrimPlan(
+        media=media, mode="copy", keyframe=0, head_frames=0, body_frames=250))
+
+    occupied = tmp_path / "Interview wide.mp4"
+    occupied.write_bytes(b"a previous cut")
+    monkeypatch.setattr(server.cutter, "existing_pieces", lambda spec: [occupied])
+
+    async def check(client: TestClient):
+        answer = await client.post("/api/plan", json=_body(name="Interview wide"))
+        assert answer.status == 200, await answer.text()
+        body = await answer.json()
+        # The names, not the paths: the dialog is read by a person, and the folder is already on
+        # screen under the name field.
+        assert body["exists"] == ["Interview wide.mp4"]
+
+    call(with_client(check))
+
+    # And with nothing in the way the answer is an empty list rather than a missing key, so the
+    # window never has to guess whether silence means "no" or "not asked".
+    monkeypatch.setattr(server.cutter, "existing_pieces", lambda spec: [])
+
+    async def check_clear(client: TestClient):
+        answer = await client.post("/api/plan", json=_body(name="Interview wide"))
+        assert (await answer.json())["exists"] == []
+
+    call(with_client(check_clear))

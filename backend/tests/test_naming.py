@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 from fractions import Fraction
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -163,3 +164,121 @@ def test_the_transcript_summary_names_the_file_it_wrote(tmp_path):
     # And it says how many cues, which is the number a person checks against the segment.
     assert re.search(r"\b\d+ cue", lines[0]), f"the line carries no cue count: {lines[0]}"
     assert len(result.cues) == 2
+
+
+# ------------------------------------------------------------------------------------------------
+#  Replacing a segment that is already there
+# ------------------------------------------------------------------------------------------------
+#
+#  A range is a name, so cutting the same range twice writes to the same path. Before this, that
+#  second cut replaced the first file without a word -- which is the one thing an operator cannot
+#  undo and cannot have failed to notice until it is too late. Permission is now asked for, and the
+#  asking is only as good as the two answers it depends on: which files are in the way, and what the
+#  question says about them.
+
+def test_the_files_in_the_way_are_both_the_segment_and_its_captions(tmp_path):
+    """The unit of a replacement is the pair, not the picture.
+
+    Replacing `Interview wide.mp4` and keeping the `.srt` beside it delivers a segment whose
+    captions belong to a different cut, and nothing on screen would say so.
+    """
+    video, captions = source_with_captions(tmp_path)
+    output = cutter.output_for(video, 100, 299, Fraction(25), name="Interview wide")
+    spec = spec_for(video, captions, output)
+    assert cutter.existing_pieces(spec) == [], "nothing was written yet, so nothing is in the way"
+
+    output.write_bytes(b"the previous cut")
+    assert cutter.existing_pieces(spec) == [output]
+
+    output.with_suffix(".srt").write_text(CUE, encoding="utf-8")
+    assert cutter.existing_pieces(spec) == [output, output.with_suffix(".srt")]
+
+
+def test_a_transcript_this_cut_will_not_write_is_not_reported_as_being_in_the_way(tmp_path):
+    """A leftover `.srt` beside an unnamed range's output is not this run's business.
+
+    The pass only writes captions when the source has a transcript. Counting a file the cut will
+    never touch would ask the operator to approve replacing something that is not going to be
+    replaced, and a question that is not true is worth less than no question.
+    """
+    video, captions = source_with_captions(tmp_path)
+    output = cutter.output_for(video, 100, 299, Fraction(25), name="Interview wide")
+    output.with_suffix(".srt").write_text(CUE, encoding="utf-8")
+
+    without_transcript = cutter.TrimSpec(source=video, output=output, in_frame=100, out_frame=300)
+    assert cutter.existing_pieces(without_transcript) == []
+
+    with_transcript = spec_for(video, captions, output)
+    assert cutter.existing_pieces(with_transcript) == [output.with_suffix(".srt")]
+
+
+def test_the_question_names_the_file_it_is_about(tmp_path):
+    """A dialog that does not say which file is a dialog nobody can answer."""
+    only = tmp_path / "Interview wide.mp4"
+    assert cutter.replace_refusal([only]) == "Interview wide.mp4: already exists"
+
+    both = [only, tmp_path / "Interview wide.srt"]
+    sentence = cutter.replace_refusal(both)
+    # The verb agrees with the count. "2 files already exists" is what concatenating produces, and
+    # it is the first thing anybody reads.
+    assert sentence == "2 files already exist: Interview wide.mp4, Interview wide.srt", sentence
+    assert "exist" in sentence and "exists" not in sentence
+
+
+def test_a_cut_does_not_replace_an_existing_segment_without_being_told_to(tmp_path, monkeypatch):
+    """The default is no. This is the whole of the ask, at the level where the file is written.
+
+    Two things are being checked and both matter: that the refusal happens at all, and what the
+    output looked like afterwards. A refusal that had already truncated the file would satisfy the
+    first on its own -- which is why the bytes are compared rather than the exception.
+    """
+    video, captions = source_with_captions(tmp_path)
+    output = tmp_path / "Interview wide.mp4"
+    output.write_bytes(b"the previous cut, four hours of work")
+    before = output.read_bytes()
+
+    monkeypatch.setattr(cutter.ff, "probe", lambda *a, **k: media(video))
+    monkeypatch.setattr(cutter.ff, "keyframes", lambda *a, **k: [8.0])
+
+    spec = spec_for(video, captions, output)
+    spec.in_frame, spec.out_frame = 100, 300
+    assert spec.overwrite is False, "the engine's own default must be to refuse, not to replace"
+
+    with pytest.raises(cutter.TrimError) as refused:
+        cutter.trim(spec)
+
+    assert cutter.ALREADY_THERE in str(refused.value)
+    assert output.name in str(refused.value)
+    assert output.read_bytes() == before, "the file was touched on the way to being refused"
+
+
+def test_a_cut_does_replace_an_existing_segment_once_it_has_been_told_to(tmp_path, monkeypatch):
+    """And with permission the same cut goes ahead: the gate is a gate and not a wall.
+
+    The encoder itself is stood in for -- the point here is which branch the guard takes, not what
+    ffmpeg does with the pictures -- so a run that gets past the refusal fails later and for a
+    different reason, or not at all. What must not happen is the refusal.
+    """
+    video, captions = source_with_captions(tmp_path)
+    output = tmp_path / "Interview wide.mp4"
+    output.write_bytes(b"the previous cut")
+
+    monkeypatch.setattr(cutter.ff, "probe", lambda *a, **k: media(video))
+    monkeypatch.setattr(cutter.ff, "keyframes", lambda *a, **k: [8.0])
+    monkeypatch.setattr(cutter.ff, "run", lambda *a, **k: None)
+    monkeypatch.setattr(cutter, "_copy_packets", lambda *a, **k: None)
+    monkeypatch.setattr(cutter, "_encode_sound",
+                        lambda *a, **k: ["-hide_banner", "-y", "-i", str(video), "out.m4a"])
+    monkeypatch.setattr(cutter, "_mux",
+                        lambda *a, **k: ["-hide_banner", "-y", "-i", str(video), str(output)])
+    monkeypatch.setattr(cutter.ff, "inspect",
+                        lambda *a, **k: SimpleNamespace(frames=200, video_duration=8.0))
+
+    spec = spec_for(video, captions, output)
+    spec.overwrite = True
+    try:
+        cutter.trim(spec)
+    except Exception as later:  # noqa: BLE001 - any later failure is still not the refusal
+        assert cutter.ALREADY_THERE not in str(later), (
+            "the cut refused a replacement it had been given permission for"
+        )

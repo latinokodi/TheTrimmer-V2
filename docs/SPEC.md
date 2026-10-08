@@ -36,6 +36,9 @@ section follows from that one fact.
 | **R1.8** | The re-encoded ends cannot be hashed, so they are compared by picture against the frame the mark names **and the two frames beside it**, and the offset found is reported. | `verify.head_within_frame`, `verify.tail_frame_offset` |
 | **R1.9** | The output is written beside the source, named for the range it holds, with no character Windows refuses. | `cutting.feature:the finished file is named for the range it holds` |
 | **R1.10** | A frame's stated time is read from the container over a window wide enough to contain that frame, and **nothing** is returned when it does not — the computed grid time is used instead. | `cutting.feature:a frame's stated time comes from a window wide enough to contain it`, `cutting.feature:the container is never asked to guess which frame was meant` |
+| **R1.11** | A segment that is already there is **never** replaced unless the request says so explicitly. The engine refuses, the refusal names the files, and the window turns that refusal into a question **before** any work starts. A request that does not mention permission gets none. | `cutting.feature:a segment is never replaced without being asked first`, `test_server.py:test_permission_is_only_ever_what_the_request_actually_said` |
+| **R1.12** | The unit of a replacement is the pair. When a cut would write a transcript beside the segment, both files are named in the question; a `.srt` the run will not write is not reported as being in the way. | `cutting.feature:a segment whose captions are already there is in the way twice` |
+| **R1.13** | Declining to replace a segment is remembered for that path, so the question is not asked again while nothing has changed — and is forgotten when a run finishes, so the next cut of the same range asks again. | `frontend/src/state/overwriteAsk.test.ts` |
 
 ## 2. Rates and frame grids
 

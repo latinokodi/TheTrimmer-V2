@@ -441,19 +441,39 @@ def _spec_from(body: dict[str, Any]) -> cutter.TrimSpec:
         concat_offset=int(body.get("concatOffset", 0)),
         audio_bitrate=str(body.get("audioBitrate", "192k")),
         subtitles=None if body.get("subtitles") is False else transcript,
+        # Not `body.get("overwrite", True)`. Permission to replace a file is the one default that
+        # must not be generous: a request that does not say gets no, the engine refuses rather
+        # than overwrites, and the window turns that refusal into a question. The reverse default
+        # is silent, irreversible, and destroys somebody's previous cut before they see it.
+        overwrite=body.get("overwrite") is True,
     )
 
 
-def _refusal(failure: Exception, status: int = 400) -> web.Response:
-    """A refusal, with a tag when it is about the segment's name.
+def _refusal(
+    failure: Exception,
+    status: int = 400,
+    reason: str | None = None,
+    exists: list[str] | None = None,
+) -> web.Response:
+    """A refusal, with a tag when the window has to place it differently from the others.
 
-    The window shows a refused name beside the field it was typed into, and it cannot tell which
-    refusals those are from the sentence alone. A stable tag can be relied on; matching on prose
-    cannot, because the prose is meant to be rewritten whenever it can be said better.
+    Two tags so far, and both exist for the same reason: the window cannot tell from the sentence
+    alone whether a refusal belongs beside the name field, or in a dialog asking whether to replace
+    a file. A stable tag can be relied on; matching on prose cannot, because the prose is meant to
+    be rewritten whenever it can be said better.
+
+    ``exists`` travels with the replace refusal so that the dialog names the same file the plan
+    would have named. The sentence carries the names too, and a window that dug them back out of
+    prose would be parsing the one thing this project keeps free to reword -- so the structured
+    answer and the sentence are both sent, and the window reads the structured one.
     """
     payload: dict[str, Any] = {"error": str(failure)}
     if isinstance(failure, cutter.NameRefused):
         payload["reason"] = "name"
+    elif reason is not None:
+        payload["reason"] = reason
+    if exists:
+        payload["exists"] = exists
     return web.json_response(payload, status=status)
 
 
@@ -497,10 +517,15 @@ async def plan(request: web.Request) -> web.Response:
         worked = await asyncio.to_thread(cutter.plan_trim, spec, media)
     except Exception as failure:  # noqa: BLE001
         return _refusal(failure)
+    # Whether this cut would replace something, answered here because this is the one request the
+    # window already sends while the marks are being typed and before Trim is pressed. Knowing it
+    # in advance is what lets the question be asked *instead of* the cut, rather than as a refusal
+    # that arrives once the operator has already committed to the work.
     return web.json_response({
         "plan": _plan_json(spec, worked, media),
         "output": str(spec.output),
         "transcript": None if spec.subtitles is None else str(spec.subtitles),
+        "exists": [piece.name for piece in cutter.existing_pieces(spec)],
     })
 
 
@@ -512,6 +537,19 @@ async def cut(request: web.Request) -> web.Response:
         spec = _spec_from(body)
     except Exception as failure:  # noqa: BLE001
         return _refusal(failure)
+
+    # Asked here, before a worker exists and before anything is written, so that a window which
+    # never saw the plan -- one that raced ahead of it, or was reopened on an old range -- is still
+    # asked rather than quietly obeyed. The engine refuses the same cut on its own; this only makes
+    # the refusal cheap, and tagged, so it can be turned into a question.
+    already_there = cutter.existing_pieces(spec)
+    if already_there and not spec.overwrite:
+        return _refusal(
+            cutter.TrimError(cutter.replace_refusal(already_there)),
+            status=409,
+            reason="exists",
+            exists=[piece.name for piece in already_there],
+        )
 
     with CURRENT_LOCK:
         if CURRENT is not None:

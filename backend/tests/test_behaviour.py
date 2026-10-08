@@ -33,10 +33,24 @@ from trimmer.timecode import TimecodeError, format_timecode, parse_timecode
 
 import server
 
-scenarios("../../specs/features/cutting.feature")
-scenarios("../../specs/features/rates.feature")
-scenarios("../../specs/features/verification.feature")
-scenarios("../../specs/features/engine_api.feature")
+# The features are located from this file rather than from the string above. `scenarios()` resolves
+# a relative path against the caller's frame -- `getframeinfo(frame).filename` -- which is the code
+# object's `co_filename`: the absolute path this module had when its bytecode was last compiled, not
+# where the file is now. A checkout that has been moved or copied regenerates that bytecode at the
+# new path, but a valid-looking `.pyc` that travelled with it does not, and then this module asks
+# for features under a directory that no longer exists:
+#
+#     FileNotFoundError: 'H:\TheTrimmer-V2\specs\features\cutting.feature'
+#
+# for a feature file sitting beside the test. `__file__` is the path the loader actually used, so
+# binding the base directory to it makes the suite indifferent to where the project lives, to which
+# drive it is on, and to whether any of its bytecode is stale.
+FEATURES = Path(__file__).resolve().parent.parent.parent / "specs" / "features"
+
+scenarios("cutting.feature", features_base_dir=FEATURES)
+scenarios("rates.feature", features_base_dir=FEATURES)
+scenarios("verification.feature", features_base_dir=FEATURES)
+scenarios("engine_api.feature", features_base_dir=FEATURES)
 
 SOURCE = Path("C:/media/reel.mp4")
 
@@ -80,13 +94,22 @@ def master(frames: int, rate: Fraction, *, start_time: float = 0.0) -> ff.MediaI
 
 
 def spec_for(world: dict, in_frame: int, out_frame: int) -> cutter.TrimSpec:
+    # The output is resolved the way the engine resolves it rather than hard-coded, so a scenario
+    # that says the segment is already there is talking about the same path the cut would write.
+    # With no name that is the range name, which is what `output_for` answers for both callers.
+    output = world.get("output", cutter.output_for(
+        SOURCE, in_frame, out_frame - 1, world.get("rate", Fraction(25))))
+    # The transcript is found beside the source, exactly as the server finds it: a scenario that
+    # puts a caption file beside the segment is describing a cut that will write one.
+    sidecar = output.with_suffix(".srt")
     return cutter.TrimSpec(
         source=SOURCE,
-        output=world.get("output", Path("C:/media/out.mp4")),
+        output=output,
         in_frame=in_frame,
         out_frame=out_frame,
         crf=18,
         preset="veryfast",
+        subtitles=sidecar if sidecar.exists() else None,
     )
 
 
@@ -177,6 +200,123 @@ def cues_across_the_marks(world: dict) -> None:
 @given("a cut already running")
 def a_cut_running(world: dict) -> None:
     world["running"] = server.Job(spec_for({}, 0, 10), "standard")
+
+
+# ---------------------------------------------------------------------------------------
+# Replacing a segment that is already there
+# ---------------------------------------------------------------------------------------
+
+#: What a previous cut left behind. Real bytes rather than an empty file, because the point of
+#: the scenario that checks it is that they are still there afterwards.
+_PREVIOUS_CUT = b"the previous cut, which nobody agreed to lose"
+
+
+def _leave_a_segment(world: dict, folder: Path, sidecar: bool) -> None:
+    """Put a previous cut where this one would write, and remember what it held.
+
+    The path is a real one under the test's own folder rather than beside the fixture source.
+    `SOURCE` is `C:/media/reel.mp4`, which no machine running this suite has, and the scenarios
+    that write a file are the only ones here that need a disk at all.
+    """
+    output = folder / "Interview wide.mp4"
+    output.write_bytes(_PREVIOUS_CUT)
+    world["output"] = output
+    world["before"] = _PREVIOUS_CUT
+    if sidecar:
+        output.with_suffix(".srt").write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\nfrom the previous cut\n", encoding="utf-8")
+
+
+@given("the segment is already there")
+def segment_already_there(world: dict, tmp_path: Path) -> None:
+    _leave_a_segment(world, tmp_path, sidecar=False)
+
+
+@given("the segment and its transcript are already there")
+def segment_and_transcript_already_there(world: dict, tmp_path: Path) -> None:
+    _leave_a_segment(world, tmp_path, sidecar=True)
+
+
+def _stub_the_cut(monkeypatch) -> None:
+    """Stand in for every part of a cut that launches ffmpeg or touches the disk.
+
+    The probe and the encoder are replaced for both attempts, because the refusal is *decided*
+    from the plan and the source's own facts -- so a scenario that asks the engine to refuse still
+    has to give it something to have decided from. Only the parts that would write, and the pieces
+    that follow the decision, are the ones the refusing path never reaches.
+    """
+    monkeypatch.setattr(cutter.ff, "probe", lambda *a, **k: master(400, Fraction(25)))
+    monkeypatch.setattr(cutter, "_encode_head", lambda *a, **k: [])
+    monkeypatch.setattr(cutter, "_encode_tail", lambda *a, **k: [])
+    monkeypatch.setattr(cutter, "_encode_sound", lambda *a, **k: [])
+    monkeypatch.setattr(cutter, "_mux", lambda *a, **k: [])
+    monkeypatch.setattr(cutter, "_copy_body", lambda *a, **k: ([], 100))
+    monkeypatch.setattr(cutter.ff, "inspect",
+                        lambda *a, **k: SimpleNamespace(frames=100, video_duration=4.0))
+
+
+def _attempt_the_cut(world: dict, monkeypatch, *, permission: bool) -> None:
+    spec = spec_for(world, 100, 200)
+    assert spec.output == world["output"], (
+        f"the step left a segment at {world['output']} but the cut would write {spec.output}")
+    spec.overwrite = permission
+    _stub_the_cut(monkeypatch)
+    try:
+        cutter.trim(spec, log=lambda *_: None)
+        world["refused"] = None
+    except cutter.TrimError as refused:
+        world["refused"] = str(refused)
+
+
+@when("the cut is attempted with the permission left unsaid")
+def attempt_without_permission(world: dict, monkeypatch) -> None:
+    """The default, and the whole of the ask: a request that does not say gets no."""
+    _attempt_the_cut(world, monkeypatch, permission=False)
+
+
+@when("the cut is attempted with permission to replace")
+def attempt_with_permission(world: dict, monkeypatch) -> None:
+    _attempt_the_cut(world, monkeypatch, permission=True)
+
+
+@then("the plan says the file is in the way")
+def plan_says_the_file_is_in_the_way(world: dict) -> None:
+    assert cutter.existing_pieces(world["spec"]) == [world["output"]], (
+        "the plan did not report the file that is already there")
+
+
+@then(parsers.parse("the plan says {count:d} files are in the way"))
+def plan_says_count_in_the_way(world: dict, count: int) -> None:
+    """Both halves of the pair, because replacing the picture and keeping the captions would
+    deliver a segment whose transcript belongs to a different cut."""
+    pieces = cutter.existing_pieces(world["spec"])
+    assert len(pieces) == count, f"the plan named {len(pieces)}: {pieces}"
+    assert world["output"].with_suffix(".srt") in pieces
+
+
+@then("the cut is refused for a file that already exists")
+def cut_refused(world: dict) -> None:
+    assert world["refused"] is not None, "the cut was allowed to replace a file unasked"
+    assert cutter.ALREADY_THERE in world["refused"], world["refused"]
+
+
+@then("the refusal names the file that is already there")
+def refusal_names_the_file(world: dict) -> None:
+    assert world["output"].name in world["refused"], world["refused"]
+
+
+@then("the file that was there is untouched")
+def untouched(world: dict) -> None:
+    """The bytes, not the existence. A refusal that had already truncated the file would pass a
+    test that only asked whether the path still resolved to something."""
+    assert world["output"].read_bytes() == world["before"], (
+        "the file was written over on the way to being refused")
+
+
+@then("the cut is not refused for an existing file")
+def not_refused_for_existing(world: dict) -> None:
+    assert world["refused"] is None or cutter.ALREADY_THERE not in world["refused"], (
+        f"a cut that was given permission was still refused: {world['refused']}")
 
 
 # ---------------------------------------------------------------------------------------
@@ -870,7 +1010,14 @@ def is_a_refusal(world: dict) -> None:
 
 
 @then("the refusal names the file")
-def refusal_names_the_file(world: dict) -> None:
+def refusal_names_the_missing_file(world: dict) -> None:
+    """The other refusal that names a file: a probe of something that is not there.
+
+    Named apart from `refusal_names_the_file` deliberately. Both register a step, and two functions
+    of one name in one module is a shadowing that only shows up as a warning — the earlier one keeps
+    working because it was registered first, which is exactly the kind of accident that turns into a
+    silently unregistered step the next time somebody reorders this file.
+    """
     assert "nothing.mp4" in world["answer"]["body"]["error"]
 
 

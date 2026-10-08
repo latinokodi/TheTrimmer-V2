@@ -1423,6 +1423,54 @@ input.timecode-field {
 }
 
 /*
+ * The replace question. `.dialog__head`, `.dialog__body`, `.dialog__actions`, `.dialog__help` and
+ * `.source-list` are the vocabulary that was already here; these four rules are the only ones it
+ * did not have.
+ *
+ * The headline is a question and is set as one — this is the only place in the window that asks
+ * something rather than reporting it, so it is the only place a sentence is set at this size
+ * inside a panel.
+ */
+.dialog__title {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-normal);
+  color: var(--phosphor-bright);
+}
+
+/*
+ * The names, in the data face because a filename is data. `danger` is not decoration here: the
+ * whole panel exists because these two files are about to stop existing.
+ */
+.dialog__file {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hazard);
+}
+
+/*
+ * Where they are, so the answer does not have to be given from memory. One line, truncated at the
+ * right, and deliberately not with `direction: rtl`: that is the usual trick for showing the end of
+ * a long path, and on Windows it also moves the drive letter's colon to the wrong end of the string
+ * — the CSS specification is explicit that trailing neutral characters are reordered. A truncated
+ * path that reads correctly is worth more than a complete one that does not. The whole path is in
+ * the `title`, and the dialog is 620px wide.
+ */
+.dialog__where {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-data);
+  font-size: var(--text-xs);
+  color: var(--phosphor-faint);
+}
+
+/*
  * A stacked field inside a dialog: a label above, a control under it, an explanation under that. The
  * main panel uses `.field-row` because its fields are read down one shared label column; a dialog is
  * short and each field is read on its own, so stacking is the honest layout for it.

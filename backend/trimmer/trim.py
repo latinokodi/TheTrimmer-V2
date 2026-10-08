@@ -141,7 +141,14 @@ class TrimSpec:
     preset: str = "veryfast"
     concat_offset: int = 0               # frames of concat drift to cancel
     audio_bitrate: str = "192k"
-    overwrite: bool = True
+    #: Whether an existing segment may be replaced. False, and deliberately not True.
+    #:
+    #: A range is a name, so the same range cut twice is the same path twice, and the second cut
+    #: used to replace the first without a word. Writing over somebody's finished work is the one
+    #: mistake this program can make that no later step can undo, so the engine's own default is to
+    #: refuse: a caller that has not thought about it gets a refusal it can turn into a question,
+    #: rather than a silently destroyed file. The window asks, and asks again in those words.
+    overwrite: bool = False
     #: A transcript to cut along with the video, usually ``<video>.srt``. The retimed
     #: captions are written beside the output, named after it.
     subtitles: Path | None = None
@@ -505,6 +512,16 @@ def trim(
     known reports counters without one rather than a made-up percentage.
     """
     media = media or ff.probe(spec.source)
+
+    # Nothing is written without permission, and permission is never assumed: `existing_pieces`
+    # answers both "may I replace this?" and "which file already exists?", so the window can put
+    # the question to the operator with the filename in it. Asked before the plan is worked out,
+    # because a refusal needs no plan -- and a whole-GOP keyframe read behind a question nobody
+    # has answered yet is work done for a cut that may never be allowed to happen.
+    already_there = existing_pieces(spec)
+    if already_there and not spec.overwrite:
+        raise TrimError(replace_refusal(already_there))
+
     # Both re-encoded ends are seeked to times the *container* states, not to times computed
     # from the average-rate grid. The two agree on a short file and drift apart on a long one,
     # and where they differ the computed time is past the frame it names, so the seek starts
@@ -513,9 +530,6 @@ def trim(
         spec.source, media.seconds_of, float(media.grid_rate), media.start_time))
     rate = media.grid_rate
     whole = spec.frames / float(rate)
-
-    if spec.output.exists() and not spec.overwrite:
-        raise TrimError(f"{spec.output.name} already exists (overwrite is off)")
 
     # A segment asked for in a folder of its own needs that folder to exist before anything is
     # written, and this is the only place that creates a directory: the path comes from
@@ -624,7 +638,7 @@ def cut_subtitles(spec: TrimSpec, media: MediaInfo, *, log=print) -> RetimeResul
     should never appear for them.
     """
     assert spec.subtitles is not None
-    output_srt = spec.output.with_suffix(".srt")
+    output_srt = transcript_for(spec)
     # The captions land in the same folder as the segment, and when a folder was asked for that
     # folder is this call's to make. `trim` creates it too, but this function decides where the
     # file goes and so it is the one that has to be able to write there -- a named segment in a
@@ -1048,6 +1062,11 @@ def default_output(source: Path, in_frame: int, out_frame: int, rate) -> Path:
 #: name escape the folder it is supposed to land in.
 _REFUSED_IN_NAME = '<>:"/\\|?*'
 
+#: The part of the replace refusal a caller matches on, kept apart from the sentence around it so
+#: that rewording the sentence cannot silently break the server's detection -- and so that the
+#: window and the engine cannot drift into two spellings of the same state.
+ALREADY_THERE = "already exists"
+
 #: Names Windows refuses outright, whatever the extension. A segment called `CON` is not a file
 #: that can be created on the machine this product runs on, and the failure would come from deep
 #: inside ffmpeg rather than from the field that was typed into.
@@ -1110,6 +1129,61 @@ def clean_segment_name(name: str) -> str:
         )
 
     return cleaned
+
+
+def transcript_for(spec: TrimSpec) -> Path:
+    """Where this cut's captions will be written: the segment's name, with `.srt` on it.
+
+    One function rather than an expression written out wherever it is needed, because two places
+    need the same answer for different reasons and disagreeing about it would be invisible. The cut
+    writes there; ``existing_pieces`` asks whether something is already there. A second spelling
+    that drifted would have the window ask about a file the run was never going to touch -- or,
+    worse, stay silent about one it was.
+    """
+    return spec.output.with_suffix(".srt")
+
+
+def existing_pieces(spec: TrimSpec) -> list[Path]:
+    """Which of a cut's outputs are already on disk, in the order it would write them.
+
+    A segment is two files, not one: the picture, and -- when there is a transcript to move onto
+    it -- the captions written beside it. Replacing the picture while leaving the previous captions
+    in place would deliver a pair that disagrees with itself, so both are asked about and both are
+    named in the question.
+
+    The transcript is only counted when this cut will actually write one. A source with no sidecar
+    leaves an old `.srt` alone -- nothing here touches it -- and reporting a conflict about a file
+    the run will not write would be a dialog asking permission for something that is not going to
+    happen.
+    """
+    pieces = [spec.output]
+    if spec.subtitles is not None:
+        pieces.append(transcript_for(spec))
+    return [piece for piece in pieces if piece.exists()]
+
+
+def replace_refusal(pieces: list[Path]) -> str:
+    """The refusal, in one sentence, for a cut that would replace something.
+
+    The names are listed because the operator's choice is *which file* to replace, and a question
+    that does not say is a question nobody can answer. The count is spelled into the sentence
+    rather than left to the reader to work out from the list.
+
+    The sentence states what is there and never gives a reason. Every other wording that suggested
+    one -- "nothing is replaced without being asked" -- is false by the time it is printed, because
+    the one place that reaches it has just been asked. ``ALREADY_THERE`` is the part of it a caller
+    matches on; the names are for a person to read.
+
+    Public because the server builds the same sentence when it refuses a cut early, and two
+    spellings of one refusal is exactly the drift the tag exists to prevent.
+    """
+    names = ", ".join(piece.name for piece in pieces)
+    if len(pieces) == 1:
+        return f"{names}: {ALREADY_THERE}"
+    # "2 files already exists" is what a sentence built by concatenation produces, and it is the
+    # first thing anybody reads. The verb agrees with the count, and the count is the reason this
+    # branch exists at all.
+    return f"{len(pieces)} files already exist: {names}"
 
 
 def output_for(source: Path, in_frame: int, out_frame: int, rate, name: str | None = None,

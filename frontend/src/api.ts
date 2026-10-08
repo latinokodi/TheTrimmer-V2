@@ -143,18 +143,25 @@ export type EngineEvent =
 /**
  * Raised with the backend's own sentence, so the window never invents a reason.
  *
- * `reason` is the engine's tag for *which* refusal this is. It exists for the one case the window
- * has to place differently: a refused segment name belongs beside the field it was typed into, and
- * telling that apart from the engine's other refusals by matching on prose would break the moment
- * the prose was improved.
+ * `reason` is the engine's tag for *which* refusal this is. It exists for the cases the window has
+ * to place differently: a refused segment name belongs beside the field it was typed into, and a
+ * refused replacement belongs in a dialog. Telling those apart by matching on prose would break
+ * the moment the prose was improved.
+ *
+ * `exists` is the names of the files a refused cut would have replaced, present only on that one
+ * refusal. The sentence names them too, and this is the same list unparsed: the window shows a
+ * filename to a person and must not have to read it back out of a sentence the engine is free to
+ * reword.
  */
 export class ApiFailure extends Error {
   readonly reason: string | null;
+  readonly exists: readonly string[];
 
-  constructor(message: string, reason: string | null = null) {
+  constructor(message: string, reason: string | null = null, exists: readonly string[] = []) {
     super(message);
     this.name = "ApiFailure";
     this.reason = reason;
+    this.exists = exists;
   }
 }
 
@@ -168,7 +175,8 @@ async function send<T>(path: string, body?: unknown, method = "POST"): Promise<T
     const shaped = typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : {};
     const message = "error" in shaped ? String(shaped["error"]) : `${path} failed (${response.status})`;
     const reason = "reason" in shaped ? String(shaped["reason"]) : null;
-    throw new ApiFailure(message, reason);
+    const exists = Array.isArray(shaped["exists"]) ? shaped["exists"].map(String) : [];
+    throw new ApiFailure(message, reason, exists);
   }
   return payload as T;
 }
@@ -207,7 +215,19 @@ export const api = {
     readonly name?: string;
     /** Put the segment and its transcript in a folder of that name. */
     readonly inFolder?: boolean;
-  }) => send<{ plan: PlanView; output: string; transcript: string | null }>("/api/plan", input),
+  }) =>
+    send<{
+      plan: PlanView;
+      output: string;
+      transcript: string | null;
+      /**
+       * The names of the files this cut would replace, or an empty list.
+       *
+       * The names rather than the paths: the dialog is read by a person, and the folder is already
+       * on screen under the name field. Always present, so silence never has to be read as "no".
+       */
+      exists: readonly string[];
+    }>("/api/plan", input),
 
   /**
    * Where a named segment will be written — answered without reading the source.
@@ -237,6 +257,15 @@ export const api = {
     readonly output?: string;
     readonly name?: string;
     readonly inFolder?: boolean;
+    /**
+     * Permission to replace a segment that is already there.
+     *
+     * Omitted, or anything but `true`, and the engine refuses with {@link ApiFailure.reason}
+     * `"exists"` rather than overwriting. The window turns that refusal into a question and sends
+     * the request again with this set — so permission is always something the operator gave, never
+     * something a default handed out.
+     */
+    readonly overwrite?: boolean;
   }) => send<{ started: boolean; output: string }>("/api/cut", input),
 
   cancel: () => send<{ cancelled: boolean }>("/api/cancel", {}),

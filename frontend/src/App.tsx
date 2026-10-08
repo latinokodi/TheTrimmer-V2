@@ -40,6 +40,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { OverwriteDialog } from "./components/OverwriteDialog";
 import { ProofPanel } from "./components/ProofPanel";
 import { ProgressLog } from "./components/ProgressLog";
 import {
@@ -56,6 +57,7 @@ import {
   type PlanView,
 } from "./api";
 import { nameRow } from "./state/nameRow";
+import { overwriteAsk } from "./state/overwriteAsk";
 import { planSentence, progressLabel } from "./state/planSentence";
 import { useRunLog } from "./state/useRunLog";
 /** CRF and preset are the encoder's, so they are named after it rather than invented. */
@@ -107,6 +109,24 @@ export function App(): JSX.Element {
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  // The files the plan says this cut would write over, straight from the engine. Empty is the
+  // ordinary answer and means the cut would replace nothing.
+  const [inTheWay, setInTheWay] = useState<readonly string[]>([]);
+  // Where the plan says this cut will write. Held beside `inTheWay` rather than read off the plan,
+  // because the two are one answer from one request: the engine reports which files are in the way
+  // and under which path, and a dialog that named the files but not where they are would be
+  // answering a question nobody asked.
+  const [planOutput, setPlanOutput] = useState("");
+  // The outputs the operator has declined to replace, and the output a refused cut was about.
+  //
+  // The set is what stops the question being unanswerable. The plan keeps describing the same
+  // occupied file, so without a record of the answer the dialog would reopen on the next render
+  // and the operator would be stuck behind it. It holds paths rather than a flag so that declining
+  // one segment does not silently decline the next one.
+  const [declined, setDeclined] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const [refusedCut, setRefusedCut] = useState<{ output: string; files: readonly string[] } | null>(
+    null,
+  );
 
   const running = log.running;
   const rate = media === null ? 25 : media.rate.numerator / media.rate.denominator;
@@ -131,6 +151,7 @@ export function App(): JSX.Element {
           log.begin();
           setOutcome(null);
           setFailure(null);
+          setRefusedCut(null);
           break;
         case "progress":
           log.tick(event);
@@ -146,6 +167,11 @@ export function App(): JSX.Element {
           break;
         case "finished": {
           setOutcome(event.outcome);
+          // A run has finished, so the file it wrote is now the file in the way. Forgetting every
+          // "no" is what makes the next cut of this same range ask again rather than quietly
+          // replacing the segment that has just been made — which is the case this whole feature
+          // exists for, and the one a remembered refusal would have silenced.
+          setDeclined(new Set<string>());
           const { outcome } = event;
           log.finish(
             event.ok,
@@ -209,6 +235,13 @@ export function App(): JSX.Element {
       setEndFrame(null);
       setPlan(null);
       setOutcome(null);
+      // A different source is a different set of paths, so every "no" recorded against the last
+      // one is meaningless — and a refusal about a file the new source will never write would be
+      // a dialog with nothing to be about.
+      setInTheWay([]);
+      setPlanOutput("");
+      setDeclined(new Set<string>());
+      setRefusedCut(null);
     } catch (caught) {
       setFailure(caught instanceof ApiFailure ? caught.message : String(caught));
     } finally {
@@ -292,6 +325,8 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (!ready || media === null || inFrame === null || endFrame === null) {
       setPlan(null);
+      setInTheWay([]);
+      setPlanOutput("");
       return;
     }
     const ticket = planRef.current + 1;
@@ -313,7 +348,15 @@ export function App(): JSX.Element {
           // is worse than no plan, because it looks current.
           if (planRef.current === ticket) {
             setPlan(answer.plan);
-            setPlannedFor(`${inFrame}-${endFrame}-${crf}-${preset}-${segmentName.trim()}-${inFolder}`);
+            // Whether this cut would replace something, which is asked about before the button
+            // rather than after it. An answer that is not current is dropped with the plan it
+            // came with, for the same reason: it names files belonging to a range nobody is
+            // about to cut.
+            setInTheWay(answer.exists);
+            setPlanOutput(answer.output);
+            setPlannedFor(
+              `${inFrame}-${endFrame}-${crf}-${preset}-${segmentName.trim()}-${inFolder}`,
+            );
           }
         })
         .catch(() => {
@@ -321,6 +364,8 @@ export function App(): JSX.Element {
             // The plan's own failure is reported by the plan line, not here: this row is about the
             // name, and a range the engine refused is not something the name field should claim.
             setPlan(null);
+            setInTheWay([]);
+            setPlanOutput("");
           }
         });
     }, 250);
@@ -374,12 +419,38 @@ export function App(): JSX.Element {
   }, [inFolder, media, rate, segmentName]);
 
   // ---- the cut ------------------------------------------------------------------------------
-  const trim = useCallback(async () => {
+  /**
+   * The question the window is holding, or `null` when it has none.
+   *
+   * Gated on `planned`, which is the answer to "is this plan describing the marks on screen?".
+   * A plan one keystroke out of date names files belonging to a range nobody is about to cut, and
+   * asking about those would be asking about the wrong segment — the same reason the plan line
+   * refuses to show a stale plan.
+   */
+  const ask = planned
+    ? overwriteAsk({
+        output: planOutput,
+        files: refusedCut?.files ?? inTheWay,
+        refusedOutput: refusedCut?.output ?? null,
+        refusedReason: refusedCut === null ? null : "exists",
+        dismissed: declined,
+      })
+    : null;
+
+  /**
+   * Run the cut. `overwrite` is only ever true because somebody answered the dialog.
+   *
+   * Nothing else in this file passes it, so there is no path by which the engine is told to
+   * replace a file that a person did not agree to replace — which is the whole of the guarantee,
+   * and the reason it is a parameter here rather than a piece of state somewhere.
+   */
+  const cut = useCallback(async (overwrite: boolean) => {
     if (!ready || media === null || inFrame === null || endFrame === null) {
       return;
     }
     setBusy("starting");
     setFailure(null);
+    setRefusedCut(null);
     try {
       await api.cut({
         source: media.path,
@@ -391,13 +462,48 @@ export function App(): JSX.Element {
         verify,
         name: segmentName.trim(),
         inFolder,
+        overwrite,
       });
+      setInTheWay([]);
     } catch (caught) {
-      setFailure(caught instanceof ApiFailure ? caught.message : String(caught));
+      const refusal = caught instanceof ApiFailure ? caught : null;
+      if (refusal !== null && refusal.reason === "exists" && refusal.exists.length > 0) {
+        // Not a failure: a question. The engine refused because there is a file there and nobody
+        // said it could go, and the plan may not have known that a moment ago — this is the later,
+        // authoritative reading of the same fact.
+        setRefusedCut({ output: planOutput, files: refusal.exists });
+      } else {
+        setFailure(refusal !== null ? refusal.message : String(caught));
+      }
     } finally {
       setBusy(null);
     }
-  }, [crf, endFrame, inFrame, inFolder, media, preset, rate, ready, segmentName, verify]);
+  }, [crf, endFrame, inFrame, inFolder, media, planOutput, preset, rate, ready, segmentName, verify]);
+
+  const trim = useCallback(() => cut(false), [cut]);
+
+  /**
+   * Write over the file, because somebody said so.
+   *
+   * The refusal is cleared first: it has been answered, and leaving it set would leave `ask`
+   * non-null for the instant before the cut begins — the dialog would blink back and the button
+   * behind it would stay disabled. Permission here is a single argument to a single call, so
+   * there is nothing left over afterwards that could grant it again.
+   *
+   * `declined` is deliberately *not* written to. Forgetting the "no" is what makes the engine ask
+   * again on the next cut of the same range, which is right: a new run means a new file to lose.
+   */
+  const replace = useCallback(() => {
+    setRefusedCut(null);
+    void cut(true);
+  }, [cut]);
+
+  const keepTheFile = useCallback(() => {
+    if (ask !== null) {
+      setDeclined((current) => new Set(current).add(ask.output));
+    }
+    setRefusedCut(null);
+  }, [ask]);
 
   const toggleFullscreen = useCallback(async () => {
     const value = await window.electronAPI?.toggleFullscreen?.();
@@ -407,6 +513,12 @@ export function App(): JSX.Element {
   // ---- shortcuts ----------------------------------------------------------------------------
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
+      // While a question is open it owns the keyboard. Ctrl+Enter behind a dialog would otherwise
+      // start a cut the operator has not answered for — and the answer to the question is a
+      // button in the dialog, not a shortcut to the thing being asked about.
+      if (ask !== null) {
+        return;
+      }
       if (event.key === "F11") {
         event.preventDefault();
         void toggleFullscreen();
@@ -431,7 +543,7 @@ export function App(): JSX.Element {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [browse, toggleFullscreen, trim]);
+  }, [ask, browse, toggleFullscreen, trim]);
 
   const planText = useMemo(() => {
     // A plan describes one range. Marks that have moved on since it was asked for have no
@@ -767,7 +879,7 @@ export function App(): JSX.Element {
               type="button"
               className="btn btn--primary btn--big"
               onClick={() => void trim()}
-              disabled={running || !ready || !planned || busy !== null}
+              disabled={running || !ready || !planned || busy !== null || ask !== null}
               title="Cut the marked range, then measure the finished file against the source (Ctrl+Enter)"
             >
               {running ? "Working…" : "Trim"}
@@ -870,6 +982,14 @@ export function App(): JSX.Element {
       <span className="sr-only" aria-hidden="false">
         TheTrimmer {health?.version ?? ""}
       </span>
+
+      {/*
+        Last in the DOM, which is what puts it over everything else without a z-index race against
+        the panels: it is the only thing on screen while it is open.
+      */}
+      {ask !== null ? (
+        <OverwriteDialog ask={ask} onReplace={replace} onCancel={keepTheFile} />
+      ) : null}
     </div>
   );
 }

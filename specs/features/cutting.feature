@@ -106,3 +106,23 @@ Feature: Cutting a marked range out of a master
   Scenario: a refusal says which field it is about
     When I ask where the segment named "Take 1:2" will be written
     Then the refusal is tagged as being about the name
+
+  Scenario: a segment is never replaced without being asked first
+    Given the segment is already there
+    When I mark frames 100 to 200
+    Then the plan says the file is in the way
+    When the cut is attempted with the permission left unsaid
+    Then the cut is refused for a file that already exists
+    And the refusal names the file that is already there
+    And the file that was there is untouched
+
+  Scenario: a segment is replaced once permission has been given
+    Given the segment is already there
+    When I mark frames 100 to 200
+    And the cut is attempted with permission to replace
+    Then the cut is not refused for an existing file
+
+  Scenario: a segment whose captions are already there is in the way twice
+    Given the segment and its transcript are already there
+    When I mark frames 100 to 200
+    Then the plan says 2 files are in the way
