@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { type PlanSentence, type Planned, planSentence, progressLabel } from "./planSentence";
+import { type Bar, type Span, pauseNote, toBars } from "./pauseStrip";
 import { type LogLine, type RunProgress, newestFirst, remainingSeconds, stepFraction } from "./useRunLog";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -50,6 +51,11 @@ interface World {
   /** Whether a run is going, and what the panel says about the lines it holds. */
   running: boolean;
   note: string | null;
+  /** The loaded file's pauses, and what the strip under the marks draws from them. */
+  spans: readonly Span[];
+  duration: number;
+  bands: readonly Bar[];
+  quiet: string | null;
 }
 
 function blank(): World {
@@ -70,6 +76,10 @@ function blank(): World {
     said: null,
     running: false,
     note: null,
+    spans: [],
+    duration: 0,
+    bands: [],
+    quiet: null,
   };
 }
 
@@ -269,6 +279,44 @@ const STEPS: readonly (readonly [RegExp, StepFunction])[] = [
     (world, wanted) => { expect(world.note).toBe(wanted); },
   ],
   [/^it has no note$/, (world) => { expect(world.note).toBeNull(); }],
+  [
+    /^a file of (\d+) seconds with a pause from ([\d.]+) to ([\d.]+)$/,
+    (world, seconds, start, end) => {
+      world.duration = Number(seconds);
+      world.spans = [{ start: Number(start), end: Number(end) }];
+    },
+  ],
+  [
+    /^a file of (\d+) seconds whose pauses have not been measured$/,
+    (world, seconds) => {
+      world.duration = Number(seconds);
+      world.spans = [];
+    },
+  ],
+  [
+    /^the pause strip is drawn$/,
+    (world) => {
+      world.bands = toBars(world.spans, world.duration);
+      world.quiet = pauseNote(world.spans, world.duration);
+    },
+  ],
+  [
+    /^it draws (\d+) band[s]?$/,
+    (world, count) => { expect(world.bands.length).toBe(Number(count)); },
+  ],
+  [
+    /^the band begins at ([\d.]+)% and is ([\d.]+)% wide$/,
+    (world, left, width) => {
+      expect(world.bands[0]?.left).toBeCloseTo(Number(left), 6);
+      expect(world.bands[0]?.width).toBeCloseTo(Number(width), 6);
+    },
+  ],
+  [/^it draws no bands$/, (world) => { expect(world.bands).toEqual([]); }],
+  [
+    /^the pauses are described as "(.+)"$/,
+    (world, wanted) => { expect(world.quiet).toBe(wanted); },
+  ],
+  [/^there is nothing to say about the pauses$/, (world) => { expect(world.quiet).toBeNull(); }],
 ];
 
 function run(step: Step, world: World): void {

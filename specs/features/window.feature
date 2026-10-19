@@ -71,3 +71,16 @@ Feature: The run's progress in the window
     Given a run that has ended holding 0 line(s)
     When the progress panel is drawn
     Then it has no note
+
+  Scenario: the pauses are drawn under the range, against the whole file
+    Given a file of 60 seconds with a pause from 15 to 30
+    When the pause strip is drawn
+    Then it draws 1 band
+    And the band begins at 25% and is 25% wide
+    And the pauses are described as "1 pause · 15s quiet of 1m 00s (25%)"
+
+  Scenario: a file whose pauses have not been measured draws no strip
+    Given a file of 60 seconds whose pauses have not been measured
+    When the pause strip is drawn
+    Then it draws no bands
+    And there is nothing to say about the pauses

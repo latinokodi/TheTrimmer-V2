@@ -20,6 +20,7 @@ from pathlib import Path
 
 import av
 
+from . import processes
 from .timecode import format_rate, parse_rate
 
 #: How long to wait between checks for a cancelled job. Long enough to be free, short
@@ -164,69 +165,80 @@ def _run_watched(
     if log:
         log("  $ " + " ".join(str(a) for a in args))
     started = time.monotonic()
-    process = subprocess.Popen(
+    process = processes.spawn(
         [str(a) for a in args],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         errors="replace",
         bufsize=1,
-        creationflags=NO_WINDOW,
     )
 
-    stderr_parts: list[str] = []
-    stop = threading.Event()
-
-    def drain_stderr() -> None:
-        for line in process.stderr or ():
-            stderr_parts.append(line)
-
-    def read_progress() -> None:
-        reader = _TickReader()
-        for chunk in process.stdout or ():
-            for block in reader.feed(chunk):
-                tick = _ticks(block, expected_seconds)
-                if tick is not None and progress is not None:
-                    progress(tick)
-
-    readers = [threading.Thread(target=drain_stderr, daemon=True)]
-    if progress is not None:
-        readers.append(threading.Thread(target=read_progress, daemon=True))
-    for reader in readers:
-        reader.start()
-
-    if log and heartbeat:
-        def ticker() -> None:
-            while not stop.wait(heartbeat):
-                log(f"    ... {time.monotonic() - started:.0f}s")
-
-        threading.Thread(target=ticker, daemon=True).start()
-
+    # The child is registered from the moment spawn returns, so everything after it runs
+    # inside this try: even building a reader thread can fail when the process is out of
+    # threads, and a forgotten entry would leave the quit path killing a process this code
+    # already reaped while the encoder it should have killed is not in the registry.
     try:
-        while process.poll() is None:
-            if cancel is not None and cancel.cancelled:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                raise Cancelled("cancelled") from None
-            if timeout is not None and time.monotonic() - started > timeout:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                raise FFmpegError(
-                    f"command timed out after {timeout:.0f}s",
-                    [str(a) for a in args],
-                    "".join(stderr_parts),
-                )
-            time.sleep(POLL_SECONDS)
+        stderr_parts: list[str] = []
+        stop = threading.Event()
+
+        def drain_stderr() -> None:
+            for line in process.stderr or ():
+                stderr_parts.append(line)
+
+        def read_progress() -> None:
+            reader = _TickReader()
+            for chunk in process.stdout or ():
+                for block in reader.feed(chunk):
+                    tick = _ticks(block, expected_seconds)
+                    if tick is not None and progress is not None:
+                        progress(tick)
+
+        readers = [threading.Thread(target=drain_stderr, daemon=True)]
+        if progress is not None:
+            readers.append(threading.Thread(target=read_progress, daemon=True))
+
+        try:
+            for reader in readers:
+                reader.start()
+
+            if log and heartbeat:
+                def ticker() -> None:
+                    while not stop.wait(heartbeat):
+                        log(f"    ... {time.monotonic() - started:.0f}s")
+
+                threading.Thread(target=ticker, daemon=True).start()
+
+            while process.poll() is None:
+                if cancel is not None and cancel.cancelled:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                    raise Cancelled("cancelled") from None
+                if timeout is not None and time.monotonic() - started > timeout:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                    raise FFmpegError(
+                        f"command timed out after {timeout:.0f}s",
+                        [str(a) for a in args],
+                        "".join(stderr_parts),
+                    )
+                time.sleep(POLL_SECONDS)
+        finally:
+            stop.set()
+            for reader in readers:
+                # A reader whose start() raised has no OS thread to join, and joining it
+                # would replace the real failure with "cannot join thread before it is
+                # started"; stop.set() is what tells the started ones to finish.
+                if reader.ident is not None:
+                    reader.join(timeout=5)
     finally:
-        stop.set()
-        for reader in readers:
-            reader.join(timeout=5)
+        processes.release(process)
 
     stderr = "".join(stderr_parts)
     if log:
@@ -242,11 +254,37 @@ def _run_watched(
 
 
 def _run_quiet(args: list[str], timeout: float = 60.0, **kwargs) -> subprocess.CompletedProcess:
-    """``subprocess.run`` with no console window for the child and a default timeout."""
+    """``subprocess.run`` with no console window, a default timeout, and a child that is findable.
+
+    Every caller asks for the same two things -- captured output, decoded as text -- so this opens
+    the pipes itself rather than leaving them to ``subprocess.run``. ``run`` does not hand back the
+    process, and a child that cannot be found is a child a quit cannot stop: this is the same
+    orphaned-encoder problem as ``run`` above, in the calls that are short enough to look harmless.
+    A probe on a stalled network share is not short, and neither is a frame-MD5 over a long window.
+
+    The rest of the contract is the one callers already rely on: a timeout kills the child and
+    raises, and the result carries the exit status and both streams. Text is decoded as UTF-8 with
+    a backslash escape rather than the machine's ANSI code page, because ffprobe's JSON can carry a
+    stream title in any script and a failed decode must not turn one unreadable character into an
+    exception.
+    """
+    kwargs.pop("creationflags", None)
+    kwargs.pop("capture_output", None)
+    text = kwargs.pop("text", False)
+    if text:
+        kwargs.setdefault("encoding", "utf-8")
+        kwargs.setdefault("errors", "backslashreplace")
+    kwargs.setdefault("stdout", subprocess.PIPE)
+    kwargs.setdefault("stderr", subprocess.PIPE)
+    process = processes.spawn(args, **kwargs)
     try:
-        return subprocess.run(args, creationflags=NO_WINDOW, timeout=timeout, **kwargs)
+        out, err = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired as exc:
+        processes.terminate(process, timeout=2.0)
         raise FFmpegError(f"command timed out after {timeout}s", [str(a) for a in args]) from exc
+    finally:
+        processes.release(process)
+    return subprocess.CompletedProcess(args, process.returncode, out, err)
 
 
 class FFmpegError(RuntimeError):
@@ -360,56 +398,61 @@ def run(
     if log:
         log("  $ " + " ".join(str(a) for a in args))
     started = time.monotonic()
-    process = subprocess.Popen(
+    process = processes.spawn(
         [str(a) for a in args],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         errors="replace",
-        creationflags=NO_WINDOW,
     )
-    stop_heartbeat = threading.Event()
-    if log and heartbeat:
-        def tick() -> None:
-            while not stop_heartbeat.wait(heartbeat):
-                log(f"    ... {time.monotonic() - started:.0f}s")
-
-        threading.Thread(target=tick, daemon=True).start()
+    # Same rule as _run_watched: registered on spawn, released on every way out. The
+    # reporting below can itself raise (a log callback is caller code), so it sits inside
+    # the try too -- a failing log must not leave the entry behind for the quit path.
     try:
-        while True:
-            try:
-                _, stderr = process.communicate(timeout=POLL_SECONDS)
-                break
-            except subprocess.TimeoutExpired:
-                if cancel is not None and cancel.cancelled:
-                    process.terminate()
-                    try:
-                        process.communicate(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                    raise Cancelled("cancelled") from None
-                if timeout is not None and time.monotonic() - started > timeout:
-                    process.terminate()
-                    try:
-                        process.communicate(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                    raise FFmpegError(
-                        f"command timed out after {timeout:.0f}s",
-                        [str(a) for a in args],
-                        "",
-                    )
-    except Cancelled:
-        raise
+        stop_heartbeat = threading.Event()
+        if log and heartbeat:
+            def tick() -> None:
+                while not stop_heartbeat.wait(heartbeat):
+                    log(f"    ... {time.monotonic() - started:.0f}s")
+
+            threading.Thread(target=tick, daemon=True).start()
+        try:
+            while True:
+                try:
+                    _, stderr = process.communicate(timeout=POLL_SECONDS)
+                    break
+                except subprocess.TimeoutExpired:
+                    if cancel is not None and cancel.cancelled:
+                        process.terminate()
+                        try:
+                            process.communicate(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                        raise Cancelled("cancelled") from None
+                    if timeout is not None and time.monotonic() - started > timeout:
+                        process.terminate()
+                        try:
+                            process.communicate(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                        raise FFmpegError(
+                            f"command timed out after {timeout:.0f}s",
+                            [str(a) for a in args],
+                            "",
+                        )
+        except Cancelled:
+            raise
+        finally:
+            stop_heartbeat.set()
+        if log:
+            state = "ok" if process.returncode == 0 else f"exit {process.returncode}"
+            log(f"  -> {state} in {time.monotonic() - started:.1f}s")
+        if process.returncode != 0:
+            raise FFmpegError(f"command failed (exit {process.returncode})",
+                              [str(a) for a in args], stderr or "")
+        return stderr or ""
     finally:
-        stop_heartbeat.set()
-    if log:
-        state = "ok" if process.returncode == 0 else f"exit {process.returncode}"
-        log(f"  -> {state} in {time.monotonic() - started:.1f}s")
-    if process.returncode != 0:
-        raise FFmpegError(f"command failed (exit {process.returncode})", [str(a) for a in args],
-                          stderr or "")
-    return stderr or ""
+        processes.release(process)
 
 
 class Cancelled(RuntimeError):

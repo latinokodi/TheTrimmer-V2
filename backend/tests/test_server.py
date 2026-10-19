@@ -472,3 +472,109 @@ def test_the_plan_says_which_files_a_cut_would_be_replacing(monkeypatch, tmp_pat
         assert (await answer.json())["exists"] == []
 
     call(with_client(check_clear))
+
+def test_loading_a_source_measures_its_pauses(tmp_path, monkeypatch):
+    """The pauses are measured once, in the background, and the answer is not delayed by it.
+
+    The strip under the marks is drawn from this measurement, so it has to arrive rather than sit
+    in a cache nobody reads: the engine publishes it as an event on the same stream the cut uses.
+    A measurement that takes a minute on an hour-long master must not be a minute of blank window,
+    and must not be done twice.
+    """
+    reel = tmp_path / "reel.mp4"
+    reel.write_bytes(b"\x00" * 32)
+    media = ff.MediaInfo(
+        path=reel, codec="h264", width=1920, height=1080, pix_fmt="yuv420p",
+        rate=Fraction(25), average_rate=Fraction(25), timebase=Fraction(1, 12800),
+        frames=100, duration=4.0, audio=ff.AudioStream(codec="aac", sample_rate=48000, channels=2),
+        size_bytes=32, start_time=0.0,
+    )
+    monkeypatch.setattr(server.ff, "probe", lambda path: media)
+
+    measured: list[str] = []
+    monkeypatch.setattr(
+        server.quiet,
+        "silences",
+        lambda path, **kwargs: measured.append(str(path)) or [server.quiet.Span(1.0, 2.0)],
+    )
+
+    published: list[dict] = []
+    monkeypatch.setattr(server.HUB, "publish", lambda event: published.append(event))
+
+    async def check(client: TestClient):
+        answer = await client.get("/api/probe", params={"path": str(reel)})
+        assert answer.status == 200
+        for _ in range(50):
+            if published:
+                break
+            await asyncio.sleep(0.01)
+
+    call(with_client(check))
+
+    assert measured == [str(reel)], "the pauses were never measured for the source that was loaded"
+    event = next(item for item in published if item["type"] == "silence")
+    assert event["source"] == str(reel)
+    assert event["spans"] == [[1.0, 2.0]]
+    assert event["duration"] == 4.0
+
+
+def test_a_mark_snaps_into_a_pause_and_says_where(tmp_path, monkeypatch):
+    """The snapping rule is the engine's, and the timecode comes back with the frame.
+
+    Two reasons it is not computed in the window: the rule is one function (`quietest_frame`, with
+    its own tests) and the timecode is another (`format_timecode`, with drop-frame). A second copy
+    of either in TypeScript is how two fields come to show the same frame differently.
+    """
+    reel = tmp_path / "reel.mp4"
+    reel.write_bytes(b"\x00" * 32)
+    media = ff.MediaInfo(
+        path=reel, codec="h264", width=1920, height=1080, pix_fmt="yuv420p",
+        rate=Fraction(25), average_rate=Fraction(25), timebase=Fraction(1, 12800),
+        frames=250, duration=10.0, audio=None, size_bytes=32, start_time=0.0,
+    )
+    monkeypatch.setattr(server.ff, "probe", lambda path: media)
+    monkeypatch.setattr(server, "_silences_of", lambda path: [server.quiet.Span(4.0, 6.0)])
+
+    async def check(client: TestClient):
+        answer = await client.post("/api/snap", json={"source": str(reel), "frame": 99})
+        assert answer.status == 200
+        return await answer.json()
+
+    body = call(with_client(check))
+    assert body["from"] == 99
+    assert body["frame"] == 125, "the middle of a 4.0-6.0 s pause is 5.0 s, which is frame 125"
+    assert body["moved"] is True
+    assert body["timecode"] == "00:00:05:00"
+
+
+def test_a_mark_outside_the_file_is_refused(tmp_path, monkeypatch):
+    """A frame the file does not have is a refusal, not a snap to the nearest one it does."""
+    reel = tmp_path / "reel.mp4"
+    reel.write_bytes(b"\x00" * 32)
+    monkeypatch.setattr(
+        server.ff, "probe",
+        lambda path: ff.MediaInfo(
+            path=reel, codec="h264", width=1920, height=1080, pix_fmt="yuv420p",
+            rate=Fraction(25), average_rate=Fraction(25), timebase=Fraction(1, 12800),
+            frames=100, duration=4.0, audio=None, size_bytes=32, start_time=0.0,
+        ),
+    )
+
+    async def check(client: TestClient):
+        answer = await client.post("/api/snap", json={"source": str(reel), "frame": 100})
+        assert answer.status == 400
+        return await answer.json()
+
+    assert "outside this file" in call(with_client(check))["error"]
+
+
+def test_a_proof_name_cannot_leave_its_folder(tmp_path):
+    """The route serves one directory by name, and a traversal is refused before it is resolved."""
+    async def check(client: TestClient):
+        for name in ("../secret.png", "..\\secret.png", "sub/dir.png", "a.png.exe"):
+            answer = await client.get("/api/proof", params={"name": name})
+            assert answer.status == 400, f"{name!r} was not refused"
+        answer = await client.get("/api/proof", params={"name": "nobody-made-this.png"})
+        assert answer.status == 404
+
+    call(with_client(check))

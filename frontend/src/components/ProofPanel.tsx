@@ -86,6 +86,29 @@ export function ProofPanel({ outcome }: { readonly outcome: OutcomeView | null }
             : "Full re-encode: no keyframe fell inside the range, so all of it was re-encoded."}
       </p>
 
+      {/*
+        The proof, as pictures. The plan note above says a head patch ran; this shows the frames
+        either side of the two joins it makes, which is the only evidence about a cut that does
+        not need believing. A sheet that could not be drawn is simply absent.
+      */}
+      {outcome.proof.length > 0 ? (
+        <div className="proof-sheets">
+          {outcome.proof.map((sheet) => (
+            <figure className="proof-sheet" key={sheet.name}>
+              <img
+                src={`/api/proof?name=${encodeURIComponent(sheet.name)}`}
+                alt={`The frames either side of the ${sheet.side === "in" ? "in point" : "out point"}`}
+                loading="lazy"
+              />
+              <figcaption>
+                {sheet.side === "in" ? "the in point" : "the out point"} · frames{" "}
+                {sheet.frames[0]}…{sheet.frames[sheet.frames.length - 1]}
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+      ) : null}
+
       {outcome.overshoot > 0 ? (
         <p className="note note--warn">
           The copy stopped {outcome.overshoot} frame(s) past the out point, as a stream copy must — it

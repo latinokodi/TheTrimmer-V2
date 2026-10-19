@@ -64,7 +64,15 @@ function startBackend() {
   console.log(`[thetrimmer] backend: ${interpreter()} ${script}`);
   backend = spawn(interpreter(), [script], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(BACKEND_PORT), PYTHONIOENCODING: "utf-8" },
+    // `THE_TRIMMER_PARENT_PID` is how the engine knows whose death to follow. Windows does not
+    // kill a process's children when the parent dies, so an ffmpeg encoding a master would keep
+    // encoding it after this window closed -- with the file locked and the job in no state.
+    env: {
+      ...process.env,
+      PORT: String(BACKEND_PORT),
+      PYTHONIOENCODING: "utf-8",
+      THE_TRIMMER_PARENT_PID: String(process.pid),
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   backend.stdout.on("data", (chunk) => process.stdout.write(`[engine] ${chunk}`));
@@ -83,13 +91,55 @@ function startBackend() {
   });
 }
 
-function stopBackend() {
+/**
+ * Stop the engine: ask it to cancel, give it a moment, then end it.
+ *
+ * The order is the point. Killing the interpreter first leaves its ffmpeg children running --
+ * Windows tears down one process, not a tree -- so the engine is asked to cancel first, while
+ * the code that knows which child belongs to which pass is still alive to end it. The kill is
+ * still coming, because a wedged engine must not keep a window from closing; and the engine
+ * watches this process's PID as a backstop for the case where the kill is the only thing that
+ * happens.
+ */
+async function stopBackend() {
   stopping = true;
-  if (backend) {
-    backend.kill();
-    backend = null;
+  const child = backend;
+  backend = null;
+  if (!child) return;
+  try {
+    await fetch(`${BACKEND}/api/cancel`, {
+      method: "POST",
+      signal: AbortSignal.timeout(1200),
+    });
+  } catch {
+    // No engine, or one too busy to answer. The kill below is the next step either way.
   }
+  // A moment for the engine to see the cancel and unwind its own child before it is killed.
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  child.kill();
 }
+
+/** True once the application has started closing, so the quit it asks for is not caught again. */
+let closing = false;
+
+/**
+ * Quit through the engine rather than past it.
+ *
+ * `before-quit` is synchronous, so the shutdown is started there and the quit it eventually
+ * asks for comes back through the same event: the second time through, `closing` is set and the
+ * default behaviour is left alone. Without this the window would close first and the engine
+ * would be killed with an encoder still running.
+ */
+function shutdown(event) {
+  if (closing) return;
+  closing = true;
+  stopping = true;
+  if (event) event.preventDefault();
+  stopBackend().finally(() => app.quit());
+}
+
+app.on("window-all-closed", () => shutdown());
+app.on("before-quit", (event) => shutdown(event));
 
 /**
  * Wait until the engine answers.
@@ -198,12 +248,6 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(engineUp);
   });
 });
-
-app.on("window-all-closed", () => {
-  stopBackend();
-  app.quit();
-});
-app.on("before-quit", stopBackend);
 
 // ---------------------------------------------------------------------------------------
 // The four things a page cannot do for itself

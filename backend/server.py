@@ -31,7 +31,9 @@ import asyncio
 import json
 import os
 import queue
+import re
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -42,7 +44,10 @@ from aiohttp import web
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from trimmer import audio as quiet  # noqa: E402
 from trimmer import ffmpeg as ff  # noqa: E402
+from trimmer import processes  # noqa: E402
+from trimmer import proof  # noqa: E402
 from trimmer import subtitles as subs  # noqa: E402
 from trimmer import trim as cutter  # noqa: E402
 from trimmer import verify as verifier  # noqa: E402
@@ -54,6 +59,29 @@ if hasattr(sys.stdout, "reconfigure"):
 VERSION = "2.0.0"
 PORT = int(os.environ.get("PORT", "8765"))
 VIDEO_SUFFIXES = [".mp4", ".mov", ".mkv", ".m4v", ".mxf", ".avi", ".webm", ".mts", ".m2ts"]
+
+#: The shell's own PID, handed in by Electron. Zero when the backend was started by hand -- from
+#: `start.bat`, a terminal, or a test -- in which case there is no parent to watch for.
+PARENT_PID = int(os.environ.get("THE_TRIMMER_PARENT_PID", "0") or 0)
+
+def _data_dir() -> Path:
+    """Where this application keeps what is not the user's: proofs, and nothing else yet.
+
+    ``%LOCALAPPDATA%`` rather than the project folder, because the project folder is replaced on
+    update and proofs are not the user's files to lose. The fallback is the system temp directory
+    for a machine with no profile, which still works and is still outside the install.
+    """
+    root = os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_CACHE_HOME")
+    base = Path(root) if root else Path(tempfile.gettempdir())
+    return base / "TheTrimmer"
+
+
+#: Where a cut's contact sheet is written. Served by :func:`proof_image`, never opened directly.
+PROOF_DIR = _data_dir() / "proof"
+
+#: How long a proof is worth keeping. It describes one cut, and the cut it describes is older than
+#: this by the time anybody would ask again.
+PROOF_DAYS = 7
 
 
 # ---------------------------------------------------------------------------------------
@@ -241,6 +269,60 @@ def _check_json(result: verifier.VerifyResult) -> list[dict[str, Any]]:
     return rows
 
 
+def _proof_name(spec: cutter.TrimSpec, side: str) -> str:
+    """A file name for one sheet: the segment, the side, and when it was drawn."""
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", spec.output.stem)[:60].strip("-") or "segment"
+    return f"{stem}-{side}-{int(time.time() * 1000)}.png"
+
+
+def _render_proof(spec: cutter.TrimSpec, report: cutter.TrimReport,
+                  media: ff.MediaInfo) -> list[dict[str, Any]]:
+    """Draw what the two ends of the cut actually landed on.
+
+    A head-patched cut is four joins -- the in point, the head->body keyframe, the body->tail
+    keyframe and the out point -- and the two that matter most sit within a second of a mark.
+    So there are two sheets, each anchored on a frame whose time the container itself states
+    (`plan.in_seconds`, `plan.tail_keyframe_seconds`), because a time computed from the average
+    rate can name the frame beside the one intended and the sheet would then prove the wrong
+    frame. The decode is bounded by that anchor and a couple of seconds of span, so this costs
+    about a second on a two-hour master rather than the minutes a whole-file selection would.
+
+    A sheet that cannot be drawn is not a failed cut: the list comes back short and the window
+    shows the verdicts without a picture.
+    """
+    plan = report.plan
+    rate = float(media.grid_rate)
+    last = spec.out_frame - 1
+    tail_base = spec.out_frame - plan.tail_frames if plan.tail_frames else last
+    sides = [
+        ("in", spec.in_frame,
+         plan.in_seconds if plan.in_seconds is not None else media.seconds_of(spec.in_frame),
+         spec.in_frame + plan.head_frames),
+        ("out", tail_base,
+         plan.tail_keyframe_seconds if plan.tail_keyframe_seconds is not None
+         else (plan.out_seconds if plan.out_seconds is not None
+               else media.seconds_of(tail_base)),
+         last),
+    ]
+    images: list[dict[str, Any]] = []
+    for side, base, anchor, far in sides:
+        wanted = proof.windows([base, far], 4, media.frames)
+        relative = sorted({frame - base for frame in wanted if frame >= base})
+        if not relative:
+            continue
+        name = _proof_name(spec, side)
+        span = (relative[-1] + 2) / rate
+        if proof.render(spec.source, relative, rate, PROOF_DIR / name,
+                        seek=anchor, span=span):
+            images.append({
+                "side": side,
+                "name": name,
+                "anchor": round(anchor, 3),
+                "frames": [base + step for step in relative],
+            })
+    return images
+
+
 def _run_job(job: Job) -> None:
     """The worker. Everything it says goes onto the hub as it happens."""
     global CURRENT
@@ -283,6 +365,7 @@ def _run_job(job: Job) -> None:
             "checks": [],
             "verified": None,
             "subtitles": None,
+            "proof": [],
         }
 
         if job.verify_mode != "off":
@@ -302,6 +385,13 @@ def _run_job(job: Job) -> None:
                 # an array answers a different question.
                 "clamped": len(report.subtitles.clamped),
             }
+
+        # Drawn last, after the deliverable exists and after the verdicts: it is evidence about
+        # the cut, so a sheet that cannot be drawn must not fail a file that is already correct.
+        try:
+            outcome["proof"] = _render_proof(spec, report, media)
+        except Exception:  # noqa: BLE001
+            outcome["proof"] = []
 
         job.outcome = outcome
         publish({"type": "finished", "ok": outcome["verified"] is not False, "outcome": outcome})
@@ -356,6 +446,7 @@ async def probe(request: web.Request) -> web.Response:
 
     transcript = subs.find_for(path)
     _warm_keyframes(path)
+    _warm_silences(path)
     return web.json_response({
         "media": _describe(media),
         "transcript": None if transcript is None else str(transcript),
@@ -392,6 +483,130 @@ def _warm_keyframes(path: Path) -> None:
             pass
 
     _ = asyncio.get_running_loop().create_task(read())
+
+
+# ---------------------------------------------------------------------------------------
+# Where the sound stops: the map the marks snap into
+# ---------------------------------------------------------------------------------------
+
+#: Silence per source, keyed the way every cache in this engine is keyed: the path, its size and
+#: its modification time, because those are what change when a file is replaced. A weak key here
+#: would serve the previous file's gaps against the new file's footage, which is worse than no map.
+_SILENCES: dict[tuple[str, int, int], list] = {}
+_SILENCES_LOCK = threading.Lock()
+
+
+def _silences_of(path: Path) -> list:
+    """The cached gaps for a source, or an empty list. Never measures; see :func:`_warm_silences`."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return []
+    with _SILENCES_LOCK:
+        return _SILENCES.get((str(path), stat.st_size, stat.st_mtime_ns), [])
+
+
+def _warm_silences(path: Path) -> None:
+    """Measure where a source's audio goes quiet, in the background, once.
+
+    Brought forward for the same reason the keyframe list is: the operator should not wait for a
+    measurement they did not ask for at the moment they ask for something else. The difference is
+    that this one is *reported* rather than merely cached -- the window draws the gaps as bands
+    and uses them to snap a mark into a pause, so the answer has to arrive as an event, not as a
+    page load that happens to be slower.
+
+    Silence is the audio equivalent of a keyframe: a place a cut costs nothing. A cut inside a
+    word clips a consonant the operator cannot see in a frame-accurate picture, and the pause
+    either side of it is the only place worth landing on.
+    """
+    async def measure() -> None:
+        try:
+            stat = path.stat()
+            key = (str(path), stat.st_size, stat.st_mtime_ns)
+            with _SILENCES_LOCK:
+                if key in _SILENCES:
+                    spans = _SILENCES[key]
+                else:
+                    spans = None
+            if spans is None:
+                spans = await asyncio.to_thread(quiet.silences, path)
+                with _SILENCES_LOCK:
+                    _SILENCES[key] = spans
+            duration = (await asyncio.to_thread(ff.probe, path)).duration
+            HUB.publish({
+                "type": "silence",
+                "source": str(path),
+                "spans": [[round(span.start, 3), round(span.end, 3)] for span in spans],
+                "speech": [[round(span.start, 3), round(span.end, 3)]
+                           for span in quiet.speech(spans, duration)],
+                "duration": duration,
+            })
+        except Exception:  # noqa: BLE001 - a map that cannot be drawn is not a failed load
+            pass
+
+    _ = asyncio.get_running_loop().create_task(measure())
+
+
+async def silence(request: web.Request) -> web.Response:
+    """The gaps for the loaded source, if they have been measured already.
+
+    Asked on a reload, when the event that carried them has been and gone. An empty list means
+    "not measured yet", which the window shows as no bands rather than as a file with no pauses.
+    """
+    path = Path(request.query.get("path", ""))
+    if not path.is_file():
+        return web.json_response({"error": f"{path} is not a file"}, status=400)
+    return web.json_response({
+        "spans": [[round(span.start, 3), round(span.end, 3)] for span in _silences_of(path)],
+    })
+
+
+async def snap(request: web.Request) -> web.Response:
+    """Move a frame into the nearest pause, if there is one within reach.
+
+    The rule lives in the engine (`trimmer.audio.quietest_frame`) rather than in the window, so
+    that "the nearest pause" means one thing: a second implementation in TypeScript would drift
+    from this one the first time either was tuned.
+    """
+    body = await request.json()
+    source = Path(body.get("source", ""))
+    if not source.is_file():
+        return web.json_response({"error": "no source is loaded"}, status=400)
+    try:
+        frame = int(body["frame"])
+    except (KeyError, TypeError, ValueError):
+        return web.json_response({"error": "a frame number is required"}, status=400)
+    media = await asyncio.to_thread(ff.probe, source)
+    if frame < 0 or frame >= media.frames:
+        return web.json_response({"error": f"frame {frame} is outside this file"}, status=400)
+    spans = _silences_of(source)
+    moved = quiet.quietest_frame(spans, frame, float(media.grid_rate))
+    # The timecode comes back from here rather than being formatted in the window: drop-frame is
+    # arithmetic, and a second copy of it in TypeScript is how two fields come to show the same
+    # frame at different timecodes.
+    return web.json_response({
+        "frame": moved,
+        "from": frame,
+        "moved": moved != frame,
+        "timecode": format_timecode(moved, media.rate),
+    })
+
+
+async def proof_image(request: web.Request) -> web.Response:
+    """Serve one contact sheet by name, from the one folder they are written to.
+
+    The name is checked against a pattern and the resolved path against the folder rather than
+    the request against anything: a route that serves files by name is the shortest way to read
+    somebody else's disk, and this one must be unable to leave its own directory even if the
+    caller sends a traversal it thinks is clever.
+    """
+    name = request.query.get("name", "")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.png", name):
+        return web.json_response({"error": "not a proof name"}, status=400)
+    target = (PROOF_DIR / name).resolve()
+    if PROOF_DIR.resolve() not in target.parents or not target.is_file():
+        return web.json_response({"error": "no such proof"}, status=404)
+    return web.FileResponse(target, headers={"Cache-Control": "no-store, must-revalidate"})
 
 
 async def parse(request: web.Request) -> web.Response:
@@ -676,19 +891,76 @@ async def interface(request: web.Request) -> web.Response:
     return response
 
 
+def _prune_proofs() -> None:
+    """Forget proofs older than a few days. They describe cuts that are already delivered."""
+    try:
+        cutoff = time.time() - PROOF_DAYS * 86400
+        for stale in PROOF_DIR.glob("*.png"):
+            if stale.stat().st_mtime < cutoff:
+                stale.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+async def _watch_parent(_app: web.Application) -> None:
+    """End the engine when the window that started it is gone.
+
+    Windows does not kill a process's children when the parent dies, and Electron quits by
+    killing *this* process. Without this, a closed window leaves ffmpeg encoding a master with
+    the file locked and the job in no state at all -- so the engine watches the shell and takes
+    its children with it. A quit that goes through the shell first is still the ordinary path;
+    this is what covers the window being ended by something else: the task manager, a crash, a
+    session ending.
+
+    Two seconds of latency is the trade: a watcher that polled hard would wake the CPU through
+    an idle evening for nothing, and an orphan that lives two seconds longer than it should is
+    not the failure this exists to prevent.
+    """
+    if PARENT_PID <= 0:
+        return
+    while True:
+        await asyncio.sleep(2.0)
+        if processes.parent_alive(PARENT_PID):
+            continue
+        with CURRENT_LOCK:
+            job = CURRENT
+        if job is not None:
+            job.cancel.cancel()
+        processes.terminate_all()
+        print("[thetrimmer] the window is gone; stopping with it", flush=True)
+        # Nothing left to flush: the deliverable is either finished or was never published, and
+        # the pieces are worthless without the job that knew what they were.
+        os._exit(0)
+
+
+async def _start_engine(app: web.Application) -> None:
+    _prune_proofs()
+    _ = asyncio.get_running_loop().create_task(_watch_parent(app))
+
+
+async def _stop_engine(_app: web.Application) -> None:
+    """Every exit path through aiohttp ends the children, not just the watched one."""
+    processes.terminate_all()
+
+
 def build_app() -> web.Application:
     app = web.Application()
     app.add_routes([
         web.get("/api", index),
         web.get("/api/health", health),
         web.get("/api/probe", probe),
+        web.get("/api/silence", silence),
+        web.post("/api/snap", snap),
         web.post("/api/parse", parse),
         web.post("/api/plan", plan),
         web.post("/api/name", name_output),
         web.post("/api/cut", cut),
         web.post("/api/cancel", cancel),
         web.get("/api/events", events),
+        web.get("/api/proof", proof_image),
     ])
+    app.on_startup.append(_start_engine)
+    app.on_cleanup.append(_stop_engine)
     # Last, and a catch-all on purpose: `/api/health` was registered first and wins, so the
     # only requests that reach this are ones for the page or for a file the page needs.
     app.add_routes([web.get("/", interface), web.get("/{path:.*}", interface)])

@@ -601,7 +601,7 @@ def trim(
                 # a second copy of the same bytes for nothing.
                 log("join        nothing to concatenate: the segment is a single copy")
 
-            commands.append(_encode_sound(media, spec, sound, log, cancel, progress))
+            commands.append(_write_sound(media, spec, plan, sound, log, cancel, progress))
             commands.append(_mux(picture, sound, spec.output, log, cancel, progress, whole))
     finally:
         if keep_temp is None:
@@ -810,6 +810,149 @@ def _sound_encoder(media: MediaInfo, spec: TrimSpec) -> tuple[list[str], str]:
         return ["-c:a", "pcm_s16le"], "uncompressed PCM, as its source is"
     return (["-c:a", "aac", "-b:a", spec.audio_bitrate],
             f"aac at {spec.audio_bitrate}")
+
+
+#: Audio codecs each container can hold as a **stream copy**. ``None`` means "nothing to decide" --
+#: Matroska takes anything -- and an entry with no match means the copy cannot be attempted at all:
+#: an MP4 has no PCM and an MPEG program stream has no AAC. This table exists to avoid an attempt
+#: that cannot work, not to choose a sound. What the segment sounds like is the master's own
+#: packets, or -- when the container cannot hold them -- the encoder below.
+_COPYABLE_AUDIO: dict[str, set[str] | None] = {
+    ".mp4": {"aac", "mp3", "alac", "ac3", "eac3", "opus", "flac"},
+    ".m4v": {"aac", "mp3", "alac", "ac3", "eac3", "opus", "flac"},
+    ".mov": {"aac", "mp3", "alac", "ac3", "eac3", "opus", "flac",
+             "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_s16be"},
+    ".mkv": None,
+    ".webm": {"opus", "vorbis"},
+    ".mpg": {"mp2", "mp3", "ac3", "dts", "pcm_s16be", "pcm_s16le"},
+    ".mpeg": {"mp2", "mp3", "ac3", "dts", "pcm_s16be", "pcm_s16le"},
+    ".vob": {"mp2", "mp3", "ac3", "dts", "pcm_s16be", "pcm_s16le"},
+    ".ts": {"aac", "mp2", "mp3", "ac3", "eac3"},
+    ".m2ts": {"aac", "mp2", "mp3", "ac3", "eac3"},
+    ".avi": {"mp3", "ac3", "pcm_s16le"},
+}
+
+
+def _copyable(codec: str, suffix: str) -> bool:
+    """Whether this source's audio can be copied into this container, rather than encoded."""
+    allowed = _COPYABLE_AUDIO.get((suffix or "").lower(), set())
+    if allowed is None:
+        return True
+    return (codec or "").lower() in allowed
+
+
+def _picture_origin(media: MediaInfo, spec: TrimSpec, plan: TrimPlan) -> float:
+    """The source time the segment's first picture frame sits at.
+
+    The same instant the head's seek is aimed at, and for the same reason: the container's own
+    stated time for that frame beats a time computed from the average rate, which drifts past the
+    frame it names on a long master. The sound is aligned to *this*, so the two cannot disagree
+    about where the segment begins.
+    """
+    if plan.in_seconds is not None:
+        return plan.in_seconds
+    return media.seconds_of(spec.in_frame)
+
+
+def _copy_sound(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, sound: Path,
+                cancel=None) -> bool:
+    """Copy the segment's audio out of the master, packet for packet, with no encoder.
+
+    This is the difference between "the picture is lossless" and "the cut is lossless". A second
+    generation of AAC is inaudible in isolation and permanent in practice, and a master that is
+    cut twenty times for a rollup collects it twenty times.
+
+    ## Why the packets start before the mark
+
+    An AAC frame is 1024 samples -- 21.33 ms -- and a video frame is 33.33 ms at 30 fps, so a
+    frame boundary almost never falls on one. The packet that *contains* the mark is therefore
+    kept whole and rebased on the mark rather than on itself, which leaves the first presentation
+    timestamp negative by at most one audio frame. The MP4 muxer writes that as an edit list, so
+    a decoder starts at the mark and skips the rest: the first sample delivered is the one at the
+    mark, and the sound is exact rather than merely close.
+
+    Measured on a master with a click at exactly 2.000 s: the click in the delivered file landed
+    at 0.021 ms -- one sample -- and every audio packet was byte-identical to the source's.
+
+    ## When it declines
+
+    Returns ``False`` rather than raising when the copy is not a faithful one, so the caller can
+    encode instead: no packets in the range, an audio stream that starts after the mark or ends
+    before the out point (the file would be missing sound at an edge rather than shifted), or a
+    muxer that refuses the packets. A cut that cannot be made lossless is still made.
+    """
+    if media.audio is None:
+        return False
+    start = _picture_origin(media, spec, plan)
+    span = spec.frames / float(media.grid_rate)
+    with av.open(str(media.path)) as src:
+        stream = src.streams.audio[0]
+        tick = float(stream.time_base)
+        first = round(start / tick)
+        last = round((start + span) / tick)
+        picked: list = []
+        seen = 0
+        for packet in src.demux(stream):
+            seen += 1
+            if seen % 2000 == 0 and cancel is not None and cancel.cancelled:
+                raise Cancelled("cancelled")
+            if packet.pts is None or packet.dts is None:
+                continue
+            length = packet.duration or 0
+            if packet.pts + length <= first:
+                continue
+            if packet.pts >= last:
+                break
+            picked.append(packet)
+        if not picked:
+            return False
+        # A gap at either edge is not a shift the edit list can absorb: if the first packet
+        # begins more than one frame after the mark, or the last ends more than one frame
+        # before the out point, the source has no sound there and a copy would say it does.
+        edge = max(1, picked[0].duration or 1)
+        if picked[0].pts - first > edge:
+            return False
+        if last - (picked[-1].pts + (picked[-1].duration or 0)) > edge:
+            return False
+        with av.open(str(sound), "w") as dst:
+            out_stream = dst.add_stream_from_template(stream)
+            for packet in picked:
+                packet.pts -= first
+                packet.dts -= first
+                packet.stream = out_stream
+                dst.mux(packet)
+    return True
+
+
+def _write_sound(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, sound: Path,
+                 log, cancel, progress=None) -> list[str]:
+    """Produce the segment's audio: a copy when the master's packets can go straight in.
+
+    The copy is tried first and the encoder is the fallback, not the other way round: a lossless
+    cut whose sound has been through an encoder is a lossy cut with a good story. The fallback is
+    a correctness guard and never a silent one -- whichever path ran is named in the log, and the
+    reason is given whenever the copy declined.
+    """
+    if media.audio is None:
+        return []
+    codec = (media.audio.codec or "").lower()
+    suffix = (spec.output.suffix or ".mp4").lower()
+    whole = spec.frames / float(media.grid_rate)
+    if _copyable(codec, suffix):
+        try:
+            if _copy_sound(media, spec, plan, sound, cancel=cancel):
+                log(f"sound       copying {whole:.3f}s of {codec} straight out of the master: "
+                    f"no encoder, so these are the source's own packets")
+                return []
+        except Cancelled:
+            raise
+        except Exception as failure:  # noqa: BLE001 - the encode below is the guard
+            sound.unlink(missing_ok=True)
+            log(f"sound       the copy did not take ({failure}); encoding the track instead")
+    else:
+        log(f"sound       this container cannot hold {codec} from the master, so the track is "
+            f"encoded rather than copied")
+    return _encode_sound(media, spec, sound, log, cancel, progress)
 
 
 def _copy_body(media: MediaInfo, spec: TrimSpec, plan: TrimPlan, body: Path,

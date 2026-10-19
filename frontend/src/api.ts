@@ -97,6 +97,14 @@ export interface PlanView {
   readonly notes: readonly string[];
 }
 
+/** One contact sheet: which end of the cut it shows, and the file the engine wrote it to. */
+export interface ProofView {
+  readonly side: string;
+  readonly name: string;
+  readonly anchor: number;
+  readonly frames: readonly number[];
+}
+
 /** The result of a cut, and everything measured against it. */
 export interface OutcomeView {
   readonly output: string;
@@ -110,11 +118,24 @@ export interface OutcomeView {
   readonly plan: PlanView;
   readonly checks: readonly CheckView[];
   readonly verified: boolean | null;
+  /**
+   * The sheets drawn of the two ends, when they could be drawn.
+   *
+   * Evidence about the cut rather than part of it: a sheet that failed is simply absent, and
+   * this list is empty rather than an error.
+   */
+  readonly proof: readonly ProofView[];
   readonly subtitles: {
     readonly cues: number;
     readonly written: string | null;
     readonly clamped: number;
   } | null;
+}
+
+/** A stretch of the source's own timeline, in seconds. */
+export interface SpanView {
+  readonly start: number;
+  readonly end: number;
 }
 
 /** One reading of where a pass has got to. */
@@ -138,7 +159,14 @@ export type EngineEvent =
   | ({ readonly type: "progress" } & TickView)
   | { readonly type: "finished"; readonly ok: boolean; readonly outcome: OutcomeView }
   | { readonly type: "failed"; readonly message: string }
-  | { readonly type: "cancelled" };
+  | { readonly type: "cancelled" }
+  | {
+      readonly type: "silence";
+      readonly source: string;
+      readonly spans: readonly SpanView[];
+      readonly speech: readonly SpanView[];
+      readonly duration: number;
+    };
 
 /**
  * Raised with the backend's own sentence, so the window never invents a reason.
@@ -203,6 +231,27 @@ export const api = {
   /** A timecode as a frame number. Throws {@link ApiFailure} with the engine's own sentence. */
   parse: (source: string, text: string) =>
     send<{ frame: number; timecode: string }>("/api/parse", { source, text }),
+
+  /**
+   * The pauses measured for this source so far.
+   *
+   * An empty list is also what a source whose gaps have not been measured yet answers, so the
+   * caller must not read it as "a file with no silence": the event on the engine stream is what
+   * says a measurement exists.
+   */
+  silence: (path: string) =>
+    send<{ spans: readonly SpanView[] }>(
+      `/api/silence?path=${encodeURIComponent(path)}`,
+      undefined,
+      "GET",
+    ),
+
+  /** Move a frame into the nearest pause, by the engine's own rule rather than a second one. */
+  snap: (source: string, frame: number) =>
+    send<{ frame: number; from: number; moved: boolean; timecode: string }>("/api/snap", {
+      source,
+      frame,
+    }),
 
   plan: (input: {
     readonly source: string;

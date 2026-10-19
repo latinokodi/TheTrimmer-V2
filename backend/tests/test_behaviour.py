@@ -24,7 +24,9 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from pytest_bdd import given, parsers, scenarios, then, when
 
+from trimmer import audio as quiet
 from trimmer import ffmpeg as ff
+from trimmer import proof
 from trimmer import subtitles as subs
 from trimmer import trim as cutter
 from trimmer import verify as verifier
@@ -51,6 +53,9 @@ scenarios("cutting.feature", features_base_dir=FEATURES)
 scenarios("rates.feature", features_base_dir=FEATURES)
 scenarios("verification.feature", features_base_dir=FEATURES)
 scenarios("engine_api.feature", features_base_dir=FEATURES)
+scenarios("sound.feature", features_base_dir=FEATURES)
+scenarios("quiet.feature", features_base_dir=FEATURES)
+scenarios("proof.feature", features_base_dir=FEATURES)
 
 SOURCE = Path("C:/media/reel.mp4")
 
@@ -248,7 +253,7 @@ def _stub_the_cut(monkeypatch) -> None:
     monkeypatch.setattr(cutter.ff, "probe", lambda *a, **k: master(400, Fraction(25)))
     monkeypatch.setattr(cutter, "_encode_head", lambda *a, **k: [])
     monkeypatch.setattr(cutter, "_encode_tail", lambda *a, **k: [])
-    monkeypatch.setattr(cutter, "_encode_sound", lambda *a, **k: [])
+    monkeypatch.setattr(cutter, "_write_sound", lambda *a, **k: [])
     monkeypatch.setattr(cutter, "_mux", lambda *a, **k: [])
     monkeypatch.setattr(cutter, "_copy_body", lambda *a, **k: ([], 100))
     monkeypatch.setattr(cutter.ff, "inspect",
@@ -1087,3 +1092,169 @@ def call(method: str, path: str, **kwargs) -> dict:
                 "cache_control": response.headers.get("Cache-Control", "")}
 
     return asyncio.run(with_client(interaction))
+
+
+# ---------------------------------------------------------------------------------------------
+# §9 The sound of a cut
+# ---------------------------------------------------------------------------------------------
+
+@given(parsers.parse("a master whose sound is {codec} and a segment whose container is {suffix}"))
+def a_master_whose_sound_is(world: dict, codec: str, suffix: str) -> None:
+    """The two facts the decision is made from. Everything else about the cut is irrelevant to it."""
+    world["codec"] = codec
+    world["suffix"] = suffix
+
+
+@when("the segment's sound is written")
+def the_segments_sound_is_written(world: dict, monkeypatch) -> None:
+    """Both paths are stood in for, so *which one ran* is the assertion rather than a side effect.
+
+    `_copy_sound` would read the master and `_encode_sound` would launch ffmpeg; neither belongs in
+    a scenario that is meant to be milliseconds. What is being tested is the decision between them.
+    """
+    media = SimpleNamespace(
+        audio=SimpleNamespace(codec=world["codec"]),
+        grid_rate=Fraction(25),
+        seconds_of=lambda frame: frame / 25.0,
+    )
+    spec = SimpleNamespace(in_frame=0, frames=25, output=Path(f"segment{world['suffix']}"))
+    plan = SimpleNamespace(in_seconds=0.0)
+    lines: list[str] = []
+
+    def copied(*_args, **_kwargs):
+        world["copied"] = True
+        return True
+
+    def encoded(*_args, **_kwargs):
+        world["encoded"] = True
+        return []
+
+    monkeypatch.setattr(cutter, "_copy_sound", copied)
+    monkeypatch.setattr(cutter, "_encode_sound", encoded)
+    cutter._write_sound(media, spec, plan, Path(f"sound{world['suffix']}"), lines.append, None)
+    world["log"] = " ".join(lines)
+
+
+@then("the track is copied from the master's packets")
+def the_track_is_copied(world: dict) -> None:
+    assert world.get("copied") is True, "the sound was encoded when it could have been copied"
+    assert not world.get("encoded"), "a track was both copied and encoded"
+
+
+@then("the log says the sound was copied")
+def the_log_says_the_sound_was_copied(world: dict) -> None:
+    assert "copying" in world["log"], world["log"]
+
+
+@then("the track is encoded rather than copied")
+def the_track_is_encoded(world: dict) -> None:
+    assert world.get("encoded") is True, "nothing produced a track for a container that refuses it"
+    assert not world.get("copied"), "a copy was attempted into a container that cannot hold it"
+
+
+@then("the log names the container as the reason")
+def the_log_names_the_container(world: dict) -> None:
+    assert "container" in world["log"], world["log"]
+
+
+# ---------------------------------------------------------------------------------------------
+# §10 Where the sound stops
+# ---------------------------------------------------------------------------------------------
+
+@given(parsers.parse("silencedetect reporting a gap from {start:f}s to {end:f}s"))
+def silencedetect_reports_a_gap(world: dict, start: float, end: float) -> None:
+    world["stderr"] = (
+        f"[silencedetect @ 0000020] silence_start: {start}\n"
+        f"[silencedetect @ 0000020] silence_end: {end} | silence_duration: {end - start}\n"
+    )
+
+
+@given("silencedetect reporting nothing")
+def silencedetect_reports_nothing(world: dict) -> None:
+    world["stderr"] = ""
+
+
+@when("the gaps are read")
+def the_gaps_are_read(world: dict) -> None:
+    world["gaps"] = quiet.parse_silences(world["stderr"])
+
+
+@then(parsers.parse("there is one gap from {start:f}s to {end:f}s"))
+def there_is_one_gap(world: dict, start: float, end: float) -> None:
+    gap = world["gaps"]
+    assert len(gap) == 1, gap
+    assert abs(gap[0].start - start) < 0.0005, gap[0]
+    assert abs(gap[0].end - end) < 0.0005, gap[0]
+
+
+@then("there are no gaps")
+def there_are_no_gaps(world: dict) -> None:
+    assert world["gaps"] == [], world["gaps"]
+
+
+@given(parsers.parse("a master at {rate:d} fps and a pause from {start:f}s to {end:f}s"))
+def a_master_and_a_pause(world: dict, rate: int, start: float, end: float) -> None:
+    world["rate"] = rate
+    world["pause"] = quiet.Span(start, end)
+
+
+@when(parsers.parse("frame {frame:d} is moved into the nearest pause"))
+def frame_is_moved_into_the_nearest_pause(world: dict, frame: int) -> None:
+    world["snapped"] = quiet.quietest_frame([world["pause"]], frame, world["rate"])
+
+
+@then(parsers.parse("the mark lands at frame {frame:d}"))
+def the_mark_lands_at(world: dict, frame: int) -> None:
+    assert world["snapped"] == frame, f"the mark went to {world['snapped']}, not {frame}"
+
+
+@then(parsers.parse("the mark stays at frame {frame:d}"))
+def the_mark_stays_at(world: dict, frame: int) -> None:
+    assert world["snapped"] == frame, f"the mark moved to {world['snapped']} with no pause in reach"
+
+
+# ---------------------------------------------------------------------------------------------
+# §11 The proof of a cut
+# ---------------------------------------------------------------------------------------------
+
+@given(parsers.parse(
+    "a cut from frame {start:d} to frame {out:d} with a head of {head:d} and a tail of {tail:d}"
+))
+def a_cut_with_a_head_and_a_tail(world: dict, start: int, out: int, head: int, tail: int) -> None:
+    """The joins are the planner's own numbers: a head of N frames ends where the body begins."""
+    world["seams"] = proof.seams(
+        in_frame=start,
+        out_frame=out - 1,
+        keyframe=start + head if head else None,
+        tail_keyframe=out - tail if tail else None,
+    )
+
+
+@when("the proof is composed")
+def the_proof_is_composed(world: dict) -> None:
+    world["labels"] = [seam.label for seam in world["seams"]]
+
+
+@then("it shows the in point, the head join, the tail join and the out point")
+def it_shows_the_four_joins(world: dict) -> None:
+    assert world["labels"] == ["in", "head join", "tail join", "out"], world["labels"]
+
+
+@then("it shows only the in point and the out point")
+def it_shows_only_the_marks(world: dict) -> None:
+    assert world["labels"] == ["in", "out"], world["labels"]
+
+
+@given("a sheet whose source cannot be decoded")
+def a_sheet_whose_source_cannot_be_decoded(world: dict) -> None:
+    world["sheet"] = Path("no-such-master.mp4")
+
+
+@when("the sheet is drawn")
+def the_sheet_is_drawn(world: dict, tmp_path: Path) -> None:
+    world["drawn"] = proof.render(world["sheet"], [0, 1, 2], 25.0, tmp_path / "sheet.png")
+
+
+@then("the answer is that no picture was produced")
+def the_answer_is_no_picture(world: dict) -> None:
+    assert world["drawn"] is False, "a sheet was reported for a source that cannot be decoded"

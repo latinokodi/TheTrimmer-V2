@@ -124,6 +124,62 @@ A cut nobody measured is a cut nobody can vouch for.
 
 ---
 
+## 8. Owning the children
+
+A cut is ffmpeg processes, and a process outlives the window that started it unless something
+ends it. What matters here is not that a quit is tidy but that an *un*tidy one cannot leave an
+encoder writing to a master nobody is watching.
+
+| Id | Requirement | Verified by |
+|---|---|---|
+| **R8.1** | Every child the engine starts is registered, so it can be found at the moment the engine is about to die. | `test_processes.py::test_every_child_is_registered`, `::test_a_child_is_forgotten_when_released` |
+| **R8.2** | A quit asks the engine to cancel before it is killed, so the pass that owns the child ends it rather than losing it. | `test_processes.py::test_terminate_ends_a_running_child`, `docs/DESIGN.md §Owning` |
+| **R8.3** | When the shell is gone — a crash, the task manager, a session ending — the engine ends itself and every child it started, with the tree killed on Windows rather than the one process it knows. | `test_processes.py::test_terminate_all_kills_a_tree`, `electron/main.cjs` (`THE_TRIMMER_PARENT_PID`) |
+| **R8.4** | A liveness check never kills what it was asked to inspect, and an answer it cannot get counts as alive. | `test_processes.py::test_a_pid_that_cannot_exist_is_dead`, `::test_the_probe_does_not_signal` |
+
+## 9. The sound of a cut
+
+The picture is never re-encoded where a copy can carry it: a re-encoded head to the first
+keyframe, a copied body, a re-encoded tail. The sound has no keyframes to respect, so it is
+copied outright whenever the container can hold the master's own packets — a second generation of
+audio is inaudible in isolation and permanent in practice.
+
+| Id | Requirement | Verified by |
+|---|---|---|
+| **R9.1** | The segment's audio is a contiguous run of the master's own packets when the container can hold them, not a second generation. | `test_sound.py::test_a_cut_carries_the_masters_own_audio_packets`, `sound.feature:a master the container can hold is copied, not encoded` |
+| **R9.2** | The copied sound starts on the mark: the first sample delivered is the one at the in point, and the pre-roll a copied packet needs is trimmed by the container rather than heard. | `test_sound.py::test_a_cut_carries_the_masters_own_audio_packets` (the click lands at its frame), `docs/DESIGN.md §The sound` |
+| **R9.3** | When a copy cannot be faithful — the container refuses the codec, or the source has no sound at an edge — the track is encoded instead, and the log says which happened and why. | `sound.feature:a container that refuses the codec is encoded, and says so`, `test_sound.py::test_a_container_that_cannot_hold_the_codec_encodes_instead` |
+| **R9.4** | The sound never changes the picture: the segment is still a head patch, a copied body and a tail patch, and still ends on the frame the plan names. | `test_sound.py::test_a_cut_carries_the_masters_own_audio_packets` (frame count), `cutting.feature` |
+| **R9.5** | Which containers can hold which codecs is a table in one place, and a suffix nobody listed is not guessed at. | `test_sound.py::test_the_copy_is_only_attempted_where_the_container_holds_the_codec`, `trimmer/trim.py::_COPYABLE_AUDIO` |
+
+## 10. Where the sound stops
+
+A cut inside a word clips a consonant the picture cannot show. The pauses either side of the
+words are the only places worth landing on, and finding them costs one audio decode rather than
+one of the picture.
+
+| Id | Requirement | Verified by |
+|---|---|---|
+| **R10.1** | A source's pauses are measured once, in the background, and reach the window as an event rather than as a slower load. | `test_server.py::test_loading_a_source_measures_its_pauses`, `quiet.feature:the pauses are read from the master's own silence` |
+| **R10.2** | A mark can be moved into the nearest pause within a stated limit, and never further; with no pause in reach it stays exactly where it is. | `quiet.feature:a mark moves into the nearest pause`, `quiet.feature:a mark with no pause in reach stays where it is`, `test_audio.py` |
+| **R10.3** | A source with no audio track has no pauses, rather than a map that says the whole file is silent. | `quiet.feature:a source with no sound has no pauses` |
+| **R10.4** | The map is cached against the file's identity, size and modification time, so a replaced master is never measured against the previous file's pauses. | `test_audio.py`, `server.py::_silences_of` |
+
+## 11. The proof of a cut
+
+A verdict is a sentence; the joins are a picture. The two places a head-patched cut can go wrong
+are where the re-encoded head meets the copied body and where the tail patch begins, and neither
+is visible in a still.
+
+| Id | Requirement | Verified by |
+|---|---|---|
+| **R11.1** | A finished cut draws a sheet for each end, covering the in point, the head→body join, the body→tail join and the out point. | `proof.feature:the four joins of a head patched cut`, `test_proof.py` |
+| **R11.2** | A join one frame from its mark gets no tile of its own, because a one-frame patch is not a run of pictures to inspect. | `proof.feature:a join on its mark is not given a tile of its own`, `test_proof.py::test_a_join_one_frame_from_its_mark_is_not_shown` |
+| **R11.3** | A sheet is drawn from a time the container states and bounded by the cut, so its cost does not grow with the length of the master. | `test_proof.py`, `server.py::_render_proof` |
+| **R11.4** | A sheet that cannot be drawn is not a failed cut: the verdicts stand without it, and the segment is still the deliverable. | `proof.feature:a sheet that could not be drawn does not fail the cut`, `server.py::_run_job` |
+
+---
+
 ## Traceability
 
 | Area | Spec | Scenarios | Steps / tests | Code |
@@ -135,6 +191,10 @@ A cut nobody measured is a cut nobody can vouch for.
 | Window | §5 | `window.feature` | `frontend/src/state/window_steps.test.ts` | `frontend/src/state/useRunLog.ts`, `frontend/src/state/planSentence.ts`, `frontend/src/components/ProgressLog.tsx` |
 | Starting | §6 | — | `scripts/check-bootstrap.ps1` | `start.bat`, `scripts/bootstrap.ps1` |
 | Naming a segment | §7 | `cutting.feature` | `backend/tests/test_naming.py`, `backend/tests/test_server.py` | `trimmer/trim.py`, `server.py`, `frontend/src/App.tsx` |
+| Owning the children | §8 | — | `backend/tests/test_processes.py` | `trimmer/processes.py`, `trimmer/ffmpeg.py`, `server.py`, `electron/main.cjs` |
+| The sound of a cut | §9 | `sound.feature` | `backend/tests/test_sound.py`, `backend/tests/test_behaviour.py` | `trimmer/trim.py` |
+| Where the sound stops | §10 | `quiet.feature` | `backend/tests/test_audio.py`, `backend/tests/test_behaviour.py` | `trimmer/audio.py`, `server.py` |
+| The proof of a cut | §11 | `proof.feature` | `backend/tests/test_proof.py`, `backend/tests/test_behaviour.py` | `trimmer/proof.py`, `server.py` |
 
 Requirements with no scenario are verified by the audit in `docs/TRUTH.md`, which pairs every
 claim the product makes about itself with the mechanism that decides it. Where a requirement

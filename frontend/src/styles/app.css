@@ -1664,3 +1664,88 @@ input.timecode-field {
 .skip-link:focus-visible {
   transform: none;
 }
+
+/* ==========================================================================================
+   The pauses, and the proof
+   ========================================================================================== */
+
+/*
+ * The pauses, as a strip under the marks: the whole file across the width, the quiet parts
+ * shaded, the two marks drawn where they are. It answers "am I cutting inside a word" at a
+ * glance, which is the one question a frame-accurate picture cannot answer for itself.
+ */
+.range__pauses {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.pause-strip {
+  position: relative;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--rule-hair);
+  overflow: hidden;
+}
+
+.pause-strip__gap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--phosphor-dim);
+  opacity: 0.4;
+}
+
+.pause-strip__mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--verified);
+}
+
+.pause-strip__mark--out {
+  background: var(--caution);
+}
+
+.range__pause-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.range__note {
+  font-family: var(--font-data);
+  font-size: var(--text-xs);
+  color: var(--phosphor-dim);
+}
+
+/*
+ * The proof: the frames either side of each join, at the width of the panel. A sheet is evidence,
+ * so it is shown as a figure with its own caption rather than as decoration behind the verdicts.
+ */
+.proof-sheets {
+  display: grid;
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+}
+
+.proof-sheet {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.proof-sheet img {
+  width: 100%;
+  height: auto;
+  border-radius: 3px;
+  border: var(--hairline) solid var(--rule-hair);
+}
+
+.proof-sheet figcaption {
+  font-family: var(--font-data);
+  font-size: var(--text-xs);
+  color: var(--phosphor-dim);
+}

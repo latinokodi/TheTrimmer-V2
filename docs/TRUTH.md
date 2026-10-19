@@ -104,6 +104,42 @@ npm --prefix frontend run build                        # types, then the bundle
 
 ---
 
+## The sound claims
+
+| Claim | Checked by | What the check would catch |
+|---|---|---|
+| The segment's sound is the master's own packets, not a second generation | `test_sound.py::test_a_cut_carries_the_masters_own_audio_packets` cuts a real two-second master and asserts the delivered audio is a **contiguous, byte-identical run** of the source's packets | The claim this replaces was "lossless picture, one generation of audio". A run that had been through an encoder would differ in every packet, and the test compares payloads rather than durations |
+| The copied sound starts exactly on the mark | The same test: a click at 0.800 s in the master must land at its frame offset in the segment, within 1 ms. Measured at 0.021 ms on the reference fixture | The near-miss this replaces: rebasing a copied run on its own first packet lags the sound by up to one AAC frame (21.3 ms). Correct, and audibly late on a tight cut |
+| A copy is only attempted where the container holds the codec | `test_sound.py` over the `_COPYABLE_AUDIO` table; `sound.feature` for both branches | A PCM master copied into an MP4 would fail at the muxer, after the picture had been cut. The fallback exists, and the log names the container when it is taken |
+| The sound never changes the picture | The same end-to-end test asserts `frames == 39` for frames 3..41 — a head patch, a copied body and a tail patch | An audio change that quietly altered the splice or the frame count |
+
+## The pause claims
+
+| Claim | Checked by | What the check would catch |
+|---|---|---|
+| Pauses are measured once, in the background, and arrive as an event | `test_server.py::test_loading_a_source_measures_its_pauses`; verified end to end against a live engine, which reported `[[1.2, 2.6]]` for a fixture built with one gap | A strip that appears only after a reload, or a load that waits a minute for a measurement nobody asked for |
+| A mark moves into the middle of a pause, and no further than two seconds | `quiet.feature` (three cases), `test_audio.py::quietest_frame` | Aiming at the edge of the pause puts the cut where the next word starts. A pause ten seconds away is a different edit, not a snap |
+| A source with no sound has no pauses rather than a silent map | `quiet.feature:a source with no sound has no pauses` | An empty list that a reader takes to mean "silent throughout" rather than "nothing measured" |
+| The strip draws nothing it was not told | `pauseStrip.test.ts`, `window.feature` | A file whose gaps have not been measured drawing as though it were silence end to end |
+
+## The proof claims
+
+| Claim | Checked by | What the check would catch |
+|---|---|---|
+| The sheet shows the four joins of a head-patched cut | `proof.feature:the four joins of a head patched cut`, `test_proof.py` | A proof that shows only the marks and misses the head→body keyframe, which is the join a head patch exists to make |
+| A join one frame from its mark is not given a tile of its own | `proof.feature:a join on its mark is not given a tile of its own` | Spending a tile on a frame the mark's own window already shows |
+| A sheet cannot fail the cut | `proof.feature:a sheet that could not be drawn does not fail the cut`; `_render_proof` is called after the deliverable and the verdicts, inside a guard | A picture that could not be drawn turning a correct file into a reported failure |
+| A sheet costs the cut, not the master | `_render_proof` anchors on a time the container states and bounds the span; the anchorless shape was measured at 994 ms for two frames of a 30-second clip, and would be minutes on a two-hour one | Selecting frames by index over a whole master, which is the shape that looks right and scales with the wrong thing |
+
+## The lifecycle claims
+
+| Claim | Checked by | What the check would catch |
+|---|---|---|
+| Quitting stops the cut | `electron/main.cjs` asks `/api/cancel` before killing the engine; `test_processes.py::test_terminate_ends_a_running_child` | The orphaned encoder: ffmpeg still writing to a master after the window has gone, with the file locked |
+| If the window disappears any other way, the engine follows it | `processes.parent_alive` via `OpenProcess(SYNCHRONIZE)`; `test_processes.py::test_a_pid_that_cannot_exist_is_dead` | A crash or a task-manager kill leaving the engine and its children running |
+| Killing a child kills what it started | `terminate_all` uses `taskkill /F /T`; `test_processes.py::test_terminate_all_kills_a_tree` | A wrapper's grandchild surviving the wrapper, which is the case `/T` exists for |
+| Every child is findable, including the short ones | `_run_quiet` and `run` both spawn through `processes`; `test_processes.py` | The probes and frame hashes that look harmless until one is on a stalled share |
+
 ## What is not checked, and why
 
 Stating these is the point of the document.

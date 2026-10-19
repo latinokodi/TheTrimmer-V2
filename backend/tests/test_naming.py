@@ -267,7 +267,7 @@ def test_a_cut_does_replace_an_existing_segment_once_it_has_been_told_to(tmp_pat
     monkeypatch.setattr(cutter.ff, "keyframes", lambda *a, **k: [8.0])
     monkeypatch.setattr(cutter.ff, "run", lambda *a, **k: None)
     monkeypatch.setattr(cutter, "_copy_packets", lambda *a, **k: None)
-    monkeypatch.setattr(cutter, "_encode_sound",
+    monkeypatch.setattr(cutter, "_write_sound",
                         lambda *a, **k: ["-hide_banner", "-y", "-i", str(video), "out.m4a"])
     monkeypatch.setattr(cutter, "_mux",
                         lambda *a, **k: ["-hide_banner", "-y", "-i", str(video), str(output)])

@@ -55,9 +55,11 @@ import {
   type MediaView,
   type OutcomeView,
   type PlanView,
+  type SpanView,
 } from "./api";
 import { nameRow } from "./state/nameRow";
 import { overwriteAsk } from "./state/overwriteAsk";
+import { pauseNote, toBars } from "./state/pauseStrip";
 import { planSentence, progressLabel } from "./state/planSentence";
 import { useRunLog } from "./state/useRunLog";
 /** CRF and preset are the encoder's, so they are named after it rather than invented. */
@@ -106,6 +108,8 @@ export function App(): JSX.Element {
   const [plan, setPlan] = useState<PlanView | null>(null);
   const [plannedFor, setPlannedFor] = useState<string>("");
   const [outcome, setOutcome] = useState<OutcomeView | null>(null);
+  /** Where the sound stops in this source, once the engine has measured it. */
+  const [spans, setSpans] = useState<readonly SpanView[]>([]);
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
@@ -131,6 +135,17 @@ export function App(): JSX.Element {
   const running = log.running;
   const rate = media === null ? 25 : media.rate.numerator / media.rate.denominator;
   const rateNumber = media === null ? 25 : Math.round(rate);
+
+  // ---- where the sound stops ------------------------------------------------------------
+  // The strip and its note are the only place a pause is drawn. They read from the event the
+  // engine sends when the measurement finishes, or from the cached answer fetched on load, so a
+  // window reopened on an already-measured source still shows them.
+  const duration = media === null ? 0 : media.duration;
+  const bars = useMemo(() => toBars(spans, duration), [spans, duration]);
+  const quietNote = useMemo(() => pauseNote(spans, duration), [spans, duration]);
+  const inFraction = media !== null && inFrame !== null ? (inFrame / media.frames) * 100 : null;
+  const outFraction =
+    media !== null && endFrame !== null ? (endFrame / media.frames) * 100 : null;
 
   // ---- startup: what can this machine do ------------------------------------------------
   useEffect(() => {
@@ -189,11 +204,18 @@ export function App(): JSX.Element {
           setFailure(null);
           log.cancelled();
           break;
+        case "silence":
+          // Only the loaded source's gaps: a measurement that finished after the operator moved
+          // to another file describes footage that is no longer on screen.
+          if (media !== null && event.source === media.path) {
+            setSpans(event.spans);
+          }
+          break;
         default:
           break;
       }
     },
-    [log],
+    [log, media],
   );
 
   /**
@@ -242,6 +264,15 @@ export function App(): JSX.Element {
       setPlanOutput("");
       setDeclined(new Set<string>());
       setRefusedCut(null);
+      // The last source's pauses describe footage that is no longer on screen, so they go before
+      // the new measurement arrives. The cached answer is asked for as well as the event: a window
+      // reopened on an already-measured source gets the event replayed from the engine's history
+      // only if it subscribed first, and this is the case where it did not.
+      setSpans([]);
+      void api
+        .silence(answer.media.path)
+        .then((gaps) => setSpans(gaps.spans))
+        .catch(() => setSpans([]));
     } catch (caught) {
       setFailure(caught instanceof ApiFailure ? caught.message : String(caught));
     } finally {
@@ -255,6 +286,29 @@ export function App(): JSX.Element {
       await load(chosen);
     }
   }, [load]);
+
+  /**
+   * Move a mark into the nearest pause.
+   *
+   * The answer comes back from the engine rather than from arithmetic here: the rule is the
+   * engine's (`quietest_frame`) and so is the timecode, so a snapped mark cannot disagree with
+   * the same frame typed into the field by hand.
+   */
+  const snap = useCallback(
+    async (which: "in" | "out") => {
+      if (media === null) return;
+      const frame = which === "in" ? inFrame : endFrame;
+      if (frame === null) return;
+      try {
+        const answer = await api.snap(media.path, frame);
+        if (which === "in") setInText(answer.timecode);
+        else setOutText(answer.timecode);
+      } catch (caught) {
+        setFailure(caught instanceof ApiFailure ? caught.message : String(caught));
+      }
+    },
+    [endFrame, inFrame, media],
+  );
 
   // ---- the marks --------------------------------------------------------------------------
   /**
@@ -708,6 +762,62 @@ export function App(): JSX.Element {
                   </span>
                 </div>
               </div>
+              {/*
+                The pauses, drawn against the whole file so a mark can be judged against the
+                material rather than against the clock. A file with no sound and a file whose
+                gaps have not been measured yet both arrive empty, and both draw nothing: an
+                empty strip that looked like silence would be a claim the engine never made.
+              */}
+              {bars.length > 0 ? (
+                <div className="range__pauses">
+                  <div
+                    className="pause-strip"
+                    role="img"
+                    aria-label={quietNote ?? "the pauses in this file"}
+                  >
+                    {bars.map((bar, index) => (
+                      <span
+                        key={index}
+                        className="pause-strip__gap"
+                        style={{ left: `${bar.left}%`, width: `${bar.width}%` }}
+                      />
+                    ))}
+                    {inFraction !== null ? (
+                      <span
+                        className="pause-strip__mark pause-strip__mark--in"
+                        style={{ left: `${inFraction}%` }}
+                      />
+                    ) : null}
+                    {outFraction !== null ? (
+                      <span
+                        className="pause-strip__mark pause-strip__mark--out"
+                        style={{ left: `${outFraction}%` }}
+                      />
+                    ) : null}
+                  </div>
+                  <div className="range__pause-row">
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--small"
+                      disabled={inFrame === null || running}
+                      title="Move the in point into the nearest pause"
+                      onClick={() => void snap("in")}
+                    >
+                      in → pause
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--small"
+                      disabled={endFrame === null || running}
+                      title="Move the out point into the nearest pause"
+                      onClick={() => void snap("out")}
+                    >
+                      out → pause
+                    </button>
+                    <span className="range__note">{quietNote ?? ""}</span>
+                  </div>
+                </div>
+              ) : null}
               <p className="range__plan" aria-live="polite">
                 {frames === null ? (
                   "Type both timecodes; the frame numbers appear here as you type."

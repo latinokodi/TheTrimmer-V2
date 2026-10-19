@@ -469,3 +469,79 @@ real, then puts the locators back and requires them to find what was installed. 
 unpacked ffmpeg has every encoder this engine asks for, because a build missing `libx264` or the
 concat demuxer fails on a real cut rather than at startup, and it carries the licences with the
 binaries. Every one of those checks has already caught a real defect in this file.
+
+## The sound is the master's own packets
+
+The picture was never re-encoded where a copy could carry it, and the sound was the exception. It
+was one continuous encode — AAC in, AAC out — because cutting the audio into pieces and joining
+them clips at the joins: each piece has to be a whole number of AAC frames, and the error lands
+exactly where the head patch meets the copied body. That reasoning is still right, and it produced
+the wrong conclusion: the segment does not need *pieces*, it needs *one run*, and a run of audio
+packets can be copied the same way the body's video packets are.
+
+An AAC frame is 1024 samples — 21.33 ms — and a video frame at 30 fps is 33.33 ms, so a mark almost
+never falls on an audio packet boundary. The packet that *contains* the mark is kept whole and the
+whole run is rebased on the mark rather than on its own first packet, which leaves the first
+presentation timestamp negative by less than one audio frame. The MP4 muxer writes that as an edit
+list, and a decoder starts at the mark and skips the rest.
+
+Measured on a master with a click at exactly 2.000 s, cut at 2.000 s: the click in the delivered
+file landed at **0.021 ms** — one sample — and all **189** audio packets were byte-identical to the
+source's, in order. The test that keeps this true builds a two-second master, cuts it with the real
+engine (head patch, copied body, tail patch), and asserts both of those facts plus the frame count.
+
+The fallback is a guard, not a second design. `_COPYABLE_AUDIO` says which container will hold
+which codec; a PCM master bound for an MP4, or an AAC master bound for an MPEG program stream, is
+encoded instead — and the log says so, with the reason. A copy that declines because the source has
+no sound at an edge (the file starts after the mark, or ends before the out point) also falls back:
+a gap at the edge is not a shift an edit list can absorb, it is missing sound.
+
+## The app ends its own children
+
+Windows ends the process it is told to end and nothing else. Electron quits by killing the Python
+process, so a cut in flight left ffmpeg writing to a master with the file locked: the engine does
+kill its child when a cancel token is set, and a quit never set one.
+
+Two things changed. The shell now asks for a cancel and gives the engine a moment before it kills
+it, so the ordinary path ends the child through the code that knows what it is. And the engine
+watches the shell's PID: if the window disappears — a crash, the task manager, a session ending —
+it cancels the job, kills every child, and exits. The tree is killed with `taskkill /F /T` because
+`/T` is the part that reaches a grandchild, and the liveness probe asks the kernel with
+`OpenProcess(SYNCHRONIZE)` + `WaitForSingleObject(handle, 0)` rather than `os.kill(pid, 0)`, which
+on Windows is `TerminateProcess` — a check that would kill what it was asked to inspect.
+
+Every child is registered, including the ones `_run_quiet` starts for probes, frame hashes and
+frame extraction: those look short, and a probe on a stalled network share is not.
+
+## Where the sound stops
+
+A cut inside a word clips a consonant that a frame-accurate picture cannot show, and the pause
+between words is the only place worth landing on. `silencedetect` measures them over one audio
+decode rather than one of the picture; the parse is a pure function over its stderr, and the
+snapping rule — the middle of the pause, not its edge, and never further than two seconds — is a
+pure function too, on the engine side, so the window has no second copy of it to drift from.
+
+The measurement is brought forward the way the keyframe list is, and it is reported as an event
+rather than merely cached, because the strip is drawn from it: a load that happens to be slower is
+not the same thing as a map that arrives. The cache key is the file's identity, size and
+modification time, so a replaced master is never measured against the previous file's pauses.
+
+## The proof is drawn from the container's own clock
+
+A head-patched cut has four joins — the in point, the head→body keyframe, the body→tail keyframe,
+and the out point — and the two that matter most sit within a second of a mark. The sheet is drawn
+for each end from an anchor whose time the container itself states (`plan.in_seconds`,
+`plan.tail_keyframe_seconds`), because a time computed from the average rate can name the frame
+beside the one intended, and a sheet that proves the wrong frame proves nothing.
+
+The decode is bounded by that anchor and a couple of seconds of span, so the cost does not grow
+with the length of the master: the earlier shape — selecting frames by index over the whole file —
+measured 994 ms on a 30-second clip and would be minutes on a two-hour one, because `select` must
+decode from the first frame to reach the one it wants. Two bounded sheets cost about a second.
+Frames are selected by number rather than by time for the same reason the marks are: two packets on
+these masters can share a presentation time.
+
+A sheet that cannot be drawn is not a failed cut. It is drawn after the deliverable exists and
+after the verdicts are collected, so the file is already correct when the picture is attempted —
+and the window shows the verdicts without a picture rather than turning a missing sheet into a
+failed run.
